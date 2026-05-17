@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200">
+  <rect width="200" height="200" rx="24" fill="#1a4730"/>
+  <!-- Crescent moon -->
+  <path d="M100 40 C65 40 40 65 40 100 C40 135 65 160 100 160 C120 160 138 151 150 136 C140 138 128 139 117 136 C90 128 72 103 72 75 C72 59 79 45 90 36 C93 34 96 42 100 40Z" fill="#c8920a" opacity="0.9"/>
+  <!-- Star -->
+  <polygon points="140,55 143,65 154,65 145,71 148,81 140,75 132,81 135,71 126,65 137,65" fill="#c8920a" opacity="0.9"/>
+  <!-- Arabic text / decorative line -->
+  <text x="100" y="175" font-family="serif" font-size="14" fill="#c8920a" text-anchor="middle" opacity="0.85">تلاوة الحرمين</text>
+</svg>

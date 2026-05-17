@@ -1,0 +1,1539 @@
+openapi: 3.1.0
+info:
+  title: Api
+  version: 0.1.0
+  description: API specification for Tilawat Al-Haramain Team Tasks
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: members
+    description: Team members management
+  - name: tasks
+    description: Tasks management
+  - name: platforms
+    description: Social media platforms
+  - name: reciters
+    description: Quran reciters management
+  - name: task-assignments
+    description: Task assignments to members
+  - name: stats
+    description: Statistics and summaries
+  - name: comments
+    description: Task comments
+  - name: notifications
+    description: In-app notifications
+  - name: activity
+    description: Activity log
+
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+
+  /members:
+    get:
+      operationId: listMembers
+      tags: [members]
+      summary: List all team members
+      responses:
+        "200":
+          description: List of members
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Member"
+    post:
+      operationId: createMember
+      tags: [members]
+      summary: Create a new team member
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateMemberBody"
+      responses:
+        "201":
+          description: Created member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+
+  /members/{id}:
+    get:
+      operationId: getMember
+      tags: [members]
+      summary: Get a team member by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Member details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+    put:
+      operationId: updateMember
+      tags: [members]
+      summary: Update a team member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateMemberBody"
+      responses:
+        "200":
+          description: Updated member
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Member"
+    delete:
+      operationId: deleteMember
+      tags: [members]
+      summary: Delete a team member
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /tasks:
+    get:
+      operationId: listTasks
+      tags: [tasks]
+      summary: List all tasks
+      parameters:
+        - name: platformId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: memberId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: reciterId
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [pending, completed]
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: trash
+          in: query
+          required: false
+          schema:
+            type: boolean
+        - name: dateFrom
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: dateTo
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: List of tasks
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TaskWithDetails"
+    post:
+      operationId: createTask
+      tags: [tasks]
+      summary: Create a new task
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateTaskBody"
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskWithDetails"
+
+  /tasks/{id}:
+    get:
+      operationId: getTask
+      tags: [tasks]
+      summary: Get a task by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Task details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskWithDetails"
+    put:
+      operationId: updateTask
+      tags: [tasks]
+      summary: Update a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateTaskBody"
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskWithDetails"
+    delete:
+      operationId: deleteTask
+      tags: [tasks]
+      summary: Soft-delete a task (move to trash)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /tasks/{id}/duplicate:
+    post:
+      operationId: duplicateTask
+      tags: [tasks]
+      summary: Duplicate a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "201":
+          description: Duplicated task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskWithDetails"
+
+  /tasks/{id}/restore:
+    post:
+      operationId: restoreTask
+      tags: [tasks]
+      summary: Restore a task from trash
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Restored task
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskWithDetails"
+
+  /tasks/{id}/permanent:
+    delete:
+      operationId: permanentDeleteTask
+      tags: [tasks]
+      summary: Permanently delete a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Permanently deleted
+
+  /tasks/{id}/comments:
+    get:
+      operationId: listComments
+      tags: [comments]
+      summary: List comments for a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of comments
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Comment"
+    post:
+      operationId: createComment
+      tags: [comments]
+      summary: Add a comment to a task
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateCommentBody"
+      responses:
+        "201":
+          description: Created comment
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Comment"
+
+  /tasks/{taskId}/comments/{id}:
+    delete:
+      operationId: deleteComment
+      tags: [comments]
+      summary: Delete a comment
+      parameters:
+        - name: taskId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /platforms:
+    get:
+      operationId: listPlatforms
+      tags: [platforms]
+      summary: List all platforms
+      responses:
+        "200":
+          description: List of platforms
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Platform"
+    post:
+      operationId: createPlatform
+      tags: [platforms]
+      summary: Create a new platform
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlatformBody"
+      responses:
+        "201":
+          description: Created platform
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Platform"
+
+  /platforms/{id}:
+    put:
+      operationId: updatePlatform
+      tags: [platforms]
+      summary: Update a platform
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlatformBody"
+      responses:
+        "200":
+          description: Updated platform
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Platform"
+    delete:
+      operationId: deletePlatform
+      tags: [platforms]
+      summary: Delete a platform
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /platforms/{platformId}/pages:
+    get:
+      operationId: listPlatformPages
+      tags: [platforms]
+      summary: List pages for a platform
+      parameters:
+        - name: platformId
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of platform pages
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlatformPage"
+    post:
+      operationId: createPlatformPage
+      tags: [platforms]
+      summary: Create a page under a platform
+      parameters:
+        - name: platformId
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePlatformPageBody"
+      responses:
+        "201":
+          description: Created platform page
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PlatformPage"
+
+  /platforms/{platformId}/pages/{id}:
+    delete:
+      operationId: deletePlatformPage
+      tags: [platforms]
+      summary: Delete a platform page
+      parameters:
+        - name: platformId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /platforms/{platformId}/pages/{id}/members:
+    get:
+      operationId: listPageMembers
+      tags: [platforms]
+      summary: List members assigned to a platform page
+      parameters:
+        - name: platformId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: List of member IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: integer
+    put:
+      operationId: setPageMembers
+      tags: [platforms]
+      summary: Set (replace) members assigned to a platform page
+      parameters:
+        - name: platformId
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetPageMembersBody"
+      responses:
+        "200":
+          description: Updated member IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: integer
+
+  /reciters:
+    get:
+      operationId: listReciters
+      tags: [reciters]
+      summary: List all reciters
+      parameters:
+        - name: mosque
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [nabawi, haram]
+      responses:
+        "200":
+          description: List of reciters
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Reciter"
+    post:
+      operationId: createReciter
+      tags: [reciters]
+      summary: Create a new reciter
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReciterBody"
+      responses:
+        "201":
+          description: Created reciter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reciter"
+
+  /reciters/{id}:
+    get:
+      operationId: getReciter
+      tags: [reciters]
+      summary: Get a reciter by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Reciter details
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reciter"
+    put:
+      operationId: updateReciter
+      tags: [reciters]
+      summary: Update a reciter
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateReciterBody"
+      responses:
+        "200":
+          description: Updated reciter
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Reciter"
+    delete:
+      operationId: deleteReciter
+      tags: [reciters]
+      summary: Delete a reciter
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /stats/overview:
+    get:
+      operationId: getStatsOverview
+      tags: [stats]
+      summary: Get overview statistics
+      responses:
+        "200":
+          description: Overview stats
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatsOverview"
+
+  /stats/members:
+    get:
+      operationId: getMemberStats
+      tags: [stats]
+      summary: Get per-member task completion stats
+      responses:
+        "200":
+          description: Member stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MemberStat"
+
+  /stats/platforms:
+    get:
+      operationId: getPlatformStats
+      tags: [stats]
+      summary: Get per-platform task stats
+      responses:
+        "200":
+          description: Platform stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PlatformStat"
+
+  /stats/reciters:
+    get:
+      operationId: getReciterStats
+      tags: [stats]
+      summary: Get per-reciter task stats
+      responses:
+        "200":
+          description: Reciter stats
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ReciterStat"
+
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List notifications for the current user
+      parameters:
+        - name: archive
+          in: query
+          required: false
+          schema:
+            type: boolean
+      responses:
+        "200":
+          description: List of notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AppNotification"
+    delete:
+      operationId: deleteAllNotifications
+      tags: [notifications]
+      summary: Delete all notifications for the current user
+      responses:
+        "204":
+          description: All deleted
+
+  /notifications/read-all:
+    post:
+      operationId: markAllNotificationsRead
+      tags: [notifications]
+      summary: Mark all notifications as read
+      responses:
+        "200":
+          description: Done
+
+  /notifications/{id}:
+    patch:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark a notification as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Updated notification
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AppNotification"
+    delete:
+      operationId: deleteNotification
+      tags: [notifications]
+      summary: Delete a single notification
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Deleted
+
+  /activity-log:
+    get:
+      operationId: listActivityLog
+      tags: [activity]
+      summary: Get activity log
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Activity log entries
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ActivityLogEntry"
+
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+
+    Member:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        role:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+        lastLoginAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - role
+        - isActive
+        - createdAt
+
+    CreateMemberBody:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+      required:
+        - name
+        - role
+
+    UpdateMemberBody:
+      type: object
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+        phone:
+          type: string
+          nullable: true
+        avatarUrl:
+          type: string
+          nullable: true
+        isActive:
+          type: boolean
+
+    Platform:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        icon:
+          type: string
+        color:
+          type: string
+        isMain:
+          type: boolean
+      required:
+        - id
+        - name
+        - icon
+        - color
+        - isMain
+
+    CreatePlatformBody:
+      type: object
+      properties:
+        name:
+          type: string
+        icon:
+          type: string
+        color:
+          type: string
+        isMain:
+          type: boolean
+      required:
+        - name
+        - icon
+        - color
+
+    PlatformPage:
+      type: object
+      properties:
+        id:
+          type: integer
+        platformId:
+          type: integer
+        name:
+          type: string
+        reciterId:
+          type: integer
+          nullable: true
+        pageUrl:
+          type: string
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - platformId
+        - name
+        - createdAt
+
+    CreatePlatformPageBody:
+      type: object
+      properties:
+        name:
+          type: string
+        reciterId:
+          type: integer
+          nullable: true
+        pageUrl:
+          type: string
+          nullable: true
+
+    SetPageMembersBody:
+      type: object
+      required:
+        - memberIds
+      properties:
+        memberIds:
+          type: array
+          items:
+            type: integer
+
+    Reciter:
+      type: object
+      properties:
+        id:
+          type: integer
+        name:
+          type: string
+        mosque:
+          type: string
+          enum: [nabawi, haram]
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - name
+        - mosque
+        - createdAt
+
+    CreateReciterBody:
+      type: object
+      properties:
+        name:
+          type: string
+        mosque:
+          type: string
+          enum: [nabawi, haram]
+      required:
+        - name
+        - mosque
+
+    Task:
+      type: object
+      properties:
+        id:
+          type: integer
+        seriesId:
+          type: integer
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+        platformId:
+          type: integer
+        memberId:
+          type: integer
+        reciterId:
+          type: integer
+          nullable: true
+        status:
+          type: string
+          enum: [pending, completed]
+        priority:
+          type: string
+          enum: [urgent, normal, low]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly, custom_days]
+        recurrenceIntervalDays:
+          type: integer
+          nullable: true
+        recurrenceDurationDays:
+          type: integer
+          nullable: true
+        recurrenceDays:
+          type: string
+          nullable: true
+        lastRecurredAt:
+          type: string
+          format: date-time
+          nullable: true
+        submissionUrl:
+          type: string
+          nullable: true
+        pageId:
+          type: integer
+          nullable: true
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - platformId
+        - memberId
+        - status
+        - priority
+        - progress
+        - recurrence
+        - createdAt
+
+    TaskWithDetails:
+      type: object
+      properties:
+        id:
+          type: integer
+        seriesId:
+          type: integer
+          nullable: true
+        title:
+          type: string
+        description:
+          type: string
+        platform:
+          $ref: "#/components/schemas/Platform"
+        member:
+          $ref: "#/components/schemas/Member"
+        members:
+          type: array
+          items:
+            $ref: "#/components/schemas/Member"
+        reciter:
+          allOf:
+            - $ref: "#/components/schemas/Reciter"
+          nullable: true
+        status:
+          type: string
+          enum: [pending, completed]
+        priority:
+          type: string
+          enum: [urgent, normal, low]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        seriesType:
+          type: string
+          enum: [temporary, operational]
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+        completedAt:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly, custom_days]
+        recurrenceIntervalDays:
+          type: integer
+          nullable: true
+        recurrenceDurationDays:
+          type: integer
+          nullable: true
+        recurrenceDays:
+          type: string
+          nullable: true
+        lastRecurredAt:
+          type: string
+          format: date-time
+          nullable: true
+        submissionUrl:
+          type: string
+          nullable: true
+        pageId:
+          type: integer
+          nullable: true
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - platform
+        - member
+        - members
+        - status
+        - priority
+        - progress
+        - recurrence
+        - createdAt
+
+    CreateTaskBody:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        platformId:
+          type: integer
+        memberIds:
+          type: array
+          items:
+            type: integer
+          minItems: 1
+        reciterId:
+          type: integer
+          nullable: true
+        status:
+          type: string
+          enum: [pending, completed]
+        priority:
+          type: string
+          enum: [urgent, normal, low]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly, custom_days]
+        recurrenceIntervalDays:
+          type: integer
+          nullable: true
+        recurrenceDurationDays:
+          type: integer
+          nullable: true
+        recurrenceDays:
+          type: string
+          nullable: true
+        pageId:
+          type: integer
+          nullable: true
+      required:
+        - title
+        - platformId
+        - memberIds
+
+    TaskSeries:
+      type: object
+      properties:
+        id:
+          type: integer
+        title:
+          type: string
+        recurrenceType:
+          type: string
+          enum: [none, weekly, monthly]
+        seriesType:
+          type: string
+          enum: [temporary, operational]
+        startDate:
+          type: string
+          format: date-time
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        generateUntil:
+          type: string
+          format: date-time
+          nullable: true
+        status:
+          type: string
+          enum: [active, paused, stopped]
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - title
+        - recurrenceType
+        - seriesType
+        - startDate
+        - status
+        - createdAt
+        - updatedAt
+
+    UpdateTaskBody:
+      type: object
+      properties:
+        title:
+          type: string
+        description:
+          type: string
+        platformId:
+          type: integer
+        memberIds:
+          type: array
+          items:
+            type: integer
+          minItems: 1
+        reciterId:
+          type: integer
+          nullable: true
+        status:
+          type: string
+          enum: [pending, completed]
+        priority:
+          type: string
+          enum: [urgent, normal, low]
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        startDate:
+          type: string
+          format: date-time
+          nullable: true
+        endDate:
+          type: string
+          format: date-time
+          nullable: true
+        dueDate:
+          type: string
+          format: date-time
+          nullable: true
+        recurrence:
+          type: string
+          enum: [none, daily, weekly, monthly, custom_days]
+        recurrenceIntervalDays:
+          type: integer
+          nullable: true
+        recurrenceDurationDays:
+          type: integer
+          nullable: true
+        recurrenceDays:
+          type: string
+          nullable: true
+        submissionUrl:
+          type: string
+          nullable: true
+        pageId:
+          type: integer
+          nullable: true
+
+    Comment:
+      type: object
+      properties:
+        id:
+          type: integer
+        taskId:
+          type: integer
+        memberId:
+          type: integer
+          nullable: true
+        authorName:
+          type: string
+        content:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - taskId
+        - authorName
+        - content
+        - createdAt
+
+    CreateCommentBody:
+      type: object
+      properties:
+        content:
+          type: string
+        authorName:
+          type: string
+        memberId:
+          type: integer
+          nullable: true
+      required:
+        - content
+        - authorName
+
+    StatsOverview:
+      type: object
+      properties:
+        totalTasks:
+          type: integer
+        completedTasks:
+          type: integer
+        pendingTasks:
+          type: integer
+        inProgressTasks:
+          type: integer
+        totalMembers:
+          type: integer
+        completionRate:
+          type: number
+      required:
+        - totalTasks
+        - completedTasks
+        - pendingTasks
+        - inProgressTasks
+        - totalMembers
+        - completionRate
+
+    MemberStat:
+      type: object
+      properties:
+        member:
+          $ref: "#/components/schemas/Member"
+        totalTasks:
+          type: integer
+        completedTasks:
+          type: integer
+        pendingTasks:
+          type: integer
+        inProgressTasks:
+          type: integer
+        overdueTasksCount:
+          type: integer
+        completionRate:
+          type: number
+      required:
+        - member
+        - totalTasks
+        - completedTasks
+        - pendingTasks
+        - inProgressTasks
+        - overdueTasksCount
+        - completionRate
+
+    PlatformStat:
+      type: object
+      properties:
+        platform:
+          $ref: "#/components/schemas/Platform"
+        totalTasks:
+          type: integer
+        completedTasks:
+          type: integer
+        pendingTasks:
+          type: integer
+        inProgressTasks:
+          type: integer
+        overdueTasksCount:
+          type: integer
+        completionRate:
+          type: number
+      required:
+        - platform
+        - totalTasks
+        - completedTasks
+        - pendingTasks
+        - inProgressTasks
+        - overdueTasksCount
+        - completionRate
+
+    ReciterStat:
+      type: object
+      properties:
+        reciter:
+          $ref: "#/components/schemas/Reciter"
+        totalTasks:
+          type: integer
+        completedTasks:
+          type: integer
+        pendingTasks:
+          type: integer
+        inProgressTasks:
+          type: integer
+        overdueTasksCount:
+          type: integer
+        completionRate:
+          type: number
+      required:
+        - reciter
+        - totalTasks
+        - completedTasks
+        - pendingTasks
+        - inProgressTasks
+        - overdueTasksCount
+        - completionRate
+
+    AppNotification:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+        type:
+          type: string
+        title:
+          type: string
+        body:
+          type: string
+          nullable: true
+        taskId:
+          type: integer
+          nullable: true
+        isRead:
+          type: boolean
+        deletedAt:
+          type: string
+          format: date-time
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - userId
+        - type
+        - title
+        - isRead
+        - createdAt
+
+    ActivityLogEntry:
+      type: object
+      properties:
+        id:
+          type: integer
+        userId:
+          type: integer
+          nullable: true
+        userName:
+          type: string
+          nullable: true
+        action:
+          type: string
+        entityType:
+          type: string
+          nullable: true
+        entityId:
+          type: integer
+          nullable: true
+        entityName:
+          type: string
+          nullable: true
+        meta:
+          nullable: true
+        createdAt:
+          type: string
+          format: date-time
+      required:
+        - id
+        - action
+        - createdAt

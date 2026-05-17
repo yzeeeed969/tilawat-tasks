@@ -1,0 +1,31 @@
+kind = "web"
+previewPath = "/"
+title = "مهام فريق تلاوة الحرمين"
+version = "1.0.0"
+id = "artifacts/tilawat-tasks"
+router = "path"
+
+[[integratedSkills]]
+name = "react-vite"
+version = "1.0.0"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 21821
+
+[services.development]
+run = "pnpm --filter @workspace/tilawat-tasks run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/tilawat-tasks", "run", "build" ]
+publicDir = "artifacts/tilawat-tasks/dist/public"
+serve = "static"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "21821"
+BASE_PATH = "/"

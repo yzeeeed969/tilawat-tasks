@@ -1,0 +1,26 @@
+{
+  "name": "مهام فريق تلاوة الحرمين",
+  "short_name": "تلاوة الحرمين",
+  "description": "نظام إدارة مهام الفريق الإعلامي",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0d2b1f",
+  "theme_color": "#0d2b1f",
+  "orientation": "portrait-primary",
+  "lang": "ar",
+  "dir": "rtl",
+  "icons": [
+    {
+      "src": "/logo.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
