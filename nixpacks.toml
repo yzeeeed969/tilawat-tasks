@@ -1,0 +1,21 @@
+providers = ["node"]
+
+[variables]
+NODE_ENV = "production"
+NIXPACKS_NODE_VERSION = "22"
+NPM_CONFIG_PRODUCTION = "false"
+
+[phases.install]
+dependsOn = ["setup"]
+cmds = [
+  "corepack enable",
+  "corepack prepare pnpm@11.0.9 --activate",
+  "pnpm install --no-frozen-lockfile --prod=false"
+]
+
+[phases.build]
+dependsOn = ["install"]
+cmds = ["pnpm run build:api"]
+
+[start]
+cmd = "pnpm run start:api"
