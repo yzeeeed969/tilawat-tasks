@@ -9,6 +9,14 @@ import { logger } from "./lib/logger";
 const PgSession = connectPgSimple(session);
 
 const app: Express = express();
+type MemoryTask = {
+  id: number;
+  title: string;
+  createdAt: string;
+};
+
+const memoryTasks: MemoryTask[] = [];
+let nextMemoryTaskId = 1;
 
 // Trust the reverse proxy (Replit's proxy sends X-Forwarded-* headers)
 app.set("trust proxy", 1);
@@ -40,7 +48,44 @@ app.get("/health", (_req, res) => {
 });
 
 app.get("/tasks", (_req, res) => {
-  res.json([]);
+  res.json(memoryTasks);
+});
+
+app.post("/tasks", (req, res) => {
+  const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+
+  if (!title) {
+    res.status(400).json({ error: "title is required" });
+    return;
+  }
+
+  const task: MemoryTask = {
+    id: nextMemoryTaskId++,
+    title,
+    createdAt: new Date().toISOString(),
+  };
+
+  memoryTasks.push(task);
+  res.status(201).json(task);
+});
+
+app.delete("/tasks/:id", (req, res) => {
+  const id = Number(req.params.id);
+
+  if (!Number.isFinite(id)) {
+    res.status(400).json({ error: "invalid task id" });
+    return;
+  }
+
+  const taskIndex = memoryTasks.findIndex((task) => task.id === id);
+
+  if (taskIndex === -1) {
+    res.status(404).json({ error: "task not found" });
+    return;
+  }
+
+  memoryTasks.splice(taskIndex, 1);
+  res.status(204).send();
 });
 
 const sessionSecret = process.env.SESSION_SECRET;
