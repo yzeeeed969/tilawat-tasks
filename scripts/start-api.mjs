@@ -16,6 +16,11 @@ if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
 
 process.env.SESSION_SECRET ||= crypto.randomBytes(48).toString("hex");
 
+if (process.env.NODE_ENV === "production" && !process.env.DATABASE_URL) {
+  console.error("DATABASE_URL is required in production");
+  process.exit(1);
+}
+
 if (!process.env.DATABASE_URL && process.env.NODE_ENV !== "production") {
   process.env.DATABASE_URL = "postgresql://postgres:postgres@127.0.0.1:5432/tilawat";
 }
