@@ -31,6 +31,14 @@ app.use(cors({ credentials: true, origin: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
+app.get("/", (_req, res) => {
+  res.type("text/plain").send("API is running");
+});
+
+app.get("/health", (_req, res) => {
+  res.json({ status: "ok" });
+});
+
 const sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret) throw new Error("SESSION_SECRET is required");
 
