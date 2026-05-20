@@ -17,7 +17,6 @@ if (Number.isNaN(port) || port <= 0) {
 }
 
 await verifyDatabaseConnection();
-console.log("Database connection established");
 
 app.listen(port, (err) => {
   if (err) {

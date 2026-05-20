@@ -16,6 +16,7 @@ export const db = drizzle(pool, { schema });
 
 export async function verifyDatabaseConnection() {
   await db.execute(sql`select 1`);
+  console.log("Database connection established");
 }
 
 export * from "./schema";
