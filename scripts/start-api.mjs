@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { verifyDatabaseConnection } from "../lib/db/verifyDatabaseConnection.mjs";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const entrypoint = path.join(rootDir, "artifacts/api-server/dist/index.mjs");
@@ -31,5 +32,7 @@ try {
   console.error("API build output is missing. Run: pnpm run build:api");
   process.exit(1);
 }
+
+await verifyDatabaseConnection();
 
 await import(entrypoint);
