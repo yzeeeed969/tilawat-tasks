@@ -39,6 +39,10 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+app.get("/tasks", (_req, res) => {
+  res.json([]);
+});
+
 const sessionSecret = process.env.SESSION_SECRET;
 if (!sessionSecret) throw new Error("SESSION_SECRET is required");
 
