@@ -4,6 +4,7 @@ providers = ["node"]
 NODE_ENV = "production"
 NIXPACKS_NODE_VERSION = "22"
 NPM_CONFIG_PRODUCTION = "false"
+BASE_PATH = "/"
 
 [phases.install]
 dependsOn = ["setup"]
@@ -15,7 +16,7 @@ cmds = [
 
 [phases.build]
 dependsOn = ["install"]
-cmds = ["pnpm run build:api"]
+cmds = ["pnpm run build"]
 
 [start]
 cmd = "pnpm run start:api"

@@ -3,12 +3,16 @@ import cors from "cors";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import pinoHttp from "pino-http";
+import path from "node:path";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
 const PgSession = connectPgSimple(session);
 
 const app: Express = express();
+const clientDistDir = path.resolve(process.cwd(), "artifacts/tilawat-tasks/dist/public");
+const clientIndexPath = path.join(clientDistDir, "index.html");
+
 type MemoryTask = {
   id: number;
   title: string;
@@ -39,12 +43,35 @@ app.use(cors({ credentials: true, origin: true }));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-app.get("/", (_req, res) => {
+app.get("/", (req, res, next) => {
+  if (req.accepts(["html", "text"]) === "html") {
+    next();
+    return;
+  }
+
   res.type("text/plain").send("API is running");
 });
 
 app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
+});
+
+app.use(express.static(clientDistDir));
+
+app.get(/.*/, (req, res, next) => {
+  if (req.path.startsWith("/api")) {
+    next();
+    return;
+  }
+
+  if (req.accepts(["html", "json"]) !== "html") {
+    next();
+    return;
+  }
+
+  res.sendFile(clientIndexPath, (err) => {
+    if (err) next(err);
+  });
 });
 
 app.get("/tasks", (_req, res) => {

@@ -8,9 +8,10 @@
   },
   "scripts": {
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
-    "build": "pnpm run build:api",
+    "build": "pnpm run build:web && pnpm run build:api",
     "build:all": "pnpm run typecheck && pnpm -r --if-present run build",
     "build:api": "pnpm --filter @workspace/api-server run build",
+    "build:web": "PORT=5173 BASE_PATH=/ pnpm --filter @workspace/tilawat-tasks run build",
     "start": "pnpm run start:api",
     "start:api": "node scripts/start-api.mjs",
     "typecheck:libs": "tsc --build",
