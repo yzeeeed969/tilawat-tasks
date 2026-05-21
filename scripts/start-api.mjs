@@ -32,7 +32,4 @@ try {
   process.exit(1);
 }
 
-// const { verifyDatabaseConnection } = await import("../lib/db/verifyDatabaseConnection.mjs");
-// await verifyDatabaseConnection();
-
 await import(entrypoint);
