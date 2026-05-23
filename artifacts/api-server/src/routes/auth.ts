@@ -144,24 +144,7 @@ router.post("/auth/login", async (req, res) => {
     return;
   }
 
-  // Track lastLoginAt on user
   const now = new Date();
-  await db.update(usersTable).set({ lastLoginAt: now } as any).where(eq(usersTable.id, user.id));
-
-  // Track lastLoginAt on linked member too
-  if (user.memberId) {
-    await db.update(membersTable).set({ lastLoginAt: now }).where(eq(membersTable.id, user.memberId));
-  }
-
-  // Log activity
-  await db.insert(activityLogTable).values({
-    userId: user.id,
-    userName: user.displayName ?? user.username,
-    action: "user_login",
-    entityType: "user",
-    entityId: user.id,
-    entityName: user.displayName ?? user.username,
-  });
 
   req.session.userId = user.id;
   req.session.save((err) => {
@@ -183,6 +166,23 @@ router.post("/auth/login", async (req, res) => {
       createdAt: user.createdAt ?? null,
     });
   });
+
+  void (async () => {
+    await db.update(usersTable).set({ lastLoginAt: now } as any).where(eq(usersTable.id, user.id));
+
+    if (user.memberId) {
+      await db.update(membersTable).set({ lastLoginAt: now }).where(eq(membersTable.id, user.memberId));
+    }
+
+    await db.insert(activityLogTable).values({
+      userId: user.id,
+      userName: user.displayName ?? user.username,
+      action: "user_login",
+      entityType: "user",
+      entityId: user.id,
+      entityName: user.displayName ?? user.username,
+    });
+  })().catch(() => {});
 });
 
 // POST /api/auth/forgot-password
