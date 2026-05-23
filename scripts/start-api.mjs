@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -30,6 +31,28 @@ try {
 } catch {
   console.error("API build output is missing. Run: pnpm run build:api");
   process.exit(1);
+}
+
+if (process.env.DATABASE_URL) {
+  console.log("Preparing database schema...");
+  await new Promise((resolve, reject) => {
+    const child = spawn("pnpm", ["--filter", "@workspace/db", "run", "push"], {
+      cwd: rootDir,
+      env: process.env,
+      stdio: "inherit",
+    });
+
+    child.on("error", reject);
+    child.on("exit", (code) => {
+      if (code === 0) {
+        resolve();
+        return;
+      }
+
+      reject(new Error(`Database schema preparation failed with exit code ${code}`));
+    });
+  });
+  console.log("Database schema ready");
 }
 
 await import(entrypoint);
