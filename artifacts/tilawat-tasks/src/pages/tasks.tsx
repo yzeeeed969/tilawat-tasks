@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import {
   useListTasks,
   getListTasksQueryKey,
@@ -115,6 +115,42 @@ const PRIORITY_CONFIG = {
   normal: { label: "عادي", icon: Minus, className: "bg-blue-50 text-blue-600 border-blue-200" },
   low: { label: "منخفض", icon: ArrowDown, className: "bg-gray-50 text-gray-500 border-gray-200" },
 } as const;
+
+function isApplicationPlatformName(name?: string | null) {
+  return Boolean(name && (/تطبيق/.test(name) || /app/i.test(name)));
+}
+
+function isPlaceholderApplicationReciter(name?: string | null) {
+  return Boolean(name && /تطبيق/.test(name));
+}
+
+async function ensureApplicationReciterPage(platformId: number, reciterId: number, memberIds: number[]) {
+  const pagesRes = await fetch(`/api/platforms/${platformId}/pages`, { credentials: "include" });
+  if (!pagesRes.ok) throw new Error("Failed to load platform pages");
+  const pages = (await pagesRes.json()) as Array<{ id: number; reciterId?: number | null; pageUrl?: string | null }>;
+  let page = pages.find((pg) => pg.reciterId === reciterId);
+
+  if (!page) {
+    const createRes = await fetch(`/api/platforms/${platformId}/pages`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ reciterId }),
+    });
+    if (!createRes.ok) throw new Error("Failed to create platform page");
+    page = await createRes.json();
+  }
+
+  const membersRes = await fetch(`/api/platforms/${platformId}/pages/${page.id}/members`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify({ memberIds }),
+  });
+  if (!membersRes.ok) throw new Error("Failed to save page members");
+
+  return page.id;
+}
 
 function PriorityBadge({ priority }: { priority?: string | null }) {
   const key = (priority as keyof typeof PRIORITY_CONFIG) ?? "normal";
@@ -278,8 +314,20 @@ function TaskFormFields({
   const platformId = watch("platformId");
   const reciterId = watch("reciterId");
   const pageId = watch("pageId");
+  const memberIds = watch("memberIds") ?? [];
   const seriesType = watch("seriesType") ?? "temporary";
   const recurrence = watch("recurrence") ?? "none";
+  const selectedPlatform = platforms?.find((p) => p.id === platformId);
+  const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+  const applicationReciters = useMemo(
+    () => reciters?.filter((r) => !isPlaceholderApplicationReciter(r.name)) ?? [],
+    [reciters]
+  );
+  const selectedApplicationPage = useMemo(
+    () => pages?.find((pg) => pg.reciterId === reciterId),
+    [pages, reciterId]
+  );
+  const previousPlatformIdRef = useRef<number | undefined>(undefined);
 
   const { data: pages } = useListPlatformPages(platformId ?? 0, {
     query: { queryKey: getListPlatformPagesQueryKey(platformId ?? 0), enabled: !!platformId },
@@ -296,13 +344,22 @@ function TaskFormFields({
   });
 
   const filteredMembers = useMemo(() => {
+    if (isApplicationPlatform) return members;
     if (!pageId || pageMembers === undefined) return members;
     if (pageMembers.length === 0) return [];
     return members?.filter((m) => pageMembers.includes(m.id));
-  }, [members, pageId, pageMembers]);
+  }, [isApplicationPlatform, members, pageId, pageMembers]);
 
   useEffect(() => {
+    if (previousPlatformIdRef.current === undefined) {
+      previousPlatformIdRef.current = platformId;
+      return;
+    }
+    if (previousPlatformIdRef.current === platformId) return;
+    previousPlatformIdRef.current = platformId;
     setValue("pageId", null);
+    setValue("reciterId", null);
+    setValue("memberIds", []);
   }, [platformId, setValue]);
 
   useEffect(() => {
@@ -323,6 +380,16 @@ function TaskFormFields({
       }
     }
   }, [pageId, pages, setValue]);
+
+  useEffect(() => {
+    if (!isApplicationPlatform || !reciterId) return;
+    setValue("pageId", selectedApplicationPage?.id ?? null);
+  }, [isApplicationPlatform, reciterId, selectedApplicationPage?.id, setValue]);
+
+  useEffect(() => {
+    if (!isApplicationPlatform || !pageId || !pageMembers || pageMembers.length === 0 || memberIds.length > 0) return;
+    setValue("memberIds", pageMembers);
+  }, [isApplicationPlatform, pageId, pageMembers, memberIds.length, setValue]);
 
   useEffect(() => {
     const platform = platforms?.find((p) => p.id === platformId);
@@ -364,7 +431,40 @@ function TaskFormFields({
         )}
       />
 
-      {pages && pages.length > 0 && (
+      {isApplicationPlatform ? (
+        <FormField
+          name="reciterId"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="flex items-center gap-2">
+                <BookOpen className="h-3.5 w-3.5 text-sidebar-primary" />
+                القارئ داخل التطبيق
+              </FormLabel>
+              <Select
+                onValueChange={(v) => field.onChange(v === "none" ? null : parseInt(v))}
+                value={field.value != null ? field.value.toString() : "none"}
+              >
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختر القارئ" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent dir="rtl">
+                  <SelectItem value="none">
+                    <span className="text-muted-foreground">اختر القارئ</span>
+                  </SelectItem>
+                  {applicationReciters.map((r) => (
+                    <SelectItem key={r.id} value={r.id.toString()}>
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      ) : pages && pages.length > 0 ? (
         <FormField
           name="pageId"
           render={({ field }) => (
@@ -397,10 +497,10 @@ function TaskFormFields({
             </FormItem>
           )}
         />
-      )}
+      ) : null}
 
       {/* Display-only reciter from selected page */}
-      {(() => {
+      {!isApplicationPlatform && (() => {
         const page = pages?.find((pg) => pg.id === pageId);
         const displayReciter = reciters?.find((r) => r.id === page?.reciterId);
         return displayReciter ? (
@@ -1083,6 +1183,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const duplicateTask = useDuplicateTask();
   const restoreTask = useRestoreTask();
   const permanentDeleteTask = usePermanentDeleteTask();
+  const [isCreateSubmitting, setIsCreateSubmitting] = useState(false);
 
   const defaultFormValues: Omit<TaskFormValues, "platformId"> & { platformId?: number } = {
     title: "",
@@ -1175,11 +1276,25 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     } finally { setBulkPending(false); }
   };
 
-  const onCreateSubmit = (data: TaskFormValues) => {
+  const onCreateSubmit = async (data: TaskFormValues) => {
     const seriesType = data.seriesType ?? "temporary";
     const recurrence = seriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
-    createTask.mutate(
-      {
+    const selectedPlatform = platforms?.find((p) => p.id === data.platformId);
+    const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+    let pageId = data.pageId ?? null;
+
+    if (isApplicationPlatform && !data.reciterId) {
+      toast({ title: "اختر القارئ داخل التطبيق", variant: "destructive" });
+      return;
+    }
+
+    setIsCreateSubmitting(true);
+    try {
+      if (isApplicationPlatform && data.reciterId) {
+        pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, data.memberIds);
+      }
+
+      await createTask.mutateAsync({
         data: {
           title: data.title || "مهمة جديدة",
           description: data.description,
@@ -1197,21 +1312,21 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           recurrenceIntervalDays: null,
           recurrenceDurationDays: null,
           recurrenceDays: null,
-          pageId: data.pageId ?? null,
+          pageId,
           expandDailyInstances: seriesType === "temporary",
           recurrencePattern: recurrence,
         } as any,
-      },
-      {
-        onSuccess: () => {
-          invalidateTasks();
-          toast({ title: "تم إنشاء المهمة بنجاح" });
-          setIsCreateOpen(false);
-          createForm.reset(defaultFormValues);
-        },
-        onError: () => toast({ title: "حدث خطأ أثناء إنشاء المهمة", variant: "destructive" }),
-      }
-    );
+      });
+      invalidateTasks();
+      queryClient.invalidateQueries({ queryKey: ["page-members"] });
+      toast({ title: "تم إنشاء المهمة بنجاح" });
+      setIsCreateOpen(false);
+      createForm.reset(defaultFormValues);
+    } catch {
+      toast({ title: "حدث خطأ أثناء إنشاء المهمة", variant: "destructive" });
+    } finally {
+      setIsCreateSubmitting(false);
+    }
   };
 
   const onEditSubmit = (data: TaskFormValues) => {
@@ -1431,9 +1546,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     type="button"
                     onClick={createForm.handleSubmit(onCreateSubmit)}
                     className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
-                    disabled={createTask.isPending}
+                    disabled={isCreateSubmitting || createTask.isPending}
                   >
-                    {createTask.isPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                    {(isCreateSubmitting || createTask.isPending) && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
                     حفظ المهمة
                   </Button>
                 </div>
