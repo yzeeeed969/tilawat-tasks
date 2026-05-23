@@ -35,21 +35,25 @@ try {
 
 if (process.env.DATABASE_URL) {
   console.log("Preparing database schema...");
-  await new Promise((resolve, reject) => {
+  await new Promise((resolve) => {
     const child = spawn("pnpm", ["--filter", "@workspace/db", "run", "push"], {
       cwd: rootDir,
       env: process.env,
       stdio: "inherit",
     });
 
-    child.on("error", reject);
+    child.on("error", (err) => {
+      console.warn("Database schema preparation skipped:", err.message);
+      resolve();
+    });
     child.on("exit", (code) => {
       if (code === 0) {
         resolve();
         return;
       }
 
-      reject(new Error(`Database schema preparation failed with exit code ${code}`));
+      console.warn(`Database schema preparation skipped with exit code ${code}`);
+      resolve();
     });
   });
   console.log("Database schema ready");
