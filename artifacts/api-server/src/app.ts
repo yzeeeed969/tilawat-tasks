@@ -1,17 +1,16 @@
 import express, { type Express } from "express";
 import cors from "cors";
-import session from "express-session";
-import connectPgSimple from "connect-pg-simple";
 import pinoHttp from "pino-http";
+import crypto from "node:crypto";
 import path from "node:path";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
-const PgSession = connectPgSimple(session);
-
 const app: Express = express();
 const clientDistDir = path.resolve(process.cwd(), "artifacts/tilawat-tasks/dist/public");
 const clientIndexPath = path.join(clientDistDir, "index.html");
+const SESSION_COOKIE_NAME = "sid";
+const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
 type MemoryTask = {
   id: number;
@@ -120,25 +119,101 @@ if (!sessionSecret) throw new Error("SESSION_SECRET is required");
 
 const isProd = process.env.NODE_ENV === "production";
 
-app.use(
-  session({
-    store: new PgSession({
-      conString: process.env.DATABASE_URL,
-      tableName: "user_sessions",
-      createTableIfMissing: true,
-    }),
-    name: "sid",
-    secret: sessionSecret,
-    resave: false,
-    saveUninitialized: false,
-    cookie: {
-      httpOnly: true,
-      sameSite: "lax",
-      secure: isProd,
-      maxAge: 30 * 24 * 60 * 60 * 1000,
+function base64Url(input: Buffer | string) {
+  return Buffer.from(input).toString("base64url");
+}
+
+function sign(value: string) {
+  return crypto.createHmac("sha256", sessionSecret).update(value).digest("base64url");
+}
+
+function readCookie(cookieHeader: string | undefined, name: string) {
+  if (!cookieHeader) return null;
+
+  for (const part of cookieHeader.split(";")) {
+    const [rawKey, ...rawValue] = part.trim().split("=");
+    if (rawKey === name) return decodeURIComponent(rawValue.join("="));
+  }
+
+  return null;
+}
+
+function encodeSession(userId: number) {
+  const payload = base64Url(JSON.stringify({ userId, exp: Date.now() + SESSION_MAX_AGE_MS }));
+  return `v1.${payload}.${sign(payload)}`;
+}
+
+function decodeSession(raw: string | null) {
+  if (!raw) return null;
+
+  const parts = raw.split(".");
+  if (parts.length !== 3 || parts[0] !== "v1") return null;
+
+  const [, payload, signature] = parts;
+  const expected = sign(payload);
+  const signatureBuffer = Buffer.from(signature);
+  const expectedBuffer = Buffer.from(expected);
+
+  if (
+    signatureBuffer.length !== expectedBuffer.length ||
+    !crypto.timingSafeEqual(signatureBuffer, expectedBuffer)
+  ) {
+    return null;
+  }
+
+  try {
+    const data = JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as {
+      userId?: unknown;
+      exp?: unknown;
+    };
+
+    if (typeof data.userId !== "number" || typeof data.exp !== "number") return null;
+    if (data.exp < Date.now()) return null;
+
+    return { userId: data.userId };
+  } catch {
+    return null;
+  }
+}
+
+app.use((req, res, next) => {
+  const signedSession = decodeSession(readCookie(req.headers.cookie, SESSION_COOKIE_NAME));
+
+  (req as any).session = {
+    userId: signedSession?.userId,
+    save(callback?: (err?: Error) => void) {
+      try {
+        if (typeof this.userId !== "number") {
+          callback?.();
+          return;
+        }
+
+        res.cookie(SESSION_COOKIE_NAME, encodeSession(this.userId), {
+          httpOnly: true,
+          sameSite: "lax",
+          secure: isProd,
+          maxAge: SESSION_MAX_AGE_MS,
+          path: "/",
+        });
+        callback?.();
+      } catch (err) {
+        callback?.(err instanceof Error ? err : new Error("Failed to save session"));
+      }
     },
-  }),
-);
+    destroy(callback?: () => void) {
+      delete this.userId;
+      res.clearCookie(SESSION_COOKIE_NAME, {
+        httpOnly: true,
+        sameSite: "lax",
+        secure: isProd,
+        path: "/",
+      });
+      callback?.();
+    },
+  };
+
+  next();
+});
 
 app.use("/api", router);
 
