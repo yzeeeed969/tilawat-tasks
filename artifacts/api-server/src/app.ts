@@ -132,7 +132,13 @@ function readCookie(cookieHeader: string | undefined, name: string) {
 
   for (const part of cookieHeader.split(";")) {
     const [rawKey, ...rawValue] = part.trim().split("=");
-    if (rawKey === name) return decodeURIComponent(rawValue.join("="));
+    if (rawKey === name) {
+      try {
+        return decodeURIComponent(rawValue.join("="));
+      } catch {
+        return rawValue.join("=");
+      }
+    }
   }
 
   return null;
