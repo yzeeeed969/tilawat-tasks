@@ -33,42 +33,6 @@ try {
   process.exit(1);
 }
 
-async function ensureSessionTable() {
-  const pgModule = await import("pg");
-  const { Pool } = pgModule.default ?? pgModule;
-  const pool = new Pool({ connectionString: process.env.DATABASE_URL });
-
-  try {
-    await pool.query(`
-      CREATE TABLE IF NOT EXISTS "user_sessions" (
-        "sid" varchar NOT NULL,
-        "sess" json NOT NULL,
-        "expire" timestamp(6) NOT NULL
-      );
-    `);
-    await pool.query(`
-      DO $$
-      BEGIN
-        IF NOT EXISTS (
-          SELECT 1
-          FROM pg_index i
-          JOIN pg_class c ON c.oid = i.indrelid
-          WHERE c.relname = 'user_sessions' AND i.indisprimary
-        ) THEN
-          ALTER TABLE "user_sessions"
-          ADD CONSTRAINT "user_sessions_pkey" PRIMARY KEY ("sid");
-        END IF;
-      END $$;
-    `);
-    await pool.query(`
-      CREATE INDEX IF NOT EXISTS "IDX_user_sessions_expire"
-      ON "user_sessions" ("expire");
-    `);
-  } finally {
-    await pool.end();
-  }
-}
-
 if (process.env.DATABASE_URL) {
   console.log("Preparing database schema...");
   await new Promise((resolve, reject) => {
@@ -88,7 +52,6 @@ if (process.env.DATABASE_URL) {
       reject(new Error(`Database schema preparation failed with exit code ${code}`));
     });
   });
-  await ensureSessionTable();
   console.log("Database schema ready");
 }
 
