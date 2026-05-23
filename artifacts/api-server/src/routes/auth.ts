@@ -92,12 +92,19 @@ router.post("/auth/setup", async (req, res) => {
     .returning();
 
   req.session.userId = user.id;
-  res.status(201).json({
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName ?? user.username,
-    role: user.role,
-    isApproved: user.isApproved,
+  req.session.save((err) => {
+    if (err) {
+      res.status(500).json({ error: "فشل حفظ جلسة الدخول" });
+      return;
+    }
+
+    res.status(201).json({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName ?? user.username,
+      role: user.role,
+      isApproved: user.isApproved,
+    });
   });
 });
 
@@ -157,17 +164,24 @@ router.post("/auth/login", async (req, res) => {
   });
 
   req.session.userId = user.id;
-  res.json({
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName ?? user.username,
-    email: user.email ?? null,
-    role: user.role,
-    isApproved: user.isApproved,
-    memberId: user.memberId ?? null,
-    permissions: (user as any).permissions ?? null,
-    lastLoginAt: now,
-    createdAt: user.createdAt ?? null,
+  req.session.save((err) => {
+    if (err) {
+      res.status(500).json({ error: "فشل حفظ جلسة الدخول" });
+      return;
+    }
+
+    res.json({
+      id: user.id,
+      username: user.username,
+      displayName: user.displayName ?? user.username,
+      email: user.email ?? null,
+      role: user.role,
+      isApproved: user.isApproved,
+      memberId: user.memberId ?? null,
+      permissions: (user as any).permissions ?? null,
+      lastLoginAt: now,
+      createdAt: user.createdAt ?? null,
+    });
   });
 });
 

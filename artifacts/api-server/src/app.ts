@@ -133,7 +133,7 @@ app.use(
     saveUninitialized: false,
     cookie: {
       httpOnly: true,
-      sameSite: isProd ? "none" : "lax",
+      sameSite: "lax",
       secure: isProd,
       maxAge: 30 * 24 * 60 * 60 * 1000,
     },
