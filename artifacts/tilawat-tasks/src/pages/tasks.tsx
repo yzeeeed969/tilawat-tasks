@@ -21,6 +21,7 @@ import { CommentsDialog } from "@/components/comments-dialog";
 
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useIsAdmin, useRole } from "@/lib/roles";
+import { useAuth } from "@/lib/auth-context";
 import { format, isPast, isToday, isBefore, startOfDay, endOfDay, differenceInDays, startOfWeek, endOfWeek, addWeeks, eachDayOfInterval, isSameDay, addDays } from "date-fns";
 import { ar } from "date-fns/locale";
 import { TaskStatusBadge } from "@/components/task-status-badge";
@@ -1094,9 +1095,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
+  const { user } = useAuth();
   const isAdmin = useIsAdmin();
   const role = useRole();
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
+
+  const selectedMemberId =
+    filterMember === "mine"
+      ? user?.memberId ?? undefined
+      : filterMember !== "all"
+        ? Number(filterMember)
+        : undefined;
 
   const urlForm = useForm<{ url: string }>({
     resolver: zodResolver(submissionUrlSchema),
@@ -1105,7 +1114,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const queryParams = {
     ...(filterPlatform !== "all" ? { platformId: parseInt(filterPlatform) } : {}),
-    ...(filterMember !== "all" ? { memberId: parseInt(filterMember) } : {}),
+    ...(typeof selectedMemberId === "number" && Number.isFinite(selectedMemberId) ? { memberId: selectedMemberId } : {}),
     ...(activeTab === "trash" ? { deleted: true } : {}),
   };
 
@@ -1774,7 +1783,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             </SelectTrigger>
             <SelectContent dir="rtl">
               <SelectItem value="all">كل الأعضاء</SelectItem>
-              {members?.map((m) => (
+              {user?.memberId && (
+                <SelectItem value="mine">مهامي</SelectItem>
+              )}
+              {members?.filter((m) => m.id !== user?.memberId).map((m) => (
                 <SelectItem key={m.id} value={m.id.toString()}>{m.name}</SelectItem>
               ))}
             </SelectContent>

@@ -5,6 +5,7 @@ import { db } from "@workspace/db";
 import { usersTable, membersTable, activityLogTable, resetTokensTable } from "@workspace/db/schema";
 import { eq, count, and, gt } from "drizzle-orm";
 import { sendPasswordResetEmail } from "../services/email";
+import { ensureAdminLinkedMember } from "../lib/user-member";
 
 function getAppDomain(req: any): string {
   const domains = process.env.REPLIT_DOMAINS;
@@ -39,17 +40,19 @@ router.get("/auth/me", async (req, res) => {
     return;
   }
 
+  const sessionUser = await ensureAdminLinkedMember(user);
+
   res.json({
-    id: user.id,
-    username: user.username,
-    displayName: user.displayName ?? user.username,
-    email: user.email ?? null,
-    role: user.role,
-    isApproved: user.isApproved,
-    memberId: user.memberId ?? null,
-    permissions: (user as any).permissions ?? null,
-    lastLoginAt: (user as any).lastLoginAt ?? null,
-    createdAt: user.createdAt ?? null,
+    id: sessionUser.id,
+    username: sessionUser.username,
+    displayName: sessionUser.displayName ?? sessionUser.username,
+    email: sessionUser.email ?? null,
+    role: sessionUser.role,
+    isApproved: sessionUser.isApproved,
+    memberId: sessionUser.memberId ?? null,
+    permissions: (sessionUser as any).permissions ?? null,
+    lastLoginAt: (sessionUser as any).lastLoginAt ?? null,
+    createdAt: sessionUser.createdAt ?? null,
   });
 });
 
@@ -79,14 +82,21 @@ router.post("/auth/setup", async (req, res) => {
   }
 
   const passwordHash = await bcrypt.hash(password, 10);
+  const name = displayName?.trim() || username.trim();
+  const [member] = await db
+    .insert(membersTable)
+    .values({ name, role: "مدير" })
+    .returning();
+
   const [user] = await db
     .insert(usersTable)
     .values({
       username: username.trim(),
       passwordHash,
-      displayName: displayName?.trim() || username.trim(),
+      displayName: name,
       role: "admin",
       isApproved: true,
+      memberId: member.id,
       lastLoginAt: new Date(),
     } as any)
     .returning();
@@ -145,8 +155,9 @@ router.post("/auth/login", async (req, res) => {
   }
 
   const now = new Date();
+  const sessionUser = await ensureAdminLinkedMember(user);
 
-  req.session.userId = user.id;
+  req.session.userId = sessionUser.id;
   req.session.save((err) => {
     if (err) {
       res.status(500).json({ error: "فشل حفظ جلسة الدخول" });
@@ -154,33 +165,33 @@ router.post("/auth/login", async (req, res) => {
     }
 
     res.json({
-      id: user.id,
-      username: user.username,
-      displayName: user.displayName ?? user.username,
-      email: user.email ?? null,
-      role: user.role,
-      isApproved: user.isApproved,
-      memberId: user.memberId ?? null,
-      permissions: (user as any).permissions ?? null,
+      id: sessionUser.id,
+      username: sessionUser.username,
+      displayName: sessionUser.displayName ?? sessionUser.username,
+      email: sessionUser.email ?? null,
+      role: sessionUser.role,
+      isApproved: sessionUser.isApproved,
+      memberId: sessionUser.memberId ?? null,
+      permissions: (sessionUser as any).permissions ?? null,
       lastLoginAt: now,
-      createdAt: user.createdAt ?? null,
+      createdAt: sessionUser.createdAt ?? null,
     });
   });
 
   void (async () => {
-    await db.update(usersTable).set({ lastLoginAt: now } as any).where(eq(usersTable.id, user.id));
+    await db.update(usersTable).set({ lastLoginAt: now } as any).where(eq(usersTable.id, sessionUser.id));
 
-    if (user.memberId) {
-      await db.update(membersTable).set({ lastLoginAt: now }).where(eq(membersTable.id, user.memberId));
+    if (sessionUser.memberId) {
+      await db.update(membersTable).set({ lastLoginAt: now }).where(eq(membersTable.id, sessionUser.memberId));
     }
 
     await db.insert(activityLogTable).values({
-      userId: user.id,
-      userName: user.displayName ?? user.username,
+      userId: sessionUser.id,
+      userName: sessionUser.displayName ?? sessionUser.username,
       action: "user_login",
       entityType: "user",
-      entityId: user.id,
-      entityName: user.displayName ?? user.username,
+      entityId: sessionUser.id,
+      entityName: sessionUser.displayName ?? sessionUser.username,
     });
   })().catch(() => {});
 });

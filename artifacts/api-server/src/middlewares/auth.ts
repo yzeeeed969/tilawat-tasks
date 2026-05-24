@@ -2,6 +2,7 @@ import type { Request, Response, NextFunction } from "express";
 import { db } from "@workspace/db";
 import { usersTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
+import { ensureAdminLinkedMember } from "../lib/user-member";
 
 declare module "express-session" {
   interface SessionData {
@@ -16,7 +17,7 @@ async function getSessionUser(req: Request) {
     .from(usersTable)
     .where(eq(usersTable.id, req.session.userId))
     .limit(1);
-  return user ?? null;
+  return user ? ensureAdminLinkedMember(user) : null;
 }
 
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
