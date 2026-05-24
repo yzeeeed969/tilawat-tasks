@@ -116,6 +116,8 @@ const PRIORITY_CONFIG = {
   low: { label: "منخفض", icon: ArrowDown, className: "bg-gray-50 text-gray-500 border-gray-200" },
 } as const;
 
+const APP_PRAYER_OPTIONS = ["صلاة الفجر", "صلاة المغرب", "صلاة العشاء", "صلاة الجمعة"] as const;
+
 function isApplicationPlatformName(name?: string | null) {
   return Boolean(name && (/تطبيق/.test(name) || /app/i.test(name)));
 }
@@ -171,6 +173,7 @@ const taskSchema = z.object({
   pageId: z.number().nullable().optional(),
   memberIds: z.array(z.number()).min(1, { message: "اختر عضواً على الأقل" }),
   reciterId: z.number().nullable().optional(),
+  appPrayer: z.enum(APP_PRAYER_OPTIONS).optional().nullable(),
   status: z.enum(["pending", "completed"]).optional(),
   priority: z.enum(["urgent", "normal", "low"]).optional(),
   progress: z.coerce.number().min(0).max(100).optional(),
@@ -315,6 +318,7 @@ function TaskFormFields({
   const reciterId = watch("reciterId");
   const pageId = watch("pageId");
   const memberIds = watch("memberIds") ?? [];
+  const appPrayer = watch("appPrayer");
   const seriesType = watch("seriesType") ?? "temporary";
   const recurrence = watch("recurrence") ?? "none";
   const selectedPlatform = platforms?.find((p) => p.id === platformId);
@@ -323,15 +327,16 @@ function TaskFormFields({
     () => reciters?.filter((r) => !isPlaceholderApplicationReciter(r.name)) ?? [],
     [reciters]
   );
-  const selectedApplicationPage = useMemo(
-    () => pages?.find((pg) => pg.reciterId === reciterId),
-    [pages, reciterId]
-  );
   const previousPlatformIdRef = useRef<number | undefined>(undefined);
 
   const { data: pages } = useListPlatformPages(platformId ?? 0, {
     query: { queryKey: getListPlatformPagesQueryKey(platformId ?? 0), enabled: !!platformId },
   });
+
+  const selectedApplicationPage = useMemo(
+    () => pages?.find((pg) => pg.reciterId === reciterId),
+    [pages, reciterId]
+  );
 
   const { data: pageMembers } = useQuery<number[]>({
     queryKey: ["page-members", pageId],
@@ -360,6 +365,7 @@ function TaskFormFields({
     setValue("pageId", null);
     setValue("reciterId", null);
     setValue("memberIds", []);
+    setValue("appPrayer", null);
   }, [platformId, setValue]);
 
   useEffect(() => {
@@ -395,12 +401,17 @@ function TaskFormFields({
     const platform = platforms?.find((p) => p.id === platformId);
     const reciter = reciters?.find((r) => r.id === reciterId);
     const page = pages?.find((pg) => pg.id === pageId);
+    if (isApplicationPlatform) {
+      const parts = [appPrayer, reciter?.name, platform?.name].filter(Boolean) as string[];
+      setValue("title", parts.join(" — ") || "مهمة جديدة");
+      return;
+    }
     const location = page?.name || platform?.name || "";
     const parts: string[] = [];
     if (location) parts.push(location);
     if (reciter?.name) parts.push(reciter.name);
     setValue("title", parts.join(" — ") || "مهمة جديدة");
-  }, [platformId, reciterId, pageId, platforms, reciters, pages, setValue]);
+  }, [platformId, reciterId, pageId, appPrayer, isApplicationPlatform, platforms, reciters, pages, setValue]);
 
   return (
     <>
@@ -432,38 +443,73 @@ function TaskFormFields({
       />
 
       {isApplicationPlatform ? (
-        <FormField
-          name="reciterId"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="flex items-center gap-2">
-                <BookOpen className="h-3.5 w-3.5 text-sidebar-primary" />
-                القارئ داخل التطبيق
-              </FormLabel>
-              <Select
-                onValueChange={(v) => field.onChange(v === "none" ? null : parseInt(v))}
-                value={field.value != null ? field.value.toString() : "none"}
-              >
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder="اختر القارئ" />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent dir="rtl">
-                  <SelectItem value="none">
-                    <span className="text-muted-foreground">اختر القارئ</span>
-                  </SelectItem>
-                  {applicationReciters.map((r) => (
-                    <SelectItem key={r.id} value={r.id.toString()}>
-                      {r.name}
+        <>
+          <FormField
+            name="reciterId"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="flex items-center gap-2">
+                  <BookOpen className="h-3.5 w-3.5 text-sidebar-primary" />
+                  القارئ داخل التطبيق
+                </FormLabel>
+                <Select
+                  onValueChange={(v) => field.onChange(v === "none" ? null : parseInt(v))}
+                  value={field.value != null ? field.value.toString() : "none"}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="اختر القارئ" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent dir="rtl">
+                    <SelectItem value="none">
+                      <span className="text-muted-foreground">اختر القارئ</span>
                     </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
+                    {applicationReciters.map((r) => (
+                      <SelectItem key={r.id} value={r.id.toString()}>
+                        {r.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          <FormField
+            name="appPrayer"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="flex items-center gap-2">
+                  <CalendarClock className="h-3.5 w-3.5 text-sidebar-primary" />
+                  الصلاة
+                </FormLabel>
+                <Select
+                  onValueChange={(v) => field.onChange(v === "none" ? null : v)}
+                  value={field.value ?? "none"}
+                >
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="اختر الصلاة" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent dir="rtl">
+                    <SelectItem value="none">
+                      <span className="text-muted-foreground">اختر الصلاة</span>
+                    </SelectItem>
+                    {APP_PRAYER_OPTIONS.map((prayer) => (
+                      <SelectItem key={prayer} value={prayer}>
+                        {prayer}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        </>
       ) : pages && pages.length > 0 ? (
         <FormField
           name="pageId"
@@ -1191,6 +1237,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     memberIds: [],
     reciterId: null,
     pageId: null,
+    appPrayer: null,
     seriesType: "temporary",
     startDate: "",
     dueDate: "",
@@ -1287,16 +1334,24 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       toast({ title: "اختر القارئ داخل التطبيق", variant: "destructive" });
       return;
     }
+    if (isApplicationPlatform && !data.appPrayer) {
+      toast({ title: "اختر الصلاة", variant: "destructive" });
+      return;
+    }
 
     setIsCreateSubmitting(true);
     try {
       if (isApplicationPlatform && data.reciterId) {
         pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, data.memberIds);
       }
+      const reciter = reciters?.find((r) => r.id === data.reciterId);
+      const taskTitle = isApplicationPlatform
+        ? [data.appPrayer, reciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ")
+        : data.title || "مهمة جديدة";
 
       await createTask.mutateAsync({
         data: {
-          title: data.title || "مهمة جديدة",
+          title: taskTitle || "مهمة جديدة",
           description: data.description,
           platformId: data.platformId,
           memberIds: data.memberIds,
