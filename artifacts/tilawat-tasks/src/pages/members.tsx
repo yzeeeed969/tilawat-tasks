@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef, useEffect } from "react";
 import { useGetMemberStats, getGetMemberStatsQueryKey, useDeleteMember, getListMembersQueryKey } from "@workspace/api-client-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
@@ -7,11 +7,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { format } from "date-fns";
 import { ar } from "date-fns/locale";
 import {
   Users, Trash2, UserPlus, Loader2, Eye, EyeOff, Download, Upload,
   Phone, Lock, SnowflakeIcon, Flame, CheckCircle, XCircle,
+  Pencil, Link2, BookOpen, ShieldCheck,
 } from "lucide-react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
@@ -20,6 +22,7 @@ import {
 } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { getRoleLabel, type UserRole } from "@/lib/roles";
+import { PlatformIcon } from "@/lib/platform-icon";
 import * as XLSX from "xlsx";
 
 const ROLES: UserRole[] = ["admin", "editor"];
@@ -44,10 +47,43 @@ function getAvatarColor(name: string) {
 
 interface AdminUser {
   id: number;
+  username: string;
+  displayName: string | null;
+  email: string | null;
+  role: UserRole;
+  isApproved: boolean;
   memberId: number | null;
   isFrozen: boolean;
+  memberName: string | null;
+  memberRole: string | null;
+  memberPhone: string | null;
+  memberAvatarUrl: string | null;
+  memberIsActive: boolean;
+  permissions?: Record<string, boolean> | null;
   lastLoginAt: string | null;
 }
+
+type PlatformSummary = {
+  id: number;
+  name: string;
+  icon?: string | null;
+  color?: string | null;
+  isMain?: boolean;
+};
+
+type PlatformPageSummary = {
+  id: number;
+  platformId?: number | null;
+  name: string;
+  reciterId?: number | null;
+  pageUrl?: string | null;
+};
+
+type MemberPageLink = {
+  platform: PlatformSummary;
+  page: PlatformPageSummary;
+  memberIds: number[];
+};
 
 export default function Members() {
   const { toast } = useToast();
@@ -63,6 +99,7 @@ export default function Members() {
     username: "",
     password: "",
     displayName: "",
+    email: "",
     memberRole: "عضو",
     role: "editor" as UserRole,
   });
@@ -77,6 +114,26 @@ export default function Members() {
   const [showNewPass, setShowNewPass] = useState(false);
   const [changingPass, setChangingPass] = useState(false);
 
+  const [editDialog, setEditDialog] = useState<{
+    userId: number;
+    memberId: number;
+    name: string;
+  } | null>(null);
+  const [editForm, setEditForm] = useState({
+    displayName: "",
+    role: "editor" as UserRole,
+    memberRole: "عضو",
+    phone: "",
+    avatarUrl: "",
+    isApproved: true,
+  });
+  const [savingEdit, setSavingEdit] = useState(false);
+
+  const [linksDialog, setLinksDialog] = useState<{ memberId: number; name: string } | null>(null);
+  const [pageLinks, setPageLinks] = useState<MemberPageLink[]>([]);
+  const [linksLoading, setLinksLoading] = useState(false);
+  const [linkSavingId, setLinkSavingId] = useState<number | null>(null);
+
   const fetchAdminUsers = async () => {
     try {
       const res = await fetch("/api/admin/users", { credentials: "include" });
@@ -90,10 +147,10 @@ export default function Members() {
   useEffect(() => { fetchAdminUsers(); }, []);
 
   // Map memberId -> AdminUser
-  const adminUserMap = adminUsers.reduce<Record<number, AdminUser>>((acc, u) => {
+  const adminUserMap = useMemo(() => adminUsers.reduce<Record<number, AdminUser>>((acc, u) => {
     if (u.memberId) acc[u.memberId] = u;
     return acc;
-  }, {});
+  }, {}), [adminUsers]);
 
   const deleteMember = useDeleteMember({
     mutation: {
@@ -126,7 +183,7 @@ export default function Members() {
       toast({ title: "تم إنشاء الحساب بنجاح" });
       queryClient.invalidateQueries({ queryKey: getGetMemberStatsQueryKey() });
       queryClient.invalidateQueries({ queryKey: getListMembersQueryKey() });
-      setForm({ username: "", password: "", displayName: "", memberRole: "عضو", role: "editor" });
+      setForm({ username: "", password: "", displayName: "", email: "", memberRole: "عضو", role: "editor" });
       setCreateOpen(false);
       fetchAdminUsers();
     } catch (err: unknown) {
@@ -154,6 +211,138 @@ export default function Members() {
       toast({ title: "حدث خطأ", variant: "destructive" });
     } finally {
       setFreezePending(null);
+    }
+  };
+
+  const handleApprove = async (adminUser: AdminUser) => {
+    setFreezePending(adminUser.memberId ?? adminUser.id);
+    try {
+      const res = await fetch(`/api/admin/users/${adminUser.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ isApproved: true }),
+      });
+      if (!res.ok) throw new Error();
+      toast({ title: "تمت الموافقة على الحساب" });
+      fetchAdminUsers();
+    } catch {
+      toast({ title: "تعذرت الموافقة على الحساب", variant: "destructive" });
+    } finally {
+      setFreezePending(null);
+    }
+  };
+
+  const openEditMember = (member: { id: number; name: string; role?: string | null; phone?: string | null; avatarUrl?: string | null }, adminUser?: AdminUser) => {
+    if (!adminUser) {
+      toast({ title: "هذا العضو لا يوجد له حساب دخول مرتبط", variant: "destructive" });
+      return;
+    }
+    setEditDialog({ userId: adminUser.id, memberId: member.id, name: member.name });
+    setEditForm({
+      displayName: adminUser.displayName || member.name,
+      role: adminUser.role,
+      memberRole: adminUser.memberRole || member.role || "عضو",
+      phone: adminUser.memberPhone || member.phone || "",
+      avatarUrl: adminUser.memberAvatarUrl || member.avatarUrl || "",
+      isApproved: adminUser.isApproved,
+    });
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editDialog || !editForm.displayName.trim()) {
+      toast({ title: "اسم العضو مطلوب", variant: "destructive" });
+      return;
+    }
+    setSavingEdit(true);
+    try {
+      const res = await fetch(`/api/admin/users/${editDialog.userId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          displayName: editForm.displayName.trim(),
+          role: editForm.role,
+          memberRole: editForm.memberRole.trim(),
+          phone: editForm.phone.trim(),
+          avatarUrl: editForm.avatarUrl.trim(),
+          isApproved: editForm.isApproved,
+        }),
+      });
+      if (!res.ok) throw new Error();
+      toast({ title: "تم تحديث بيانات العضو" });
+      queryClient.invalidateQueries({ queryKey: getGetMemberStatsQueryKey() });
+      queryClient.invalidateQueries({ queryKey: getListMembersQueryKey() });
+      fetchAdminUsers();
+      setEditDialog(null);
+    } catch {
+      toast({ title: "تعذر تحديث بيانات العضو", variant: "destructive" });
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const openMemberLinks = async (memberId: number, name: string) => {
+    setLinksDialog({ memberId, name });
+    setLinksLoading(true);
+    setPageLinks([]);
+    try {
+      const platformsRes = await fetch("/api/platforms", { credentials: "include" });
+      if (!platformsRes.ok) throw new Error();
+      const platforms = (await platformsRes.json()) as PlatformSummary[];
+      const rows: MemberPageLink[] = [];
+
+      for (const platform of platforms) {
+        const pagesRes = await fetch(`/api/platforms/${platform.id}/pages`, { credentials: "include" });
+        if (!pagesRes.ok) continue;
+        const pages = (await pagesRes.json()) as PlatformPageSummary[];
+
+        for (const page of pages) {
+          const membersRes = await fetch(`/api/platforms/${platform.id}/pages/${page.id}/members`, { credentials: "include" });
+          const memberIds = membersRes.ok ? ((await membersRes.json()) as number[]) : [];
+          rows.push({ platform, page, memberIds });
+        }
+      }
+
+      rows.sort((a, b) => `${a.platform.name}-${a.page.name}`.localeCompare(`${b.platform.name}-${b.page.name}`, "ar"));
+      setPageLinks(rows);
+    } catch {
+      toast({ title: "تعذر تحميل ربط الصفحات والقراء", variant: "destructive" });
+    } finally {
+      setLinksLoading(false);
+    }
+  };
+
+  const toggleMemberPageLink = async (link: MemberPageLink, checked: boolean) => {
+    if (!linksDialog) return;
+    const currentIds = link.memberIds ?? [];
+    const nextIds = checked
+      ? Array.from(new Set([...currentIds, linksDialog.memberId]))
+      : currentIds.filter((id) => id !== linksDialog.memberId);
+
+    setLinkSavingId(link.page.id);
+    try {
+      const res = await fetch(`/api/platforms/${link.platform.id}/pages/${link.page.id}/members`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ memberIds: nextIds }),
+      });
+      if (!res.ok) throw new Error();
+      setPageLinks((prev) =>
+        prev.map((row) =>
+          row.platform.id === link.platform.id && row.page.id === link.page.id
+            ? { ...row, memberIds: nextIds }
+            : row
+        )
+      );
+      queryClient.invalidateQueries({ queryKey: ["page-members", link.page.id] });
+      toast({ title: checked ? "تم ربط العضو بالصفحة" : "تم إلغاء ربط العضو بالصفحة" });
+    } catch {
+      toast({ title: "تعذر حفظ الربط", variant: "destructive" });
+    } finally {
+      setLinkSavingId(null);
     }
   };
 
@@ -287,9 +476,18 @@ export default function Members() {
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div>
           <h2 className="text-3xl font-bold text-foreground tracking-tight">أعضاء الفريق</h2>
-          <p className="text-muted-foreground mt-2 text-lg">إحصائيات الأداء لكل عضو في الفريق</p>
+          <p className="text-muted-foreground mt-2 text-lg">إدارة الفريق والحسابات والربط بالقراء والصفحات</p>
         </div>
         <div className="flex items-center gap-2 flex-wrap">
+          <Button
+            size="sm"
+            onClick={() => setCreateOpen(true)}
+            className="gap-1.5 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+          >
+            <UserPlus className="h-4 w-4" />
+            عضو جديد
+          </Button>
+
           {/* Excel Export */}
           <Button
             variant="outline"
@@ -457,14 +655,48 @@ export default function Members() {
                     <Progress value={stat.completionRate} className="h-2" />
                   </div>
 
+                  <div className="grid grid-cols-2 gap-2 pt-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs gap-1 text-sidebar-primary border-sidebar-primary/20 hover:bg-sidebar-primary/10"
+                      onClick={() => openEditMember(stat.member, adminUser)}
+                    >
+                      <Pencil className="h-3 w-3" />
+                      تعديل البيانات
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="text-xs gap-1 text-emerald-700 border-emerald-200 hover:bg-emerald-50"
+                      onClick={() => openMemberLinks(stat.member.id, stat.member.name)}
+                    >
+                      <Link2 className="h-3 w-3" />
+                      ربط القراء والصفحات
+                    </Button>
+                  </div>
+
                   {/* Admin actions */}
                   {adminUser && (
-                    <div className="flex gap-2 pt-1">
+                    <div className="grid grid-cols-2 gap-2 pt-1">
+                      {!adminUser.isApproved && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="col-span-2 text-xs gap-1 text-green-700 border-green-200 hover:bg-green-50"
+                          disabled={freezePending === stat.member.id}
+                          onClick={() => handleApprove(adminUser)}
+                        >
+                          {freezePending === stat.member.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <ShieldCheck className="h-3 w-3" />}
+                          موافقة على الحساب
+                        </Button>
+                      )}
+
                       {/* Freeze / Unfreeze */}
                       <Button
                         variant="outline"
                         size="sm"
-                        className={`flex-1 text-xs gap-1 ${isFrozen ? "text-orange-600 border-orange-300 hover:bg-orange-50" : "text-blue-600 border-blue-200 hover:bg-blue-50"}`}
+                        className={`text-xs gap-1 ${isFrozen ? "text-orange-600 border-orange-300 hover:bg-orange-50" : "text-blue-600 border-blue-200 hover:bg-blue-50"}`}
                         disabled={freezePending === stat.member.id}
                         onClick={() => handleFreeze(stat.member.id, !isFrozen)}
                       >
@@ -482,7 +714,7 @@ export default function Members() {
                       <Button
                         variant="outline"
                         size="sm"
-                        className="flex-1 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                        className="text-xs gap-1 text-muted-foreground hover:text-foreground"
                         onClick={() => {
                           setChangePassDialog({ userId: adminUser.id, name: stat.member.name });
                           setNewPassword("");
@@ -500,6 +732,225 @@ export default function Members() {
           })
         )}
       </div>
+
+      {/* Create Member Dialog */}
+      <Dialog open={createOpen} onOpenChange={setCreateOpen}>
+        <DialogContent className="sm:max-w-xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <UserPlus className="h-5 w-5 text-sidebar-primary" />
+              إضافة عضو جديد
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleCreate} className="space-y-4 mt-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>الاسم الكامل</Label>
+                <Input
+                  value={form.displayName}
+                  onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+                  placeholder="مثال: شيخة"
+                  autoFocus
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>اسم المستخدم / رقم الجوال</Label>
+                <Input
+                  value={form.username}
+                  onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+                  placeholder="0501234567"
+                  dir="ltr"
+                />
+              </div>
+              <div className="space-y-1.5">
+                <Label>كلمة المرور</Label>
+                <div className="relative">
+                  <Input
+                    type={showPass ? "text" : "password"}
+                    value={form.password}
+                    onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                    placeholder="••••••••"
+                    dir="ltr"
+                    className="pl-10"
+                    minLength={4}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPass((v) => !v)}
+                    className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  >
+                    {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                  </button>
+                </div>
+              </div>
+              <div className="space-y-1.5">
+                <Label>المسمى الوظيفي</Label>
+                <Select value={form.memberRole} onValueChange={(v) => setForm((f) => ({ ...f, memberRole: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent dir="rtl">
+                    {MEMBER_ROLES.map((role) => <SelectItem key={role} value={role}>{role}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>صلاحية الدخول</Label>
+                <Select value={form.role} onValueChange={(v) => setForm((f) => ({ ...f, role: v as UserRole }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent dir="rtl">
+                    {ROLES.map((role) => <SelectItem key={role} value={role}>{getRoleLabel(role)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>البريد الإلكتروني (اختياري)</Label>
+                <Input
+                  value={form.email}
+                  onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                  placeholder="example@gmail.com"
+                  dir="ltr"
+                  type="email"
+                />
+              </div>
+            </div>
+            <div className="bg-amber-50 border border-amber-200 text-amber-800 rounded-md px-3 py-2 text-xs">
+              بعد إنشاء العضو سيظهر هنا في القائمة، ويمكنك الموافقة عليه وربطه بالقراء والصفحات من نفس البطاقة.
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setCreateOpen(false)}>
+                إلغاء
+              </Button>
+              <Button
+                type="submit"
+                disabled={creating}
+                className="flex-1 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+              >
+                {creating ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : <UserPlus className="h-4 w-4 ml-2" />}
+                إنشاء العضو
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Edit Member Dialog */}
+      <Dialog open={!!editDialog} onOpenChange={(o) => !o && setEditDialog(null)}>
+        <DialogContent className="sm:max-w-xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Pencil className="h-5 w-5 text-sidebar-primary" />
+              تعديل بيانات {editDialog?.name}
+            </DialogTitle>
+          </DialogHeader>
+          <form onSubmit={handleSaveEdit} className="space-y-4 mt-2">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <div className="space-y-1.5">
+                <Label>الاسم الكامل</Label>
+                <Input value={editForm.displayName} onChange={(e) => setEditForm((f) => ({ ...f, displayName: e.target.value }))} />
+              </div>
+              <div className="space-y-1.5">
+                <Label>المسمى الوظيفي</Label>
+                <Select value={editForm.memberRole} onValueChange={(v) => setEditForm((f) => ({ ...f, memberRole: v }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent dir="rtl">
+                    {MEMBER_ROLES.map((role) => <SelectItem key={role} value={role}>{role}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>صلاحية الدخول</Label>
+                <Select value={editForm.role} onValueChange={(v) => setEditForm((f) => ({ ...f, role: v as UserRole }))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent dir="rtl">
+                    {ROLES.map((role) => <SelectItem key={role} value={role}>{getRoleLabel(role)}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1.5">
+                <Label>رقم الجوال</Label>
+                <Input value={editForm.phone} onChange={(e) => setEditForm((f) => ({ ...f, phone: e.target.value }))} dir="ltr" />
+              </div>
+              <div className="space-y-1.5 md:col-span-2">
+                <Label>رابط الصورة (اختياري)</Label>
+                <Input value={editForm.avatarUrl} onChange={(e) => setEditForm((f) => ({ ...f, avatarUrl: e.target.value }))} dir="ltr" />
+              </div>
+              <label className="md:col-span-2 flex items-center gap-2 rounded-md border border-border px-3 py-2 text-sm cursor-pointer">
+                <Checkbox
+                  checked={editForm.isApproved}
+                  onCheckedChange={(checked) => setEditForm((f) => ({ ...f, isApproved: checked === true }))}
+                />
+                <span>الحساب موافق عليه ويمكنه تسجيل الدخول</span>
+              </label>
+            </div>
+            <div className="flex gap-2">
+              <Button type="button" variant="outline" className="flex-1" onClick={() => setEditDialog(null)}>
+                إلغاء
+              </Button>
+              <Button
+                type="submit"
+                disabled={savingEdit}
+                className="flex-1 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+              >
+                {savingEdit ? <Loader2 className="h-4 w-4 animate-spin ml-2" /> : <Pencil className="h-4 w-4 ml-2" />}
+                حفظ التعديل
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Member Page Links Dialog */}
+      <Dialog open={!!linksDialog} onOpenChange={(o) => !o && setLinksDialog(null)}>
+        <DialogContent className="sm:max-w-2xl" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Link2 className="h-5 w-5 text-sidebar-primary" />
+              ربط {linksDialog?.name} بالقراء والصفحات
+            </DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 mt-2">
+            <p className="text-sm text-muted-foreground">
+              اختر الصفحات أو القراء التي يكون هذا العضو مسؤولًا عنها. هذا الربط هو نفسه المستخدم في صفحة إضافة المهام.
+            </p>
+
+            {linksLoading ? (
+              <div className="flex items-center justify-center py-10 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin ml-2" />
+                جاري تحميل الصفحات...
+              </div>
+            ) : pageLinks.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border py-10 text-center text-muted-foreground">
+                <BookOpen className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                لا توجد صفحات أو قراء للربط بعد
+              </div>
+            ) : (
+              <div className="max-h-[420px] overflow-y-auto rounded-lg border border-border divide-y divide-border">
+                {pageLinks.map((link) => {
+                  const checked = link.memberIds.includes(linksDialog?.memberId ?? -1);
+                  const saving = linkSavingId === link.page.id;
+                  return (
+                    <label
+                      key={`${link.platform.id}-${link.page.id}`}
+                      className={`flex items-center gap-3 p-3 cursor-pointer transition-colors ${checked ? "bg-sidebar-primary/5" : "bg-card hover:bg-muted/30"}`}
+                    >
+                      <Checkbox
+                        checked={checked}
+                        disabled={saving}
+                        onCheckedChange={(value) => toggleMemberPageLink(link, value === true)}
+                      />
+                      <PlatformIcon name={link.platform.name} className="h-5 w-5 shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="font-semibold text-sm truncate">{link.page.name}</div>
+                        <div className="text-xs text-muted-foreground truncate">{link.platform.name}</div>
+                      </div>
+                      {saving && <Loader2 className="h-4 w-4 animate-spin text-sidebar-primary shrink-0" />}
+                    </label>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* Change Password Dialog */}
       <Dialog open={!!changePassDialog} onOpenChange={(o) => !o && setChangePassDialog(null)}>
