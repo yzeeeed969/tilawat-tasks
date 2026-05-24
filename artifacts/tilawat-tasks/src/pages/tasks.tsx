@@ -118,6 +118,7 @@ const PRIORITY_CONFIG = {
 } as const;
 
 const APP_PRAYER_OPTIONS = ["صلاة الفجر", "صلاة المغرب", "صلاة العشاء", "صلاة الجمعة"] as const;
+const ADMIN_LIST_LIMIT_OPTIONS = ["25", "50", "100", "all"] as const;
 const WEEKDAY_OPTIONS = [
   { value: "0", label: "الأحد" },
   { value: "1", label: "الاثنين" },
@@ -229,6 +230,7 @@ const submissionUrlSchema = z.object({
 });
 
 type TaskFormValues = z.infer<typeof taskSchema>;
+type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
 
 const MOSQUE_LABEL: Record<string, string> = {
   nabawi: "المسجد النبوي الشريف",
@@ -1159,6 +1161,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [commentsTaskTitle, setCommentsTaskTitle] = useState<string>("");
   const [showArchived, setShowArchived] = useState(false);
   const [filterDueDate, setFilterDueDate] = useState<"all" | "today" | "this_week" | "next_week" | "overdue">("all");
+  const [adminListLimit, setAdminListLimit] = useState<AdminListLimit>("50");
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [bulkReassignId, setBulkReassignId] = useState("none");
   const [bulkPending, setBulkPending] = useState(false);
@@ -1298,6 +1301,24 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const pendingMemberRows = memberRows.pending;
   const completedMemberRows = memberRows.completed;
 
+  const adminListTasks = useMemo(() => {
+    if (!tasks || !isAdmin || activeTab !== "active" || view !== "list") return tasks;
+    if (adminListLimit === "all") return tasks;
+    return tasks.slice(0, Number(adminListLimit));
+  }, [tasks, isAdmin, activeTab, view, adminListLimit]);
+
+  const adminListTotal = tasks?.length ?? 0;
+  const adminListShown = adminListTasks?.length ?? 0;
+
+  useEffect(() => {
+    if (!isAdmin || view !== "list" || activeTab !== "active") return;
+    const visibleIds = new Set(adminListTasks?.map((task) => task.id) ?? []);
+    setSelectedTaskIds((previous) => {
+      const next = new Set([...previous].filter((id) => visibleIds.has(id)));
+      return next.size === previous.size ? previous : next;
+    });
+  }, [adminListTasks, isAdmin, view, activeTab]);
+
   const { data: members } = useListMembers({ query: { queryKey: getListMembersQueryKey() } });
   const { data: platforms } = useListPlatforms({ query: { queryKey: getListPlatformsQueryKey() } });
   const { data: reciters } = useListReciters({}, { query: { queryKey: getListRecitersQueryKey() } });
@@ -1374,7 +1395,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const toggleTaskSelect = (id: number) => setSelectedTaskIds((prev) => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
-  const selectAllAdminTasks = () => setSelectedTaskIds(new Set(tasks?.map((t) => t.id) ?? []));
+  const selectAllAdminTasks = () => setSelectedTaskIds(new Set(adminListTasks?.map((t) => t.id) ?? []));
   const clearSel = () => { setSelectedTaskIds(new Set()); setBulkReassignId("none"); };
 
   const handleBulkDelete = async () => {
@@ -1898,6 +1919,25 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             )}
           </SelectContent>
         </Select>
+
+        {isAdmin && view === "list" && (
+          <div className="flex items-center gap-2 mr-auto">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">
+              يعرض {adminListShown} من {adminListTotal} مهمة
+            </span>
+            <Select value={adminListLimit} onValueChange={(value) => setAdminListLimit(value as AdminListLimit)}>
+              <SelectTrigger className="min-w-[120px] bg-background">
+                <SelectValue placeholder="عدد المهام" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="25">25 مهمة</SelectItem>
+                <SelectItem value="50">50 مهمة</SelectItem>
+                <SelectItem value="100">100 مهمة</SelectItem>
+                <SelectItem value="all">الكل</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        )}
       </div>
       )}
 
@@ -1910,7 +1950,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           </div>
           {tasksLoading ? (
             <div className="p-8 flex justify-center"><Loader2 className="h-8 w-8 animate-spin text-sidebar-primary" /></div>
-          ) : tasks?.length === 0 ? (
+          ) : adminListTotal === 0 ? (
             <div className="p-12 text-center text-muted-foreground flex flex-col items-center">
               <Trash2 className="h-12 w-12 mb-4 text-muted-foreground/30" />
               <p className="text-lg font-medium">السلة فارغة</p>
@@ -2395,7 +2435,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 <TableRow>
                   <TableHead className="w-[40px] pr-4">
                     <Checkbox
-                      checked={!!(tasks?.length && selectedTaskIds.size === tasks.length)}
+                      checked={!!(adminListTasks?.length && selectedTaskIds.size === adminListTasks.length)}
                       onCheckedChange={(c) => c ? selectAllAdminTasks() : clearSel()}
                     />
                   </TableHead>
@@ -2411,7 +2451,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {tasks?.map((task) => {
+                {adminListTasks?.map((task) => {
                   const reciter = task.reciter as Reciter | null | undefined;
                   const isOverdue =
                     task.dueDate &&
