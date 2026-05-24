@@ -55,7 +55,17 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
-app.use(express.static(clientDistDir));
+app.use(express.static(clientDistDir, {
+  setHeaders(res, filePath) {
+    if (filePath.endsWith("index.html") || filePath.endsWith("sw.js")) {
+      res.setHeader("Cache-Control", "no-cache");
+      return;
+    }
+    if (filePath.includes(`${path.sep}assets${path.sep}`)) {
+      res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    }
+  },
+}));
 
 app.get(/.*/, (req, res, next) => {
   if (req.path.startsWith("/api")) {
@@ -68,6 +78,7 @@ app.get(/.*/, (req, res, next) => {
     return;
   }
 
+  res.setHeader("Cache-Control", "no-cache");
   res.sendFile(clientIndexPath, (err) => {
     if (err) next(err);
   });

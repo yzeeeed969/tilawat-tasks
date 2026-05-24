@@ -1,5 +1,5 @@
-const CACHE_NAME = "tilawat-v1";
-const STATIC_ASSETS = ["/", "/manifest.json", "/favicon.svg", "/logo.svg"];
+const CACHE_NAME = "tilawat-v2";
+const STATIC_ASSETS = ["/manifest.json", "/favicon.svg", "/logo.svg"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -21,6 +21,11 @@ self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (url.pathname.startsWith("/api/")) return;
   if (event.request.method !== "GET") return;
+
+  if (event.request.mode === "navigate") {
+    event.respondWith(fetch(event.request).catch(() => caches.match("/")));
+    return;
+  }
 
   event.respondWith(
     fetch(event.request)
