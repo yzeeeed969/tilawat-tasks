@@ -17,6 +17,7 @@ type GenerateInput = {
   priority?: "urgent" | "normal" | "low";
   startDate: Date;
   recurrenceType: RecurrenceType;
+  recurrenceDays?: string | null;
 };
 
 function startOfDay(date: Date): Date {
@@ -39,20 +40,39 @@ function addMonthsClamped(date: Date, months: number): Date {
   return d;
 }
 
-function upcomingDates(startDate: Date, recurrenceType: RecurrenceType): Date[] {
+function parseWeeklyDays(recurrenceDays?: string | null): number[] {
+  if (!recurrenceDays) return [];
+  return [...new Set(
+    recurrenceDays
+      .split(",")
+      .map((day) => Number(day.trim()))
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+  )].sort((a, b) => a - b);
+}
+
+function upcomingDates(startDate: Date, recurrenceType: RecurrenceType, recurrenceDays?: string | null): Date[] {
   const start = startOfDay(startDate);
-  const windowEnd = addDays(startOfDay(new Date()), GENERATION_WINDOW_DAYS);
+  const today = startOfDay(new Date());
+  const windowEnd = addDays(today, GENERATION_WINDOW_DAYS);
   const dates: Date[] = [];
 
   if (recurrenceType === "weekly") {
+    const weeklyDays = parseWeeklyDays(recurrenceDays);
+    if (weeklyDays.length > 0) {
+      for (let cursor = start > today ? start : today; cursor <= windowEnd; cursor = addDays(cursor, 1)) {
+        if (weeklyDays.includes(cursor.getDay())) dates.push(new Date(cursor));
+      }
+      return dates;
+    }
+
     for (let cursor = start; cursor <= windowEnd; cursor = addDays(cursor, 7)) {
-      if (cursor >= startOfDay(new Date())) dates.push(new Date(cursor));
+      if (cursor >= today) dates.push(new Date(cursor));
     }
     return dates;
   }
 
   for (let step = 0, cursor = start; cursor <= windowEnd; step += 1, cursor = addMonthsClamped(start, step)) {
-    if (cursor >= startOfDay(new Date())) dates.push(new Date(cursor));
+    if (cursor >= today) dates.push(new Date(cursor));
   }
   return dates;
 }
@@ -70,7 +90,7 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
     throw new Error("At least one member is required");
   }
 
-  const dates = upcomingDates(input.startDate, input.recurrenceType);
+  const dates = upcomingDates(input.startDate, input.recurrenceType, input.recurrenceDays);
   const generatedIds: number[] = [];
   const generateUntil = dates.length > 0 ? dates[dates.length - 1] : input.startDate;
 
@@ -103,7 +123,7 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
         recurrence: "none",
         recurrenceIntervalDays: null,
         recurrenceDurationDays: null,
-        recurrenceDays: null,
+        recurrenceDays: input.recurrenceType === "weekly" ? input.recurrenceDays ?? null : null,
         pageId: input.pageId ?? null,
       }).onConflictDoNothing({
         target: [tasksTable.seriesId, tasksTable.dueDate],
@@ -174,6 +194,7 @@ export async function syncActiveSeries() {
       priority: templateTask.priority,
       startDate: series.startDate,
       recurrenceType: series.recurrenceType,
+      recurrenceDays: templateTask.recurrenceDays,
     });
 
     syncedSeriesIds.push(series.id);

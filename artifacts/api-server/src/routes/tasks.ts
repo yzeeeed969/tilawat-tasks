@@ -290,6 +290,21 @@ function parseSeriesRecurrenceType(value: unknown): SeriesRecurrenceType {
   throw new Error("INVALID_RECURRENCE_TYPE");
 }
 
+function normalizeRecurrenceDays(value: unknown): string | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string") throw new Error("INVALID_RECURRENCE_DAYS");
+
+  const rawDays = value.split(",").map((day) => day.trim()).filter(Boolean);
+  if (rawDays.length === 0) return null;
+
+  const days = [...new Set(rawDays.map((day) => Number(day)))];
+  if (days.some((day) => !Number.isInteger(day) || day < 0 || day > 6)) {
+    throw new Error("INVALID_RECURRENCE_DAYS");
+  }
+
+  return days.sort((a, b) => a - b).join(",");
+}
+
 function normalizeDate(value: unknown): Date | null {
   if (!value) return null;
   const date = new Date(String(value));
@@ -502,6 +517,15 @@ router.post("/tasks", async (req, res) => {
   const startDate = normalizeDate(body.startDate ?? body.dueDate);
   const endDate = normalizeDate((req.body as any).endDate);
   const intervalDays = body.recurrenceIntervalDays && body.recurrenceIntervalDays > 0 ? body.recurrenceIntervalDays : 1;
+  let weeklyRecurrenceDays: string | null = null;
+  try {
+    weeklyRecurrenceDays = seriesType === "operational" && seriesRecurrenceType === "weekly"
+      ? normalizeRecurrenceDays((req.body as any).recurrenceDays)
+      : null;
+  } catch {
+    res.status(400).json({ error: "Invalid recurrenceDays" });
+    return;
+  }
   const customDaysList: string[] = recurrence === "custom_days"
     ? ((body as any).recurrenceDays ?? "").split(",").filter(Boolean)
     : [];
@@ -543,10 +567,14 @@ router.post("/tasks", async (req, res) => {
       priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
       startDate,
       recurrenceType: seriesRecurrenceType,
+      recurrenceDays: weeklyRecurrenceDays,
     });
 
     const firstTaskId = generatedIds[0] ?? null;
-    await logActivity(req, "task_series_created", "task_series", series.id, body.title, { generatedTasks: generatedIds.length });
+    await logActivity(req, "task_series_created", "task_series", series.id, body.title, {
+      generatedTasks: generatedIds.length,
+      recurrenceDays: weeklyRecurrenceDays,
+    });
     if (firstTaskId) {
       await notifyTaskAssigned(firstTaskId, body.title, body.memberIds).catch(() => {});
       const taskResponse = await buildTaskResponse(firstTaskId);
@@ -696,7 +724,14 @@ router.put("/tasks/:id", async (req, res) => {
   if (body.recurrence !== undefined) updateData.recurrence = body.recurrence;
   if ("recurrenceIntervalDays" in body) updateData.recurrenceIntervalDays = body.recurrenceIntervalDays ?? null;
   if ("recurrenceDurationDays" in body) updateData.recurrenceDurationDays = body.recurrenceDurationDays ?? null;
-  if ("recurrenceDays" in body) updateData.recurrenceDays = (body as any).recurrenceDays ?? null;
+  if ("recurrenceDays" in body) {
+    try {
+      updateData.recurrenceDays = normalizeRecurrenceDays((body as any).recurrenceDays);
+    } catch {
+      res.status(400).json({ error: "Invalid recurrenceDays" });
+      return;
+    }
+  }
   const completedAt = body.status === "completed" ? new Date() : null;
   if (body.status !== undefined) {
     updateData.status = body.status;
@@ -809,6 +844,7 @@ router.post("/tasks/:id/duplicate", async (req, res) => {
     recurrenceIntervalDays: original.recurrenceIntervalDays,
     recurrenceDurationDays: original.recurrenceDurationDays,
     pageId: original.pageId,
+    recurrenceDays: original.recurrenceDays,
   }).returning();
 
   // Copy task members

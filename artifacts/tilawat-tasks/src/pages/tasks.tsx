@@ -118,6 +118,15 @@ const PRIORITY_CONFIG = {
 } as const;
 
 const APP_PRAYER_OPTIONS = ["صلاة الفجر", "صلاة المغرب", "صلاة العشاء", "صلاة الجمعة"] as const;
+const WEEKDAY_OPTIONS = [
+  { value: "0", label: "الأحد" },
+  { value: "1", label: "الاثنين" },
+  { value: "2", label: "الثلاثاء" },
+  { value: "3", label: "الأربعاء" },
+  { value: "4", label: "الخميس" },
+  { value: "5", label: "الجمعة" },
+  { value: "6", label: "السبت" },
+] as const;
 
 function isApplicationPlatformName(name?: string | null) {
   return Boolean(name && (/تطبيق/.test(name) || /app/i.test(name)));
@@ -201,6 +210,17 @@ const taskSchema = z.object({
       message: "تاريخ النهاية يجب أن يكون بعد تاريخ البداية أو مساويًا له",
       path: ["endDate"],
     });
+  }
+  if (data.recurrenceDays) {
+    const days = data.recurrenceDays.split(",").filter(Boolean);
+    const invalidDay = days.some((day) => !/^[0-6]$/.test(day));
+    if (invalidDay) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "اختر أياماً صحيحة للتكرار",
+        path: ["recurrenceDays"],
+      });
+    }
   }
 });
 
@@ -322,6 +342,7 @@ function TaskFormFields({
   const appPrayer = watch("appPrayer");
   const seriesType = watch("seriesType") ?? "temporary";
   const recurrence = watch("recurrence") ?? "none";
+  const recurrenceDays = watch("recurrenceDays") ?? "";
   const selectedPlatform = platforms?.find((p) => p.id === platformId);
   const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
   const applicationReciters = useMemo(
@@ -376,7 +397,10 @@ function TaskFormFields({
     if (seriesType === "operational" && recurrence !== "weekly" && recurrence !== "monthly") {
       setValue("recurrence", "weekly");
     }
-  }, [seriesType, recurrence, setValue]);
+    if ((seriesType !== "operational" || recurrence !== "weekly") && recurrenceDays) {
+      setValue("recurrenceDays", null);
+    }
+  }, [seriesType, recurrence, recurrenceDays, setValue]);
 
   // Auto-set reciterId from page when page changes
   useEffect(() => {
@@ -658,6 +682,52 @@ function TaskFormFields({
                 <FormMessage />
               </FormItem>
             )}
+          />
+        )}
+        {seriesType === "operational" && recurrence === "weekly" && (
+          <FormField
+            name="recurrenceDays"
+            render={({ field }) => {
+              const selectedDays = new Set((field.value ?? "").split(",").filter(Boolean));
+              const toggleDay = (day: string) => {
+                const next = new Set(selectedDays);
+                if (next.has(day)) {
+                  next.delete(day);
+                } else {
+                  next.add(day);
+                }
+                const value = [...next].sort((a, b) => Number(a) - Number(b)).join(",");
+                field.onChange(value || null);
+              };
+
+              return (
+                <FormItem>
+                  <FormLabel>أيام التكرار الأسبوعي <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {WEEKDAY_OPTIONS.map((day) => {
+                      const checked = selectedDays.has(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => toggleDay(day.value)}
+                          className={cn(
+                            "h-10 rounded-md border text-sm font-semibold transition-colors flex items-center justify-center gap-1.5",
+                            checked
+                              ? "bg-sidebar-primary text-sidebar-primary-foreground border-sidebar-primary"
+                              : "bg-background text-foreground border-input hover:bg-muted"
+                          )}
+                        >
+                          {checked && <Check className="h-3.5 w-3.5" />}
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              );
+            }}
           />
         )}
         <div className={cn("grid gap-3", seriesType === "operational" ? "grid-cols-1" : "grid-cols-2")}>
@@ -1335,6 +1405,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const onCreateSubmit = async (data: TaskFormValues) => {
     const seriesType = data.seriesType ?? "temporary";
     const recurrence = seriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
+    const recurrenceDays = seriesType === "operational" && recurrence === "weekly"
+      ? data.recurrenceDays ?? null
+      : null;
     const selectedPlatform = platforms?.find((p) => p.id === data.platformId);
     const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
     let pageId = data.pageId ?? null;
@@ -1375,7 +1448,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           recurrence,
           recurrenceIntervalDays: null,
           recurrenceDurationDays: null,
-          recurrenceDays: null,
+          recurrenceDays,
           pageId,
           expandDailyInstances: seriesType === "temporary",
           recurrencePattern: recurrence,
@@ -1396,6 +1469,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const onEditSubmit = (data: TaskFormValues) => {
     if (!editingTask) return;
     const seriesType = data.seriesType ?? "temporary";
+    const recurrence = seriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
+    const recurrenceDays = seriesType === "operational" && recurrence === "weekly"
+      ? data.recurrenceDays ?? null
+      : null;
     updateTask.mutate(
       {
         id: editingTask.id,
@@ -1411,10 +1488,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           startDate: new Date(data.startDate).toISOString(),
           dueDate: new Date(data.startDate).toISOString(),
           endDate: seriesType === "temporary" && data.endDate ? new Date(data.endDate).toISOString() : undefined,
-          recurrence: seriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none",
+          recurrence,
           recurrenceIntervalDays: null,
           recurrenceDurationDays: null,
-          recurrenceDays: null,
+          recurrenceDays,
           pageId: data.pageId ?? null,
         } as any,
       },
