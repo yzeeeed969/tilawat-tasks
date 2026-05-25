@@ -111,12 +111,6 @@ import { PlatformIcon } from "@/lib/platform-icon";
 import { cn } from "@/lib/utils";
 import { DatePickerInput } from "@/components/ui/date-picker-input";
 
-const PRIORITY_CONFIG = {
-  urgent: { label: "عاجل", icon: Flame, className: "bg-red-50 text-red-600 border-red-200" },
-  normal: { label: "عادي", icon: Minus, className: "bg-blue-50 text-blue-600 border-blue-200" },
-  low: { label: "منخفض", icon: ArrowDown, className: "bg-gray-50 text-gray-500 border-gray-200" },
-} as const;
-
 const APP_PRAYER_OPTIONS = ["صلاة الفجر", "صلاة المغرب", "صلاة العشاء", "صلاة الجمعة"] as const;
 const ADMIN_LIST_LIMIT_OPTIONS = ["25", "50", "100", "all"] as const;
 const WEEKDAY_OPTIONS = [
@@ -163,18 +157,6 @@ async function ensureApplicationReciterPage(platformId: number, reciterId: numbe
   if (!membersRes.ok) throw new Error("Failed to save page members");
 
   return page.id;
-}
-
-function PriorityBadge({ priority }: { priority?: string | null }) {
-  const key = (priority as keyof typeof PRIORITY_CONFIG) ?? "normal";
-  const cfg = PRIORITY_CONFIG[key] ?? PRIORITY_CONFIG.normal;
-  const Icon = cfg.icon;
-  return (
-    <span className={cn("inline-flex items-center gap-0.5 text-[10px] font-bold px-1.5 py-0.5 rounded-full border", cfg.className)}>
-      <Icon className="h-2.5 w-2.5" />
-      {cfg.label}
-    </span>
-  );
 }
 
 const taskSchema = z.object({
@@ -238,27 +220,72 @@ const MOSQUE_LABEL: Record<string, string> = {
 };
 const MOSQUE_ICON: Record<string, string> = { nabawi: "🕌", haram: "🕋" };
 
-function DueDateLabel({ dueDate }: { dueDate: string | null | undefined }) {
+type DueStatusTask = {
+  dueDate?: string | Date | null;
+  status?: TaskStatus | string | null;
+  completedAt?: string | Date | null;
+};
+
+function TaskDueStatusLabel({ task }: { task: DueStatusTask }) {
+  const dueDate = task.dueDate;
   if (!dueDate) return <span className="text-muted-foreground text-xs">—</span>;
-  const date = new Date(dueDate);
-  const overdue = isPast(date) && !isToday(date);
-  const today = isToday(date);
-  const soon = !overdue && !today && differenceInDays(date, new Date()) <= 3;
+  const due = startOfDay(new Date(dueDate));
+  const today = startOfDay(new Date());
+  const isCompleted = task.status === "completed";
+
+  let label = "قادمة";
+  let className = "text-muted-foreground border-transparent";
+  let showIcon = false;
+
+  if (isCompleted) {
+    if (task.completedAt) {
+      const completed = startOfDay(new Date(task.completedAt));
+      if (completed.getTime() > due.getTime()) {
+        label = "مكتملة متأخرة";
+        className = "bg-orange-50 text-orange-700 border-orange-200";
+      } else {
+        label = "مكتملة في الوقت";
+        className = "bg-green-50 text-green-700 border-green-200";
+      }
+    } else {
+      label = "مكتملة";
+      className = "bg-green-50 text-green-700 border-green-200";
+    }
+  } else if (due.getTime() < today.getTime()) {
+    label = "متأخرة";
+    className = "bg-red-50 text-red-700 border-red-200";
+    showIcon = true;
+  } else if (due.getTime() === today.getTime()) {
+    label = "مستحقة اليوم";
+    className = "bg-amber-50 text-amber-700 border-amber-200";
+    showIcon = true;
+  } else if (differenceInDays(due, today) <= 3) {
+    label = "قريبة";
+    className = "bg-blue-50 text-blue-700 border-blue-200";
+    showIcon = true;
+  }
+
   return (
     <span
       className={cn(
         "inline-flex items-center gap-1 text-xs font-medium px-2 py-0.5 rounded-full border",
-        overdue && "bg-red-50 text-red-700 border-red-200",
-        today && "bg-amber-50 text-amber-700 border-amber-200",
-        soon && "bg-blue-50 text-blue-700 border-blue-200",
-        !overdue && !today && !soon && "text-muted-foreground border-transparent"
+        className
       )}
     >
-      {(overdue || today || soon) && <CalendarClock className="h-3 w-3" />}
-      {overdue && "متأخرة · "}
-      {today && "اليوم · "}
-      {format(date, "d MMM", { locale: ar })}
+      {showIcon && <CalendarClock className="h-3 w-3" />}
+      {label}
     </span>
+  );
+}
+
+function TaskDayDateLabel({ dueDate }: { dueDate: string | Date | null | undefined }) {
+  if (!dueDate) return <span className="text-muted-foreground text-xs">—</span>;
+  const date = startOfDay(new Date(dueDate));
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-sm font-semibold text-foreground">{format(date, "EEEE", { locale: ar })}</span>
+      <span className="text-xs text-muted-foreground">{format(date, "d MMM yyyy", { locale: ar })}</span>
+    </div>
   );
 }
 
@@ -1062,7 +1089,8 @@ function ReciterTaskCard({
                           </span>
                         )}
                         <TaskStatusBadge status={task.status} />
-                        <DueDateLabel dueDate={task.dueDate} />
+                        <TaskDayDateLabel dueDate={task.dueDate} />
+                        <TaskDueStatusLabel task={task} />
                       </div>
                       <div className="flex flex-wrap gap-1">
                         {taskMembers.map((m) => (
@@ -2269,10 +2297,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     <Table>
                       <TableHeader className="bg-muted/50">
                         <TableRow>
-                          <TableHead className="text-right font-bold w-[32%]">المهمة</TableHead>
+                          <TableHead className="text-right font-bold w-[28%]">المهمة</TableHead>
+                          <TableHead className="text-right font-bold">المنصة</TableHead>
                           <TableHead className="text-right font-bold">اليوم</TableHead>
+                          <TableHead className="text-right font-bold">الاستحقاق</TableHead>
                           <TableHead className="text-right font-bold">القارئ</TableHead>
-                          <TableHead className="text-right font-bold">الأولوية</TableHead>
                           <TableHead className="text-right font-bold w-[90px]">الشاهد</TableHead>
                           <TableHead className="w-[50px]"></TableHead>
                         </TableRow>
@@ -2294,29 +2323,21 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               <TableCell className="font-medium">
                                 <div className="flex flex-col gap-0.5">
                                   <span>{task.title}</span>
-                                  <div className="flex items-center gap-1.5">
-                                    <PlatformIcon name={task.platform.name} className="h-3 w-3" />
-                                    <span className="text-xs text-muted-foreground">{task.platform.name}</span>
-                                  </div>
                                 </div>
                               </TableCell>
                               <TableCell>
-                                {dueDate ? (
-                                  <div className="flex flex-col gap-0.5">
-                                    <span className={cn("text-sm font-semibold", isOverdue ? "text-red-600" : "text-foreground")}>
-                                      {format(dueDate, "EEEE", { locale: ar })}
-                                    </span>
-                                    <span className="text-xs text-muted-foreground">{format(dueDate, "d MMM yyyy", { locale: ar })}</span>
-                                    {isOverdue && <span className="text-[10px] font-bold text-red-500 bg-red-50 border border-red-200 rounded px-1 w-fit">متأخر</span>}
-                                  </div>
-                                ) : (
-                                  <span className="text-muted-foreground text-xs">—</span>
-                                )}
+                                <div className="flex items-center gap-2">
+                                  <PlatformIcon name={task.platform.name} className="h-4 w-4" />
+                                  <span className="text-sm">{task.platform.name}</span>
+                                </div>
                               </TableCell>
+                              <TableCell>
+                                <TaskDayDateLabel dueDate={dueDate} />
+                              </TableCell>
+                              <TableCell><TaskDueStatusLabel task={task} /></TableCell>
                               <TableCell>
                                 {reciter ? <span className="text-sm">{reciter.name}</span> : <span className="text-xs text-muted-foreground">—</span>}
                               </TableCell>
-                              <TableCell><PriorityBadge priority={task.priority} /></TableCell>
                               <TableCell>
                                 {task.submissionUrl ? (
                                   <div className="flex items-center gap-1.5">
@@ -2370,27 +2391,26 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                     isLinkedTask(task.id) && linkedTaskClassName
                                   )}
                                 >
-                                  <TableCell className="w-[32%]">
+                                  <TableCell className="w-[28%]">
                                     <div className="flex flex-col gap-0.5 opacity-60">
                                       <span className="font-medium line-through">{task.title}</span>
-                                      <div className="flex items-center gap-1.5">
-                                        <PlatformIcon name={task.platform.name} className="h-3 w-3" />
-                                        <span className="text-xs text-muted-foreground">{task.platform.name}</span>
-                                      </div>
+                                    </div>
+                                  </TableCell>
+                                  <TableCell className="opacity-60">
+                                    <div className="flex items-center gap-2">
+                                      <PlatformIcon name={task.platform.name} className="h-4 w-4" />
+                                      <span className="text-sm text-muted-foreground">{task.platform.name}</span>
                                     </div>
                                   </TableCell>
                                   <TableCell>
-                                    {dueDate ? (
-                                      <div className="flex flex-col gap-0.5 opacity-60">
-                                        <span className="text-sm text-muted-foreground">{format(dueDate, "EEEE", { locale: ar })}</span>
-                                        <span className="text-xs text-muted-foreground/70">{format(dueDate, "d MMM yyyy", { locale: ar })}</span>
-                                      </div>
-                                    ) : <span className="text-xs text-muted-foreground opacity-60">—</span>}
+                                    <div className="opacity-60">
+                                      <TaskDayDateLabel dueDate={dueDate} />
+                                    </div>
                                   </TableCell>
+                                  <TableCell><TaskDueStatusLabel task={task} /></TableCell>
                                   <TableCell className="opacity-60">
                                     {reciter ? <span className="text-sm text-muted-foreground">{reciter.name}</span> : <span className="text-xs text-muted-foreground">—</span>}
                                   </TableCell>
-                                  <TableCell><PriorityBadge priority={task.priority} /></TableCell>
                                   <TableCell>
                                     {task.submissionUrl ? (
                                       <div className="flex items-center gap-1.5">
@@ -2443,8 +2463,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   <TableHead className="text-right font-bold">المنصة</TableHead>
                   <TableHead className="text-right font-bold">القارئ</TableHead>
                   <TableHead className="text-right font-bold">المسؤولون</TableHead>
-                  <TableHead className="text-right font-bold">الأولوية</TableHead>
                   <TableHead className="text-right font-bold">الحالة</TableHead>
+                  <TableHead className="text-right font-bold">اليوم / التاريخ</TableHead>
                   <TableHead className="text-right font-bold">الاستحقاق</TableHead>
                   <TableHead className="text-right font-bold w-[90px]">الشاهد</TableHead>
                   <TableHead className="w-[70px]"></TableHead>
@@ -2523,12 +2543,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                           ))}
                         </div>
                       </TableCell>
-                      {/* Priority */}
-                      <TableCell>
-                        <PriorityBadge priority={task.priority} />
-                      </TableCell>
                       <TableCell><TaskStatusBadge status={task.status} /></TableCell>
-                      <TableCell><DueDateLabel dueDate={task.dueDate} /></TableCell>
+                      <TableCell><TaskDayDateLabel dueDate={task.dueDate} /></TableCell>
+                      <TableCell><TaskDueStatusLabel task={task} /></TableCell>
                       {/* Submission URL column */}
                       <TableCell>
                         {task.submissionUrl ? (
