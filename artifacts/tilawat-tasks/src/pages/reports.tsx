@@ -55,6 +55,9 @@ import {
   Users,
   Printer,
   Mic2,
+  Eye,
+  EyeOff,
+  Filter,
 } from "lucide-react";
 import { PlatformIcon, getPlatformEmoji } from "@/lib/platform-icon";
 import { cn } from "@/lib/utils";
@@ -136,6 +139,8 @@ export default function Reports() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [expandedMember, setExpandedMember] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [hideMemberNames, setHideMemberNames] = useState(false);
+  const [selectedReportMemberIds, setSelectedReportMemberIds] = useState<number[]>([]);
   const { toast } = useToast();
 
   const { data: allTasks } = useListTasks(
@@ -150,6 +155,23 @@ export default function Reports() {
   });
   const now = new Date();
   const today = useMemo(() => startOfDay(now), []);
+  const reportMemberOptions = useMemo(() => memberStats?.map((stat) => stat.member) ?? [], [memberStats]);
+  const selectedReportMemberIdSet = useMemo(() => new Set(selectedReportMemberIds), [selectedReportMemberIds]);
+  const reportTasks = useMemo(() => {
+    if (!allTasks) return [];
+    if (selectedReportMemberIdSet.size === 0) return allTasks;
+    return allTasks.filter((task) =>
+      taskAssignees(task).some((member) => selectedReportMemberIdSet.has(member.id))
+    );
+  }, [allTasks, selectedReportMemberIdSet]);
+
+  const toggleReportMember = useCallback((memberId: number) => {
+    setSelectedReportMemberIds((current) =>
+      current.includes(memberId)
+        ? current.filter((id) => id !== memberId)
+        : [...current, memberId]
+    );
+  }, []);
 
   const referenceWeek = useMemo(() => {
     if (weekOffset === 0) return now;
@@ -189,24 +211,25 @@ export default function Reports() {
           : true
         : false;
 
-    const completed = allTasks.filter(
+    const completed = reportTasks.filter(
       (t) => t.status === "completed" && (period === "all" ? true : inPeriod(t.completedAt))
     );
-    const created = allTasks.filter(
+    const created = reportTasks.filter(
       (t) => period === "all" ? true : isWithinInterval(new Date(t.createdAt), periodInterval!)
     );
-    const overdue = allTasks.filter(
+    const overdue = reportTasks.filter(
       (t) => isIncompleteOverdue(t, today) && (period === "all" ? true : inPeriod(t.dueDate))
     );
     const completedOnTime = completed.filter(isCompletedOnTime);
     const completedLate = completed.filter(isCompletedLate);
 
     return { completed, completedOnTime, completedLate, created, overdue };
-  }, [allTasks, period, periodInterval, today]);
+  }, [allTasks, reportTasks, period, periodInterval, today]);
 
   const memberRows = useMemo(() => {
     if (!memberStats || !allTasks) return [];
     return memberStats
+      .filter((stat) => selectedReportMemberIdSet.size === 0 || selectedReportMemberIdSet.has(stat.member.id))
       .map((stat) => {
         const inPeriod = (date: string | null | undefined) =>
           date
@@ -215,19 +238,19 @@ export default function Reports() {
               : true
             : false;
 
-        const completedTasks = allTasks.filter(
+        const completedTasks = reportTasks.filter(
           (t) => isAssignedToMember(t, stat.member.id) &&
             t.status === "completed" &&
             (period === "all" ? true : inPeriod(t.completedAt))
         );
         const completedOnTimeTasks = completedTasks.filter(isCompletedOnTime);
         const completedLateTasks = completedTasks.filter(isCompletedLate);
-        const overdueTasks = allTasks.filter(
+        const overdueTasks = reportTasks.filter(
           (t) => isAssignedToMember(t, stat.member.id) &&
             isIncompleteOverdue(t, today) &&
             (period === "all" ? true : inPeriod(t.dueDate))
         );
-        const createdTasks = allTasks.filter(
+        const createdTasks = reportTasks.filter(
           (t) => isAssignedToMember(t, stat.member.id) &&
             (period === "all"
               ? true
@@ -241,11 +264,12 @@ export default function Reports() {
           periodCompletedLate: completedLateTasks.length,
           periodOverdue: overdueTasks.length,
           periodCreated: createdTasks.length,
+          completionRate: createdTasks.length > 0 ? (completedTasks.length / createdTasks.length) * 100 : 0,
           completedTasksList: completedTasks,
         };
       })
       .sort((a, b) => b.periodCompleted - a.periodCompleted);
-  }, [memberStats, allTasks, period, periodInterval, today]);
+  }, [memberStats, allTasks, reportTasks, selectedReportMemberIdSet, period, periodInterval, today]);
 
   const platformRows = useMemo(() => {
     if (!platformStats || !allTasks) return [];
@@ -257,17 +281,17 @@ export default function Reports() {
             : true
           : false;
 
-      const completed = allTasks.filter(
+      const completed = reportTasks.filter(
         (t) => t.platform.id === stat.platform.id &&
           t.status === "completed" &&
           (period === "all" ? true : inPeriod(t.completedAt))
       );
-      const overdue = allTasks.filter(
+      const overdue = reportTasks.filter(
         (t) => t.platform.id === stat.platform.id &&
           isIncompleteOverdue(t, today) &&
           (period === "all" ? true : inPeriod(t.dueDate))
       ).length;
-      const created = allTasks.filter(
+      const created = reportTasks.filter(
         (t) => t.platform.id === stat.platform.id &&
           (period === "all"
             ? true
@@ -281,9 +305,10 @@ export default function Reports() {
         periodCompletedLate: completed.filter(isCompletedLate).length,
         periodOverdue: overdue,
         periodCreated: created,
+        completionRate: created > 0 ? (completed.length / created) * 100 : 0,
       };
     });
-  }, [platformStats, allTasks, period, periodInterval, today]);
+  }, [platformStats, allTasks, reportTasks, period, periodInterval, today]);
 
   const reciterRows = useMemo(() => {
     if (!allTasks) return [];
@@ -295,7 +320,7 @@ export default function Reports() {
         : false;
 
     const reciterMap = new Map<number, { reciter: NonNullable<TaskWithDetails["reciter"]>; tasks: TaskWithDetails[] }>();
-    for (const task of allTasks) {
+    for (const task of reportTasks) {
       if (!task.reciter) continue;
       if (!reciterMap.has(task.reciter.id)) {
         reciterMap.set(task.reciter.id, { reciter: task.reciter, tasks: [] });
@@ -330,7 +355,7 @@ export default function Reports() {
       })
       .filter((row) => row.totalTasks > 0 || row.completedTasks > 0 || row.overdueTasksCount > 0)
       .sort((a, b) => b.completedTasks - a.completedTasks);
-  }, [allTasks, period, periodInterval, today]);
+  }, [allTasks, reportTasks, period, periodInterval, today]);
 
   // WhatsApp export (weekly mode)
   const buildWhatsAppText = useCallback(() => {
@@ -373,7 +398,8 @@ export default function Reports() {
     for (const row of memberRows) {
       const lateStr = row.periodCompletedLate > 0 ? ` | 🟠 مكتملة متأخرة: ${row.periodCompletedLate}` : "";
       const overdueStr = row.periodOverdue > 0 ? ` | ⚠️ غير مكتملة متأخرة: ${row.periodOverdue}` : "";
-      lines.push(`• *${row.member.name}*: ✅ ${row.periodCompleted} مكتملة | 🟢 في الوقت: ${row.periodCompletedOnTime}${lateStr}${overdueStr}`);
+      const memberPrefix = hideMemberNames ? "" : `*${row.member.name}*: `;
+      lines.push(`• ${memberPrefix}✅ ${row.periodCompleted} مكتملة | 🟢 في الوقت: ${row.periodCompletedOnTime}${lateStr}${overdueStr}`);
     }
 
     const activePlatforms = platformRows.filter(
@@ -396,7 +422,8 @@ export default function Reports() {
       for (const task of periodStats.completed) {
         const emoji = getPlatformEmoji(task.platform.name);
         const timing = isCompletedLate(task) ? "مكتملة متأخرة" : "مكتملة في الوقت";
-        lines.push(`${emoji} ${task.title} — ${taskAssignees(task).map((member) => member.name).join("، ")} — ${timing}`);
+        const assignees = hideMemberNames ? "" : ` — ${taskAssignees(task).map((member) => member.name).join("، ")}`;
+        lines.push(`${emoji} ${task.title}${assignees} — ${timing}`);
       }
     }
 
@@ -405,7 +432,7 @@ export default function Reports() {
     lines.push("_تم إنشاء هذا التقرير تلقائياً من نظام إدارة مهام تلاوة الحرمين_ 🕌");
 
     return lines.join("\n");
-  }, [periodStats, memberRows, platformRows, period, weekStart, weekEnd, referenceMonth]);
+  }, [periodStats, memberRows, platformRows, period, weekStart, weekEnd, referenceMonth, hideMemberNames]);
 
   const handleCopy = useCallback(async () => {
     const text = buildWhatsAppText();
@@ -555,6 +582,72 @@ export default function Reports() {
         )}
       </div>
 
+      {/* Display controls */}
+      <div className="flex flex-col xl:flex-row gap-3 print:hidden">
+        <Button
+          type="button"
+          variant={hideMemberNames ? "default" : "outline"}
+          onClick={() => setHideMemberNames((value) => !value)}
+          className={cn(
+            "w-fit gap-2 font-medium",
+            hideMemberNames && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+          )}
+        >
+          {hideMemberNames ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+          إخفاء أسماء الأعضاء
+        </Button>
+
+        <div className="flex-1 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="flex items-center gap-2 font-semibold text-sm text-foreground">
+              <Filter className="h-4 w-4 text-sidebar-primary" />
+              فلترة التقارير حسب الأعضاء
+              <Badge variant="outline" className="font-medium">
+                {selectedReportMemberIds.length > 0 ? `${selectedReportMemberIds.length} محدد` : "الكل"}
+              </Badge>
+            </div>
+            {selectedReportMemberIds.length > 0 && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => setSelectedReportMemberIds([])}
+                className="h-7 text-xs"
+              >
+                مسح الاختيار
+              </Button>
+            )}
+          </div>
+
+          {hideMemberNames ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              أسماء الأعضاء مخفية مؤقتًا. ألغِ الإخفاء إذا أردت تعديل اختيار الأعضاء.
+            </p>
+          ) : (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {reportMemberOptions.map((member) => {
+                const selected = selectedReportMemberIdSet.has(member.id);
+                return (
+                  <button
+                    key={member.id}
+                    type="button"
+                    onClick={() => toggleReportMember(member.id)}
+                    className={cn(
+                      "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                      selected
+                        ? "border-sidebar-primary bg-sidebar-primary text-sidebar-primary-foreground"
+                        : "border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                    )}
+                  >
+                    {member.name}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      </div>
+
       {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
@@ -653,7 +746,7 @@ export default function Reports() {
                           )}
                         </button>
                       </TableCell>
-                      <TableCell className="font-semibold">{row.member.name}</TableCell>
+                      <TableCell className="font-semibold">{hideMemberNames ? "" : row.member.name}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{row.member.role}</TableCell>
                       <TableCell>
                         <span className="font-bold text-green-600">{row.periodCompleted}</span>
@@ -896,7 +989,7 @@ export default function Reports() {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {taskAssignees(task).map((member) => member.name).join("، ")}
+                      {hideMemberNames ? "" : taskAssignees(task).map((member) => member.name).join("، ")}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {task.dueDate
