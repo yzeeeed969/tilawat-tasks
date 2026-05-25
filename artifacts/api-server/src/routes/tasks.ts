@@ -10,6 +10,7 @@ import {
   ListTasksQueryParams,
 } from "@workspace/api-zod";
 import { generateUpcomingTasksForSeries, syncActiveSeries } from "../services/task-engine";
+import { notifyTelegramTaskCompleted } from "../services/telegram-notification-engine";
 import { canCreateTask, canDeleteTask, canEditTask, canViewTask } from "../lib/permissions";
 
 const router = Router();
@@ -898,6 +899,13 @@ router.put("/tasks/:id", async (req, res) => {
   const beingCompleted = body.status === "completed" && currentTask.status !== "completed";
   if (beingCompleted) {
     await notifyTaskCompleted({
+      id,
+      title: (updateData.title as string | undefined) ?? currentTask.title,
+      memberId: (updateData.memberId as number | undefined) ?? currentTask.memberId,
+      submissionUrl: (updateData.submissionUrl as string | null | undefined) ?? currentTask.submissionUrl ?? null,
+      completedAt,
+    }).catch(() => {});
+    await notifyTelegramTaskCompleted({
       id,
       title: (updateData.title as string | undefined) ?? currentTask.title,
       memberId: (updateData.memberId as number | undefined) ?? currentTask.memberId,

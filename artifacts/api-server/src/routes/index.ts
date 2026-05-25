@@ -10,6 +10,7 @@ import adminRouter from "./admin";
 import recitersRouter from "./reciters";
 import notificationsRouter from "./notifications";
 import activityLogRouter from "./activity-log";
+import telegramRouter from "./telegram";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -17,6 +18,7 @@ const router: IRouter = Router();
 // Public routes
 router.use(healthRouter);
 router.use(authRouter);
+router.use(telegramRouter);
 
 // Protected routes
 router.use(requireAuth);

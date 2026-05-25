@@ -14,6 +14,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from "@/components/ui/form";
 import {
@@ -26,6 +27,7 @@ import {
   Loader2, Plus, Trash2, Settings as SettingsIcon,
   Shield, MicVocal, UserPlus, CheckCircle, XCircle, Clock,
   ChevronDown, ChevronUp, Pencil, Save, X, Layers, Star, Users,
+  Bell, Send, Link2, RefreshCw,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { PlatformIcon } from "@/lib/platform-icon";
@@ -79,6 +81,45 @@ interface AppUser {
   createdAt: string;
 }
 
+interface TelegramSettingsData {
+  settings: {
+    enabled: boolean;
+    dailyReminderTime: string;
+    dailySummaryTime: string;
+    overdueAfterTime: string;
+    notifyDailyReminder: boolean;
+    notifyMemberOverdue: boolean;
+    notifyAdminOverdue: boolean;
+    notifyAdminCompleted: boolean;
+    notifyAdminDailySummary: boolean;
+    suppressRepeatHours: number;
+  };
+  recipients: Array<{
+    id: number;
+    userId: number | null;
+    memberId: number | null;
+    telegramUsername: string | null;
+    isEnabled: boolean;
+    linkedAt: string;
+    memberName: string | null;
+    displayName: string | null;
+    username: string | null;
+  }>;
+  botConfigured: boolean;
+}
+
+interface TelegramLog {
+  id: number;
+  type: string;
+  recipientUserId: number | null;
+  recipientMemberId: number | null;
+  taskId: number | null;
+  status: string;
+  failureReason: string | null;
+  sentAt: string | null;
+  createdAt: string;
+}
+
 // ── API helpers ───────────────────────────────────────────────────────────────
 async function fetchAdminUsers(): Promise<AppUser[]> {
   const res = await fetch("/api/admin/users", { credentials: "include" });
@@ -120,6 +161,61 @@ async function deleteUser(id: number) {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.error ?? "Failed to delete");
   }
+}
+
+async function fetchTelegramSettings(): Promise<TelegramSettingsData> {
+  const res = await fetch("/api/telegram/settings", { credentials: "include" });
+  if (!res.ok) throw new Error("فشل تحميل إعدادات Telegram");
+  return res.json();
+}
+
+async function fetchTelegramLogs(): Promise<TelegramLog[]> {
+  const res = await fetch("/api/telegram/logs?limit=50", { credentials: "include" });
+  if (!res.ok) throw new Error("فشل تحميل سجل Telegram");
+  return res.json();
+}
+
+async function patchTelegramSettings(updates: Partial<TelegramSettingsData["settings"]>) {
+  const res = await fetch("/api/telegram/settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(updates),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "فشل حفظ إعدادات Telegram");
+  return body;
+}
+
+async function createTelegramLinkToken(userId?: number) {
+  const res = await fetch("/api/telegram/link-token", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(userId ? { userId } : {}),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "فشل إنشاء رمز الربط");
+  return body as { token: string; expiresAt: string };
+}
+
+async function runTelegramDueCheck() {
+  const res = await fetch("/api/telegram/run-due", { method: "POST", credentials: "include" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "فشل تشغيل الفحص");
+  return body;
+}
+
+async function sendTelegramTest(userId?: number) {
+  const res = await fetch("/api/telegram/test", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(userId ? { userId } : {}),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "فشل إرسال رسالة الاختبار");
+  return body;
 }
 
 // ── Permission checkbox ────────────────────────────────────────────────────────
@@ -1142,6 +1238,255 @@ function PlatformsSection() {
   );
 }
 
+function TelegramToggleRow({ title, description, checked, onChange }: {
+  title: string;
+  description: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-lg border border-border/60 bg-background px-4 py-3">
+      <div className="space-y-1">
+        <p className="font-semibold">{title}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
+      </div>
+      <Switch checked={checked} onCheckedChange={onChange} />
+    </div>
+  );
+}
+
+function TelegramSettingsSection() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const [linkToken, setLinkToken] = useState<string | null>(null);
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["telegram-settings"],
+    queryFn: fetchTelegramSettings,
+  });
+  const { data: logs } = useQuery({
+    queryKey: ["telegram-logs"],
+    queryFn: fetchTelegramLogs,
+  });
+
+  const saveMutation = useMutation({
+    mutationFn: patchTelegramSettings,
+    onSuccess: () => {
+      toast({ title: "تم حفظ إعدادات Telegram" });
+      queryClient.invalidateQueries({ queryKey: ["telegram-settings"] });
+    },
+    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
+  });
+
+  const linkMutation = useMutation({
+    mutationFn: () => createTelegramLinkToken(user?.id),
+    onSuccess: (result) => {
+      setLinkToken(result.token);
+      toast({ title: "تم إنشاء رمز الربط" });
+    },
+    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
+  });
+
+  const runMutation = useMutation({
+    mutationFn: runTelegramDueCheck,
+    onSuccess: (result) => {
+      toast({ title: `تم تشغيل الفحص — أُرسل ${result.sent ?? 0}` });
+      queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
+    },
+    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
+  });
+
+  const testMutation = useMutation({
+    mutationFn: () => sendTelegramTest(user?.id),
+    onSuccess: () => {
+      toast({ title: "تم إرسال رسالة اختبار" });
+      queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
+    },
+    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
+  });
+
+  const settings = data?.settings;
+
+  return (
+    <Card className="border-border/50 shadow-sm lg:col-span-2">
+      <CardHeader className="bg-sidebar/5 border-b border-border/50 pb-6">
+        <CardTitle className="flex items-center gap-2">
+          <Bell className="h-5 w-5 text-sidebar-primary" />
+          إعدادات إشعارات Telegram
+        </CardTitle>
+        <CardDescription className="text-base mt-2">
+          التحكم في تذكيرات المهام والتنبيهات وسجل الإرسال، مع منع التكرار تلقائيًا
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-6 space-y-6">
+        {isLoading || !settings ? (
+          <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-sidebar-primary" /></div>
+        ) : (
+          <>
+            {!data.botConfigured && (
+              <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                لم يتم ضبط متغير <span dir="ltr" className="font-mono">TELEGRAM_BOT_TOKEN</span> في الخادم بعد. يمكن حفظ الإعدادات الآن، لكن الإرسال الفعلي يحتاج ضبط التوكن في Railway.
+              </div>
+            )}
+
+            <TelegramToggleRow
+              title="تفعيل إشعارات Telegram"
+              description="إيقافه يمنع كل رسائل Telegram دون التأثير على إشعارات الموقع الداخلية."
+              checked={settings.enabled}
+              onChange={(enabled) => saveMutation.mutate({ enabled })}
+            />
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">وقت تذكير الأعضاء</label>
+                <Input
+                  type="time"
+                  dir="ltr"
+                  defaultValue={settings.dailyReminderTime}
+                  onBlur={(e) => saveMutation.mutate({ dailyReminderTime: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">وقت ملخص المدير</label>
+                <Input
+                  type="time"
+                  dir="ltr"
+                  defaultValue={settings.dailySummaryTime}
+                  onBlur={(e) => saveMutation.mutate({ dailySummaryTime: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">اعتبار المهمة متأخرة بعد</label>
+                <Input
+                  type="time"
+                  dir="ltr"
+                  defaultValue={settings.overdueAfterTime}
+                  onBlur={(e) => saveMutation.mutate({ overdueAfterTime: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">منع التكرار بالساعات</label>
+                <Input
+                  type="number"
+                  min={1}
+                  max={168}
+                  dir="ltr"
+                  defaultValue={settings.suppressRepeatHours}
+                  onBlur={(e) => saveMutation.mutate({ suppressRepeatHours: Number(e.target.value) })}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <TelegramToggleRow
+                title="تذكير يومي للأعضاء"
+                description="يرسل لكل عضو مهامه غير المكتملة في هذا اليوم."
+                checked={settings.notifyDailyReminder}
+                onChange={(notifyDailyReminder) => saveMutation.mutate({ notifyDailyReminder })}
+              />
+              <TelegramToggleRow
+                title="تنبيه العضو عند التأخير"
+                description="يرسل للعضو إذا أصبحت مهمة مسندة له متأخرة."
+                checked={settings.notifyMemberOverdue}
+                onChange={(notifyMemberOverdue) => saveMutation.mutate({ notifyMemberOverdue })}
+              />
+              <TelegramToggleRow
+                title="تنبيه المدير عند تأخر عضو"
+                description="يرسل للمديرين عند وجود مهمة متأخرة على عضو."
+                checked={settings.notifyAdminOverdue}
+                onChange={(notifyAdminOverdue) => saveMutation.mutate({ notifyAdminOverdue })}
+              />
+              <TelegramToggleRow
+                title="تنبيه المدير عند إكمال مهمة"
+                description="يرسل مرة واحدة فقط عند انتقال المهمة إلى مكتملة."
+                checked={settings.notifyAdminCompleted}
+                onChange={(notifyAdminCompleted) => saveMutation.mutate({ notifyAdminCompleted })}
+              />
+              <TelegramToggleRow
+                title="ملخص يومي للمدير"
+                description="يعرض المنجز والمتأخر وغير المكتمل في اليوم."
+                checked={settings.notifyAdminDailySummary}
+                onChange={(notifyAdminDailySummary) => saveMutation.mutate({ notifyAdminDailySummary })}
+              />
+            </div>
+
+            <div className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-3">
+              <h3 className="font-bold flex items-center gap-2">
+                <Link2 className="h-4 w-4 text-sidebar-primary" />
+                ربط حسابي في Telegram
+              </h3>
+              <p className="text-sm text-muted-foreground">
+                أنشئ رمز ربط، ثم أرسل للبوت في Telegram: <span dir="ltr" className="font-mono">/start الرمز</span>. الرمز صالح لمدة 30 دقيقة.
+              </p>
+              {linkToken && (
+                <div className="rounded-lg bg-background border border-border px-3 py-2 font-mono text-sm text-left" dir="ltr">
+                  /start {linkToken}
+                </div>
+              )}
+              <div className="flex flex-wrap gap-2">
+                <Button variant="outline" onClick={() => linkMutation.mutate()} disabled={linkMutation.isPending}>
+                  {linkMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Link2 className="h-4 w-4 ml-2" />}
+                  إنشاء رمز ربط
+                </Button>
+                <Button variant="outline" onClick={() => testMutation.mutate()} disabled={testMutation.isPending}>
+                  {testMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Send className="h-4 w-4 ml-2" />}
+                  إرسال اختبار لي
+                </Button>
+                <Button variant="outline" onClick={() => runMutation.mutate()} disabled={runMutation.isPending}>
+                  {runMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <RefreshCw className="h-4 w-4 ml-2" />}
+                  تشغيل الفحص الآن
+                </Button>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+              <div className="rounded-xl border border-border/60 bg-background p-4">
+                <h3 className="font-bold mb-3">الحسابات المرتبطة</h3>
+                {data.recipients.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">لا يوجد ربط Telegram بعد.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {data.recipients.slice(0, 8).map((recipient) => (
+                      <div key={recipient.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/50 px-3 py-2 text-sm">
+                        <span>{recipient.displayName ?? recipient.memberName ?? recipient.username ?? "مستخدم"}</span>
+                        <Badge variant={recipient.isEnabled ? "default" : "secondary"}>
+                          {recipient.isEnabled ? "مفعل" : "متوقف"}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="rounded-xl border border-border/60 bg-background p-4">
+                <h3 className="font-bold mb-3">آخر سجل إرسال</h3>
+                {!logs || logs.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">لا توجد رسائل مرسلة بعد.</p>
+                ) : (
+                  <div className="space-y-2 max-h-72 overflow-auto">
+                    {logs.slice(0, 10).map((log) => (
+                      <div key={log.id} className="rounded-lg border border-border/50 px-3 py-2 text-xs space-y-1">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="font-semibold">{log.type}</span>
+                          <Badge variant={log.status === "success" ? "default" : log.status === "failed" ? "destructive" : "secondary"}>
+                            {log.status === "success" ? "نجح" : log.status === "failed" ? "فشل" : "قيد الإرسال"}
+                          </Badge>
+                        </div>
+                        {log.failureReason && <p className="text-red-600">{log.failureReason}</p>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Main Settings page ────────────────────────────────────────────────────────
 export default function Settings() {
   const isAdmin = useIsAdmin();
@@ -1158,6 +1503,7 @@ export default function Settings() {
         <p className="text-muted-foreground mt-2 text-lg">إدارة الفريق والمنصات والقراء والصلاحيات</p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {isAdmin && <TelegramSettingsSection />}
         {canManageAccounts && <UserManagementSection />}
         {canManageReciters && <RecitersSection />}
         {canManagePlatforms && <PlatformsSection />}

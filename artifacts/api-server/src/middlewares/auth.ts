@@ -4,9 +4,15 @@ import { usersTable } from "@workspace/db/schema";
 import { eq } from "drizzle-orm";
 import { ensureAdminLinkedMember } from "../lib/user-member";
 
-declare module "express-session" {
-  interface SessionData {
-    userId: number;
+declare global {
+  namespace Express {
+    interface Request {
+      session: {
+        userId?: number;
+        save(callback?: (err?: Error) => void): void;
+        destroy(callback?: () => void): void;
+      };
+    }
   }
 }
 

@@ -126,7 +126,7 @@ app.delete("/tasks/:id", (req, res) => {
   res.status(204).send();
 });
 
-const sessionSecret = process.env.SESSION_SECRET;
+const sessionSecret = process.env.SESSION_SECRET ?? "";
 if (!sessionSecret) throw new Error("SESSION_SECRET is required");
 
 const isProd = process.env.NODE_ENV === "production";

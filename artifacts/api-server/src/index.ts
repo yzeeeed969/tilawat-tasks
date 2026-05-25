@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { startTelegramScheduler } from "./services/telegram-scheduler";
 
 const rawPort = process.env["PORT"];
 
@@ -22,5 +23,6 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  startTelegramScheduler(logger);
 });
 // trigger deploy
