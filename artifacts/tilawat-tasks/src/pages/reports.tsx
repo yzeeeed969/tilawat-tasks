@@ -5,9 +5,8 @@ import {
   getGetMemberStatsQueryKey,
   useGetPlatformStats,
   getGetPlatformStatsQueryKey,
-  useGetReciterStats,
-  getGetReciterStatsQueryKey,
 } from "@workspace/api-client-react";
+import type { TaskWithDetails } from "@workspace/api-client-react";
 import {
   startOfWeek,
   endOfWeek,
@@ -98,6 +97,39 @@ function StatCard({
   );
 }
 
+function taskAssignees(task: TaskWithDetails) {
+  return task.members && task.members.length > 0 ? task.members : [task.member];
+}
+
+function isAssignedToMember(task: TaskWithDetails, memberId: number) {
+  return taskAssignees(task).some((member) => member.id === memberId);
+}
+
+function isCompletedLate(task: TaskWithDetails) {
+  if (task.status !== "completed" || !task.dueDate || !task.completedAt) return false;
+  return startOfDay(new Date(task.completedAt)).getTime() > startOfDay(new Date(task.dueDate)).getTime();
+}
+
+function isCompletedOnTime(task: TaskWithDetails) {
+  return task.status === "completed" && !isCompletedLate(task);
+}
+
+function isIncompleteOverdue(task: TaskWithDetails, today: Date) {
+  return Boolean(
+    task.status !== "completed" &&
+      task.dueDate &&
+      startOfDay(new Date(task.dueDate)).getTime() < today.getTime()
+  );
+}
+
+function CompletionTimingBadge({ task }: { task: TaskWithDetails }) {
+  if (isCompletedLate(task)) {
+    return <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50">مكتملة متأخرة</Badge>;
+  }
+
+  return <Badge className="bg-green-50 text-green-700 border-green-200 hover:bg-green-50">مكتملة في الوقت</Badge>;
+}
+
 export default function Reports() {
   const [period, setPeriod] = useState<Period>("week");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -116,11 +148,8 @@ export default function Reports() {
   const { data: platformStats } = useGetPlatformStats({
     query: { queryKey: getGetPlatformStatsQueryKey() },
   });
-  const { data: reciterStats } = useGetReciterStats({
-    query: { queryKey: getGetReciterStatsQueryKey() },
-  });
-
   const now = new Date();
+  const today = useMemo(() => startOfDay(now), []);
 
   const referenceWeek = useMemo(() => {
     if (weekOffset === 0) return now;
@@ -167,11 +196,13 @@ export default function Reports() {
       (t) => period === "all" ? true : isWithinInterval(new Date(t.createdAt), periodInterval!)
     );
     const overdue = allTasks.filter(
-      (t) => t.dueDate && t.status !== "completed" && (period === "all" ? true : inPeriod(t.dueDate))
+      (t) => isIncompleteOverdue(t, today) && (period === "all" ? true : inPeriod(t.dueDate))
     );
+    const completedOnTime = completed.filter(isCompletedOnTime);
+    const completedLate = completed.filter(isCompletedLate);
 
-    return { completed, created, overdue };
-  }, [allTasks, period, periodInterval]);
+    return { completed, completedOnTime, completedLate, created, overdue };
+  }, [allTasks, period, periodInterval, today]);
 
   const memberRows = useMemo(() => {
     if (!memberStats || !allTasks) return [];
@@ -185,18 +216,19 @@ export default function Reports() {
             : false;
 
         const completedTasks = allTasks.filter(
-          (t) => t.member.id === stat.member.id &&
+          (t) => isAssignedToMember(t, stat.member.id) &&
             t.status === "completed" &&
             (period === "all" ? true : inPeriod(t.completedAt))
         );
+        const completedOnTimeTasks = completedTasks.filter(isCompletedOnTime);
+        const completedLateTasks = completedTasks.filter(isCompletedLate);
         const overdueTasks = allTasks.filter(
-          (t) => t.member.id === stat.member.id &&
-            t.dueDate &&
-            t.status !== "completed" &&
+          (t) => isAssignedToMember(t, stat.member.id) &&
+            isIncompleteOverdue(t, today) &&
             (period === "all" ? true : inPeriod(t.dueDate))
         );
         const createdTasks = allTasks.filter(
-          (t) => t.member.id === stat.member.id &&
+          (t) => isAssignedToMember(t, stat.member.id) &&
             (period === "all"
               ? true
               : isWithinInterval(new Date(t.createdAt), periodInterval!))
@@ -205,13 +237,15 @@ export default function Reports() {
         return {
           ...stat,
           periodCompleted: completedTasks.length,
+          periodCompletedOnTime: completedOnTimeTasks.length,
+          periodCompletedLate: completedLateTasks.length,
           periodOverdue: overdueTasks.length,
           periodCreated: createdTasks.length,
           completedTasksList: completedTasks,
         };
       })
       .sort((a, b) => b.periodCompleted - a.periodCompleted);
-  }, [memberStats, allTasks, period, periodInterval]);
+  }, [memberStats, allTasks, period, periodInterval, today]);
 
   const platformRows = useMemo(() => {
     if (!platformStats || !allTasks) return [];
@@ -227,6 +261,11 @@ export default function Reports() {
         (t) => t.platform.id === stat.platform.id &&
           t.status === "completed" &&
           (period === "all" ? true : inPeriod(t.completedAt))
+      );
+      const overdue = allTasks.filter(
+        (t) => t.platform.id === stat.platform.id &&
+          isIncompleteOverdue(t, today) &&
+          (period === "all" ? true : inPeriod(t.dueDate))
       ).length;
       const created = allTasks.filter(
         (t) => t.platform.id === stat.platform.id &&
@@ -235,16 +274,63 @@ export default function Reports() {
             : isWithinInterval(new Date(t.createdAt), periodInterval!))
       ).length;
 
-      return { ...stat, periodCompleted: completed, periodCreated: created };
+      return {
+        ...stat,
+        periodCompleted: completed.length,
+        periodCompletedOnTime: completed.filter(isCompletedOnTime).length,
+        periodCompletedLate: completed.filter(isCompletedLate).length,
+        periodOverdue: overdue,
+        periodCreated: created,
+      };
     });
-  }, [platformStats, allTasks, period, periodInterval]);
+  }, [platformStats, allTasks, period, periodInterval, today]);
 
   const reciterRows = useMemo(() => {
-    if (!reciterStats) return [];
-    return reciterStats
-      .filter((r) => r.totalTasks > 0)
+    if (!allTasks) return [];
+    const inPeriod = (date: string | null | undefined) =>
+      date
+        ? periodInterval
+          ? isWithinInterval(new Date(date), periodInterval)
+          : true
+        : false;
+
+    const reciterMap = new Map<number, { reciter: NonNullable<TaskWithDetails["reciter"]>; tasks: TaskWithDetails[] }>();
+    for (const task of allTasks) {
+      if (!task.reciter) continue;
+      if (!reciterMap.has(task.reciter.id)) {
+        reciterMap.set(task.reciter.id, { reciter: task.reciter, tasks: [] });
+      }
+      reciterMap.get(task.reciter.id)!.tasks.push(task);
+    }
+
+    return [...reciterMap.values()]
+      .map(({ reciter, tasks }) => {
+        const periodTasks = tasks.filter((task) =>
+          period === "all" ? true : task.dueDate ? inPeriod(task.dueDate) : inPeriod(task.createdAt)
+        );
+        const completed = tasks.filter(
+          (task) => task.status === "completed" && (period === "all" ? true : inPeriod(task.completedAt))
+        );
+        const overdue = tasks.filter(
+          (task) => isIncompleteOverdue(task, today) && (period === "all" ? true : inPeriod(task.dueDate))
+        );
+        const totalTasks = period === "all" ? tasks.length : periodTasks.length;
+        const completionRate = totalTasks > 0 ? (completed.length / totalTasks) * 100 : 0;
+
+        return {
+          reciter,
+          totalTasks,
+          completedTasks: completed.length,
+          completedOnTimeTasks: completed.filter(isCompletedOnTime).length,
+          completedLateTasks: completed.filter(isCompletedLate).length,
+          pendingTasks: periodTasks.filter((task) => task.status === "pending").length,
+          overdueTasksCount: overdue.length,
+          completionRate,
+        };
+      })
+      .filter((row) => row.totalTasks > 0 || row.completedTasks > 0 || row.overdueTasksCount > 0)
       .sort((a, b) => b.completedTasks - a.completedTasks);
-  }, [reciterStats]);
+  }, [allTasks, period, periodInterval, today]);
 
   // WhatsApp export (weekly mode)
   const buildWhatsAppText = useCallback(() => {
@@ -276,25 +362,30 @@ export default function Reports() {
     lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push(`📈 *ملخص الفترة*`);
     lines.push(`✅ مهام مكتملة: ${periodStats.completed.length}`);
+    lines.push(`🟢 مكتملة في الوقت: ${periodStats.completedOnTime.length}`);
+    lines.push(`🟠 مكتملة متأخرة: ${periodStats.completedLate.length}`);
     lines.push(`📝 مهام منشأة: ${periodStats.created.length}`);
-    lines.push(`⚠️ مهام متأخرة: ${periodStats.overdue.length}`);
+    lines.push(`⚠️ متأخرة غير مكتملة: ${periodStats.overdue.length}`);
     lines.push(`📊 نسبة الإنجاز: ${completionRate}%`);
     lines.push("");
     lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push("👥 *أداء الأعضاء*");
     for (const row of memberRows) {
-      const overdueStr = row.periodOverdue > 0 ? ` | ⚠️ متأخرة: ${row.periodOverdue}` : "";
-      lines.push(`• *${row.member.name}*: ✅ ${row.periodCompleted} مكتملة${overdueStr}`);
+      const lateStr = row.periodCompletedLate > 0 ? ` | 🟠 مكتملة متأخرة: ${row.periodCompletedLate}` : "";
+      const overdueStr = row.periodOverdue > 0 ? ` | ⚠️ غير مكتملة متأخرة: ${row.periodOverdue}` : "";
+      lines.push(`• *${row.member.name}*: ✅ ${row.periodCompleted} مكتملة | 🟢 في الوقت: ${row.periodCompletedOnTime}${lateStr}${overdueStr}`);
     }
 
-    const activePlatforms = platformRows.filter((r) => r.periodCompleted > 0 || r.periodCreated > 0);
+    const activePlatforms = platformRows.filter(
+      (r) => r.periodCompleted > 0 || r.periodCreated > 0 || r.periodOverdue > 0
+    );
     if (activePlatforms.length > 0) {
       lines.push("");
       lines.push("━━━━━━━━━━━━━━━━━━");
       lines.push("📱 *أداء المنصات*");
       for (const row of activePlatforms) {
         const emoji = getPlatformEmoji(row.platform.name, row.platform.icon ?? "");
-        lines.push(`${emoji} *${row.platform.name}*: ✅ ${row.periodCompleted} مكتملة | 📝 ${row.periodCreated} منشأة`);
+        lines.push(`${emoji} *${row.platform.name}*: ✅ ${row.periodCompleted} مكتملة | 🟢 ${row.periodCompletedOnTime} في الوقت | 🟠 ${row.periodCompletedLate} متأخرة | ⚠️ ${row.periodOverdue} غير مكتملة`);
       }
     }
 
@@ -304,7 +395,8 @@ export default function Reports() {
       lines.push("✅ *المهام المنجزة*");
       for (const task of periodStats.completed) {
         const emoji = getPlatformEmoji(task.platform.name);
-        lines.push(`${emoji} ${task.title} — ${task.member.name}`);
+        const timing = isCompletedLate(task) ? "مكتملة متأخرة" : "مكتملة في الوقت";
+        lines.push(`${emoji} ${task.title} — ${taskAssignees(task).map((member) => member.name).join("، ")} — ${timing}`);
       }
     }
 
@@ -464,13 +556,27 @@ export default function Reports() {
       </div>
 
       {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
           label="مكتملة"
           value={periodStats?.completed.length ?? 0}
           icon={CheckCircle2}
           color="text-green-600"
           subtitle={period === "today" ? "اليوم" : period === "week" ? "هذا الأسبوع" : period === "month" ? "هذا الشهر" : "إجمالي"}
+        />
+        <StatCard
+          label="في الوقت"
+          value={periodStats?.completedOnTime.length ?? 0}
+          icon={CheckCircle2}
+          color="text-emerald-600"
+          subtitle="مكتملة قبل أو في موعدها"
+        />
+        <StatCard
+          label="مكتملة متأخرة"
+          value={periodStats?.completedLate.length ?? 0}
+          icon={AlertCircle}
+          color="text-orange-600"
+          subtitle="أُكملت بعد موعدها"
         />
         <StatCard
           label="منشأة"
@@ -480,11 +586,11 @@ export default function Reports() {
           subtitle="مهام جديدة"
         />
         <StatCard
-          label="متأخرة"
+          label="متأخرة غير مكتملة"
           value={periodStats?.overdue.length ?? 0}
           icon={AlertCircle}
           color="text-red-500"
-          subtitle="تجاوزت الموعد"
+          subtitle="تجاوزت الموعد ولم تكتمل"
         />
         <StatCard
           label="نسبة الإنجاز"
@@ -511,15 +617,17 @@ export default function Reports() {
                 <TableHead className="text-right font-bold">العضو</TableHead>
                 <TableHead className="text-right font-bold">الدور</TableHead>
                 <TableHead className="text-right font-bold text-green-600">مكتملة</TableHead>
+                <TableHead className="text-right font-bold text-emerald-600">في الوقت</TableHead>
+                <TableHead className="text-right font-bold text-orange-600">مكتملة متأخرة</TableHead>
                 <TableHead className="text-right font-bold text-sidebar-primary">منشأة</TableHead>
-                <TableHead className="text-right font-bold text-red-500">متأخرة</TableHead>
+                <TableHead className="text-right font-bold text-red-500">متأخرة غير مكتملة</TableHead>
                 <TableHead className="text-right font-bold w-[180px]">الإنجاز الكلي</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {memberRows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">
+                  <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
                     لا توجد بيانات لهذه الفترة
                   </TableCell>
                 </TableRow>
@@ -551,6 +659,16 @@ export default function Reports() {
                         <span className="font-bold text-green-600">{row.periodCompleted}</span>
                       </TableCell>
                       <TableCell>
+                        <span className="font-bold text-emerald-600">{row.periodCompletedOnTime}</span>
+                      </TableCell>
+                      <TableCell>
+                        {row.periodCompletedLate > 0 ? (
+                          <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50 text-xs font-bold">{row.periodCompletedLate}</Badge>
+                        ) : (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
                         <span className="font-bold text-sidebar-primary">{row.periodCreated}</span>
                       </TableCell>
                       <TableCell>
@@ -572,7 +690,7 @@ export default function Reports() {
 
                     {expandedMember === row.member.id && (
                       <TableRow key={`${row.member.id}-expanded`} className="bg-muted/5">
-                        <TableCell colSpan={7} className="p-0">
+                        <TableCell colSpan={9} className="p-0">
                           <div className="px-6 py-4 space-y-2">
                             {row.completedTasksList.length === 0 ? (
                               <p className="text-sm text-muted-foreground text-center py-3">
@@ -605,6 +723,7 @@ export default function Reports() {
                                           )}
                                         </div>
                                       </div>
+                                      <CompletionTimingBadge task={task} />
                                       {task.submissionUrl && (
                                         <a
                                           href={task.submissionUrl}
@@ -648,9 +767,10 @@ export default function Reports() {
                 <TableRow>
                   <TableHead className="text-right font-bold">القارئ</TableHead>
                   <TableHead className="text-right font-bold text-green-600">مكتملة</TableHead>
-                  <TableHead className="text-right font-bold text-amber-500">قيد التنفيذ</TableHead>
+                  <TableHead className="text-right font-bold text-emerald-600">في الوقت</TableHead>
+                  <TableHead className="text-right font-bold text-orange-600">مكتملة متأخرة</TableHead>
                   <TableHead className="text-right font-bold text-muted-foreground">قيد الانتظار</TableHead>
-                  <TableHead className="text-right font-bold text-red-500">متأخرة</TableHead>
+                  <TableHead className="text-right font-bold text-red-500">متأخرة غير مكتملة</TableHead>
                   <TableHead className="text-right font-bold w-[180px]">الإنجاز</TableHead>
                 </TableRow>
               </TableHeader>
@@ -659,7 +779,14 @@ export default function Reports() {
                   <TableRow key={row.reciter.id} className="hover:bg-muted/20 transition-colors">
                     <TableCell className="font-semibold">{row.reciter.name}</TableCell>
                     <TableCell><span className="font-bold text-green-600">{row.completedTasks}</span></TableCell>
-                    <TableCell><span className="font-bold text-amber-500">{row.inProgressTasks}</span></TableCell>
+                    <TableCell><span className="font-bold text-emerald-600">{row.completedOnTimeTasks}</span></TableCell>
+                    <TableCell>
+                      {row.completedLateTasks > 0 ? (
+                        <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50 text-xs font-bold">{row.completedLateTasks}</Badge>
+                      ) : (
+                        <span className="text-muted-foreground text-sm">—</span>
+                      )}
+                    </TableCell>
                     <TableCell><span className="text-muted-foreground">{row.pendingTasks}</span></TableCell>
                     <TableCell>
                       {row.overdueTasksCount > 0 ? (
@@ -705,6 +832,18 @@ export default function Reports() {
                     <p className="text-xl font-bold text-green-600">{row.periodCompleted}</p>
                     <p className="text-[10px] text-muted-foreground mt-0.5">مكتملة</p>
                   </div>
+                  <div className="bg-emerald-50 rounded-lg py-2 border border-emerald-100">
+                    <p className="text-xl font-bold text-emerald-600">{row.periodCompletedOnTime}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">في الوقت</p>
+                  </div>
+                  <div className="bg-orange-50 rounded-lg py-2 border border-orange-100">
+                    <p className="text-xl font-bold text-orange-600">{row.periodCompletedLate}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">مكتملة متأخرة</p>
+                  </div>
+                  <div className="bg-red-50 rounded-lg py-2 border border-red-100">
+                    <p className="text-xl font-bold text-red-600">{row.periodOverdue}</p>
+                    <p className="text-[10px] text-muted-foreground mt-0.5">غير مكتملة متأخرة</p>
+                  </div>
                   <div className="bg-sidebar-primary/5 rounded-lg py-2 border border-sidebar-primary/10">
                     <p className="text-xl font-bold text-sidebar-primary">{row.periodCreated}</p>
                     <p className="text-[10px] text-muted-foreground mt-0.5">منشأة</p>
@@ -741,7 +880,9 @@ export default function Reports() {
                   <TableHead className="text-right font-bold">المهمة</TableHead>
                   <TableHead className="text-right font-bold">المنصة</TableHead>
                   <TableHead className="text-right font-bold">المسؤول</TableHead>
+                  <TableHead className="text-right font-bold">تاريخ الاستحقاق</TableHead>
                   <TableHead className="text-right font-bold">تاريخ الإنجاز</TableHead>
+                  <TableHead className="text-right font-bold">توقيت الإنجاز</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -754,12 +895,20 @@ export default function Reports() {
                         <span className="text-sm">{task.platform.name}</span>
                       </div>
                     </TableCell>
-                    <TableCell className="text-sm">{task.member.name}</TableCell>
+                    <TableCell className="text-sm">
+                      {taskAssignees(task).map((member) => member.name).join("، ")}
+                    </TableCell>
+                    <TableCell className="text-sm text-muted-foreground">
+                      {task.dueDate
+                        ? format(new Date(task.dueDate), "EEEE، d MMM", { locale: ar })
+                        : "—"}
+                    </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {task.completedAt
                         ? format(new Date(task.completedAt), "EEEE، d MMM", { locale: ar })
                         : "—"}
                     </TableCell>
+                    <TableCell><CompletionTimingBadge task={task} /></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
