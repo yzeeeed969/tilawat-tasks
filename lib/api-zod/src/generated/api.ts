@@ -311,6 +311,7 @@ export const UpdateTaskBody = zod.object({
   recurrenceDays: zod.string().nullish(),
   submissionUrl: zod.string().nullish(),
   pageId: zod.number().nullish(),
+  updateScope: zod.enum(["single", "future", "series"]).optional(),
 });
 
 export const updateTaskResponseProgressMin = 0;

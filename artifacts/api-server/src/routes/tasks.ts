@@ -44,9 +44,13 @@ async function fetchTaskMembersMap(taskIds: number[]): Promise<Map<number, { id:
 
 // Helper: sync task_members for a task
 async function syncTaskMembers(taskId: number, memberIds: number[]) {
-  await db.delete(taskMembersTable).where(eq(taskMembersTable.taskId, taskId));
+  await syncTaskMembersUsing(db, taskId, memberIds);
+}
+
+async function syncTaskMembersUsing(client: any, taskId: number, memberIds: number[]) {
+  await client.delete(taskMembersTable).where(eq(taskMembersTable.taskId, taskId));
   if (memberIds.length > 0) {
-    await db.insert(taskMembersTable).values(
+    await client.insert(taskMembersTable).values(
       memberIds.map((memberId) => ({ taskId, memberId }))
     );
   }
@@ -277,6 +281,10 @@ const TASK_SELECT = {
 
 type SeriesType = "temporary" | "operational";
 type SeriesRecurrenceType = "none" | "weekly" | "monthly";
+type TaskUpdateScope = "single" | "future" | "series";
+
+const STATE_UPDATE_KEYS = new Set(["status", "completedAt", "progress", "submissionUrl"]);
+const DATE_UPDATE_KEYS = new Set(["startDate", "endDate", "dueDate"]);
 
 function parseSeriesType(value: unknown): SeriesType {
   if (value === undefined || value === null) return "temporary";
@@ -288,6 +296,14 @@ function parseSeriesRecurrenceType(value: unknown): SeriesRecurrenceType {
   if (value === undefined || value === null || value === "") return "none";
   if (value === "none" || value === "weekly" || value === "monthly") return value;
   throw new Error("INVALID_RECURRENCE_TYPE");
+}
+
+function parseTaskUpdateScope(value: unknown, hasSeries: boolean): TaskUpdateScope {
+  if (value === undefined || value === null || value === "") {
+    return hasSeries ? "series" : "single";
+  }
+  if (value === "single" || value === "future" || value === "series") return value;
+  throw new Error("INVALID_TASK_UPDATE_SCOPE");
 }
 
 function normalizeRecurrenceDays(value: unknown): string | null {
@@ -311,6 +327,38 @@ function normalizeDate(value: unknown): Date | null {
   if (Number.isNaN(date.getTime())) return null;
   date.setHours(0, 0, 0, 0);
   return date;
+}
+
+function daysBetweenDates(from: Date, to: Date) {
+  const dayMs = 24 * 60 * 60 * 1000;
+  return Math.round((normalizeDate(to)!.getTime() - normalizeDate(from)!.getTime()) / dayMs);
+}
+
+function getSeriesDateDelta(body: Record<string, unknown>, currentTask: { startDate?: Date | null; dueDate?: Date | null }) {
+  const incomingDate = "dueDate" in body
+    ? normalizeDate(body.dueDate)
+    : "startDate" in body
+      ? normalizeDate(body.startDate)
+      : null;
+  const currentDate = normalizeDate(currentTask.dueDate ?? currentTask.startDate);
+  if (!incomingDate || !currentDate) return 0;
+  return daysBetweenDates(currentDate, incomingDate);
+}
+
+function splitUpdateData(updateData: Record<string, unknown>) {
+  const sharedUpdateData: Record<string, unknown> = {};
+  const selectedTaskOnlyUpdateData: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(updateData)) {
+    if (STATE_UPDATE_KEYS.has(key)) {
+      selectedTaskOnlyUpdateData[key] = value;
+      continue;
+    }
+    if (DATE_UPDATE_KEYS.has(key)) continue;
+    sharedUpdateData[key] = value;
+  }
+
+  return { sharedUpdateData, selectedTaskOnlyUpdateData };
 }
 
 function getDateRange(startDate: Date, endDate: Date): Date[] {
@@ -586,7 +634,7 @@ router.post("/tasks", async (req, res) => {
     return;
   }
 
-  // Temporary range tasks stay as actual independent daily tasks.
+  // Temporary range tasks stay as actual independent daily tasks, linked by one series.
   if (endDate && endDate >= startDate) {
     const dates: Date[] = recurrence === "custom_days"
       ? getDateRange(startDate, endDate).filter((date) => customDaysList.includes(String(date.getDay())))
@@ -597,9 +645,20 @@ router.post("/tasks", async (req, res) => {
       return;
     }
 
+    const [series] = await db.insert(taskSeriesTable).values({
+      title: body.title,
+      recurrenceType: "none",
+      seriesType: "temporary",
+      startDate,
+      endDate,
+      generateUntil: endDate,
+      status: "active",
+    }).returning();
+
     let firstTaskId: number | null = null;
     for (const date of dates) {
       const [t] = await db.insert(tasksTable).values({
+        seriesId: series.id,
         title: body.title,
         description: body.description,
         platformId: body.platformId,
@@ -620,6 +679,10 @@ router.post("/tasks", async (req, res) => {
       if (firstTaskId === null) firstTaskId = t.id;
     }
 
+    await logActivity(req, "task_series_created", "task_series", series.id, body.title, {
+      generatedTasks: dates.length,
+      seriesType: "temporary",
+    });
     await logActivity(req, "task_created", "task", firstTaskId!, body.title);
     await notifyTaskAssigned(firstTaskId!, body.title, body.memberIds).catch(() => {});
     const taskResponse = await buildTaskResponse(firstTaskId!);
@@ -710,6 +773,16 @@ router.put("/tasks/:id", async (req, res) => {
     body.memberIds = validatedMemberIds;
   }
 
+  let requestedUpdateScope: TaskUpdateScope;
+  try {
+    requestedUpdateScope = parseTaskUpdateScope((req.body as any).updateScope, Boolean(currentTask.seriesId));
+  } catch {
+    res.status(400).json({ error: "Invalid updateScope" });
+    return;
+  }
+  const canApplySeriesScope = currentUser?.role === "admin" && Boolean(currentTask.seriesId);
+  const updateScope: TaskUpdateScope = canApplySeriesScope ? requestedUpdateScope : "single";
+
   const updateData: Record<string, unknown> = {};
   if (body.title !== undefined) updateData.title = body.title;
   if (body.description !== undefined) updateData.description = body.description;
@@ -742,14 +815,84 @@ router.put("/tasks/:id", async (req, res) => {
   if ("submissionUrl" in body) updateData.submissionUrl = body.submissionUrl ?? null;
   if ("pageId" in body) updateData.pageId = body.pageId ?? null;
 
-  await db.update(tasksTable).set(updateData).where(eq(tasksTable.id, id));
+  let updatedTaskIds = [id];
+  if (updateScope === "single") {
+    await db.update(tasksTable).set(updateData).where(eq(tasksTable.id, id));
 
-  if (body.memberIds !== undefined && body.memberIds.length > 0) {
-    await syncTaskMembers(id, body.memberIds);
+    if (body.memberIds !== undefined && body.memberIds.length > 0) {
+      await syncTaskMembers(id, body.memberIds);
+    }
+  } else {
+    const seriesId = currentTask.seriesId!;
+    const targetConditions: any[] = [
+      eq(tasksTable.seriesId, seriesId),
+      isNull(tasksTable.deletedAt),
+    ];
+
+    if (updateScope === "future") {
+      const currentDueDate = currentTask.dueDate ?? currentTask.startDate;
+      if (!currentDueDate) {
+        res.status(400).json({ error: "Cannot apply future scope without a task date" });
+        return;
+      }
+      targetConditions.push(sql`${tasksTable.dueDate} >= ${currentDueDate}`);
+    }
+
+    const targetTasks = await db
+      .select({
+        id: tasksTable.id,
+        dueDate: tasksTable.dueDate,
+        startDate: tasksTable.startDate,
+        endDate: tasksTable.endDate,
+      })
+      .from(tasksTable)
+      .where(and(...targetConditions));
+
+    updatedTaskIds = targetTasks.map((task) => task.id);
+    if (!updatedTaskIds.includes(id)) updatedTaskIds.push(id);
+
+    const { sharedUpdateData, selectedTaskOnlyUpdateData } = splitUpdateData(updateData);
+    const dateDeltaDays = getSeriesDateDelta(body as Record<string, unknown>, currentTask);
+    const bulkUpdateData: Record<string, unknown> = { ...sharedUpdateData };
+
+    if (dateDeltaDays !== 0) {
+      bulkUpdateData.startDate = sql`${tasksTable.startDate} + (${dateDeltaDays} * interval '1 day')`;
+      bulkUpdateData.dueDate = sql`${tasksTable.dueDate} + (${dateDeltaDays} * interval '1 day')`;
+      bulkUpdateData.endDate = sql`${tasksTable.endDate} + (${dateDeltaDays} * interval '1 day')`;
+    }
+
+    await db.transaction(async (tx: any) => {
+      if (Object.keys(bulkUpdateData).length > 0 && updatedTaskIds.length > 0) {
+        await tx.update(tasksTable).set(bulkUpdateData).where(inArray(tasksTable.id, updatedTaskIds));
+      }
+
+      if (Object.keys(selectedTaskOnlyUpdateData).length > 0) {
+        await tx.update(tasksTable).set(selectedTaskOnlyUpdateData).where(eq(tasksTable.id, id));
+      }
+
+      if (body.memberIds !== undefined && body.memberIds.length > 0) {
+        for (const taskId of updatedTaskIds) {
+          await syncTaskMembersUsing(tx, taskId, body.memberIds);
+        }
+      }
+
+      const seriesUpdateData: Record<string, unknown> = { updatedAt: new Date() };
+      if (body.title !== undefined) seriesUpdateData.title = body.title;
+      if (dateDeltaDays !== 0 && updateScope === "series") {
+        seriesUpdateData.startDate = sql`${taskSeriesTable.startDate} + (${dateDeltaDays} * interval '1 day')`;
+        seriesUpdateData.endDate = sql`${taskSeriesTable.endDate} + (${dateDeltaDays} * interval '1 day')`;
+        seriesUpdateData.generateUntil = sql`${taskSeriesTable.generateUntil} + (${dateDeltaDays} * interval '1 day')`;
+      }
+      await tx.update(taskSeriesTable).set(seriesUpdateData).where(eq(taskSeriesTable.id, seriesId));
+    });
   }
 
   // Log activity
-  await logActivity(req, "task_updated", "task", id, currentTask.title);
+  await logActivity(req, "task_updated", "task", id, currentTask.title, {
+    updateScope,
+    affectedTasks: updatedTaskIds.length,
+    seriesId: currentTask.seriesId ?? null,
+  });
 
   // Notify on status → completed (notify admins)
   const beingCompleted = body.status === "completed" && currentTask.status !== "completed";

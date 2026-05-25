@@ -213,6 +213,13 @@ const submissionUrlSchema = z.object({
 
 type TaskFormValues = z.infer<typeof taskSchema>;
 type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
+type EditTaskScope = "single" | "future" | "series";
+
+const EDIT_SCOPE_MESSAGES: Record<EditTaskScope, string> = {
+  single: "سيتم تعديل هذه المهمة فقط.",
+  future: "سيتم تطبيق هذا التعديل على هذه المهمة وما بعدها ضمن نفس السلسلة.",
+  series: "سيتم تطبيق هذا التعديل على جميع المهام التابعة لهذه السلسلة.",
+};
 
 const MOSQUE_LABEL: Record<string, string> = {
   nabawi: "المسجد النبوي الشريف",
@@ -1183,6 +1190,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [activeTab, setActiveTab] = useState<"active" | "trash">("active");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskWithDetails | null>(null);
+  const [editTaskScope, setEditTaskScope] = useState<EditTaskScope>("series");
   const [urlDialog, setUrlDialog] = useState<{ taskId: number; currentUrl: string } | null>(null);
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [commentsTaskId, setCommentsTaskId] = useState<number | null>(null);
@@ -1390,8 +1398,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const openEditDialog = (task: TaskWithDetails) => {
     setEditingTask(task);
+    setEditTaskScope((task as any).seriesId ? "series" : "single");
     const allMembers = task.members && task.members.length > 0 ? task.members : [task.member];
     const reciter = task.reciter as Reciter | null | undefined;
+    const taskRecurrence = (task.recurrence ?? "none") as TaskFormValues["recurrence"];
     editForm.reset({
       title: task.title,
       description: task.description ?? "",
@@ -1402,11 +1412,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       status: task.status as TaskFormValues["status"],
       priority: (task.priority ?? "normal") as TaskFormValues["priority"],
       progress: task.progress ?? 0,
-      seriesType: (task as any).seriesId ? "operational" : "temporary",
+      seriesType: taskRecurrence === "weekly" || taskRecurrence === "monthly" ? "operational" : "temporary",
       startDate: (task as any).startDate ? format(new Date((task as any).startDate), "yyyy-MM-dd") : "",
       dueDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "",
       endDate: (task as any).endDate ? format(new Date((task as any).endDate), "yyyy-MM-dd") : "",
-      recurrence: (task.recurrence ?? "none") as TaskFormValues["recurrence"],
+      recurrence: taskRecurrence,
       recurrenceIntervalDays: (task as any).recurrenceIntervalDays ?? null,
       recurrenceDurationDays: (task as any).recurrenceDurationDays ?? null,
       recurrenceDays: (task as any).recurrenceDays ?? null,
@@ -1517,6 +1527,14 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const onEditSubmit = (data: TaskFormValues) => {
     if (!editingTask) return;
+    const hasSeries = Boolean((editingTask as any).seriesId);
+    const effectiveEditScope: EditTaskScope = hasSeries ? editTaskScope : "single";
+    if (hasSeries) {
+      const confirmed = window.confirm(
+        `${EDIT_SCOPE_MESSAGES[effectiveEditScope]}\nلن يتم تغيير حالة الإنجاز أو الشاهد لبقية أيام السلسلة.`
+      );
+      if (!confirmed) return;
+    }
     const seriesType = data.seriesType ?? "temporary";
     const recurrence = seriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
     const recurrenceDays = seriesType === "operational" && recurrence === "weekly"
@@ -1542,6 +1560,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           recurrenceDurationDays: null,
           recurrenceDays,
           pageId: data.pageId ?? null,
+          updateScope: effectiveEditScope,
         } as any,
       },
       {
@@ -1809,6 +1828,26 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             <div className="flex-1 overflow-y-auto px-6 py-4">
             <Form {...editForm}>
               <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4">
+                {(editingTask as any)?.seriesId && (
+                  <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <FormLabel className="text-sm font-semibold text-sidebar-foreground">نطاق التعديل</FormLabel>
+                      <Select value={editTaskScope} onValueChange={(value) => setEditTaskScope(value as EditTaskScope)}>
+                        <SelectTrigger className="h-10 bg-background">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent dir="rtl">
+                          <SelectItem value="single">تعديل هذه المهمة فقط</SelectItem>
+                          <SelectItem value="future">تعديل هذه المهمة وما بعدها</SelectItem>
+                          <SelectItem value="series">تعديل جميع مهام السلسلة</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                    <p className="text-sm leading-6 text-amber-800">
+                      {EDIT_SCOPE_MESSAGES[editTaskScope]} لن يتم تغيير حالة الإنجاز أو الشاهد لبقية الأيام.
+                    </p>
+                  </div>
+                )}
                 <TaskFormFields platforms={platforms} members={members as { id: number; name: string; role: string }[]} reciters={reciters} showStatus />
               </form>
             </Form>

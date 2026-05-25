@@ -300,6 +300,15 @@ export const UpdateTaskBodyRecurrence = {
   custom_days: "custom_days",
 } as const;
 
+export type UpdateTaskBodyUpdateScope =
+  (typeof UpdateTaskBodyUpdateScope)[keyof typeof UpdateTaskBodyUpdateScope];
+
+export const UpdateTaskBodyUpdateScope = {
+  single: "single",
+  future: "future",
+  series: "series",
+} as const;
+
 export interface UpdateTaskBody {
   title?: string;
   description?: string;
@@ -323,6 +332,7 @@ export interface UpdateTaskBody {
   recurrenceDays?: string | null;
   submissionUrl?: string | null;
   pageId?: number | null;
+  updateScope?: UpdateTaskBodyUpdateScope;
 }
 
 export interface Comment {
