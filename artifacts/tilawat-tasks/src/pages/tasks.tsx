@@ -1187,6 +1187,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [filterMosque, setFilterMosque] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
+  const [quickDateFilter, setQuickDateFilter] = useState<Date | null>(null);
+  const [adminPreviewMemberId, setAdminPreviewMemberId] = useState<string>("none");
   const [activeTab, setActiveTab] = useState<"active" | "trash">("active");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskWithDetails | null>(null);
@@ -1209,8 +1211,16 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const role = useRole();
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
 
+  const adminPreviewMemberIdNumber = adminPreviewMemberId !== "none" ? Number(adminPreviewMemberId) : undefined;
+  const isAdminMemberPreview =
+    isAdmin &&
+    typeof adminPreviewMemberIdNumber === "number" &&
+    Number.isFinite(adminPreviewMemberIdNumber);
+
   const selectedMemberId =
-    filterMember === "mine"
+    isAdminMemberPreview
+      ? adminPreviewMemberIdNumber
+      : filterMember === "mine"
       ? user?.memberId ?? undefined
       : filterMember !== "all"
         ? Number(filterMember)
@@ -1285,6 +1295,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       }
       if (filterStatus !== "all" && task.status !== filterStatus) return false;
 
+      if (quickDateFilter) {
+        if (!task.dueDate) return false;
+        const due = startOfDay(new Date(task.dueDate));
+        if (!isSameDay(due, quickDateFilter)) return false;
+      }
+
       if (filterDueDate !== "all") {
         if (!task.dueDate) return false;
         const due = startOfDay(new Date(task.dueDate));
@@ -1303,11 +1319,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       if (aTime !== bTime) return aTime - bTime;
       return a.id - b.id;
     });
-  }, [searchedTasks, filterPlatform, filterReciter, filterStatus, filterDueDate]);
+  }, [searchedTasks, filterPlatform, filterReciter, filterStatus, quickDateFilter, filterDueDate]);
 
   // Member rows (one row per task, sorted overdue-first then by dueDate)
   const memberRows = useMemo(() => {
-    if (!tasks || isAdmin) return { pending: [], completed: [] };
+    if (!tasks || (isAdmin && !isAdminMemberPreview)) return { pending: [], completed: [] };
     type Row = { task: (typeof tasks)[0]; key: string; isOverdue: boolean };
     const rows: Row[] = tasks.map((task) => {
       const d = task.dueDate ? startOfDay(new Date(task.dueDate)) : null;
@@ -1333,27 +1349,31 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         return 0;
       });
     return { pending, completed: rows.filter((r) => r.task.status === "completed") };
-  }, [tasks, isAdmin]);
+  }, [tasks, isAdmin, isAdminMemberPreview]);
   const pendingMemberRows = memberRows.pending;
   const completedMemberRows = memberRows.completed;
 
   const adminListTasks = useMemo(() => {
-    if (!tasks || !isAdmin || activeTab !== "active" || view !== "list") return tasks;
+    if (!tasks || !isAdmin || isAdminMemberPreview || activeTab !== "active" || view !== "list") return tasks;
     if (adminListLimit === "all") return tasks;
     return tasks.slice(0, Number(adminListLimit));
-  }, [tasks, isAdmin, activeTab, view, adminListLimit]);
+  }, [tasks, isAdmin, isAdminMemberPreview, activeTab, view, adminListLimit]);
 
   const adminListTotal = tasks?.length ?? 0;
   const adminListShown = adminListTasks?.length ?? 0;
+  const quickWeekDays = useMemo(() => {
+    const start = startOfWeek(new Date(), { weekStartsOn: 0 });
+    return eachDayOfInterval({ start, end: addDays(start, 6) });
+  }, []);
 
   useEffect(() => {
-    if (!isAdmin || view !== "list" || activeTab !== "active") return;
+    if (!isAdmin || isAdminMemberPreview || view !== "list" || activeTab !== "active") return;
     const visibleIds = new Set(adminListTasks?.map((task) => task.id) ?? []);
     setSelectedTaskIds((previous) => {
       const next = new Set([...previous].filter((id) => visibleIds.has(id)));
       return next.size === previous.size ? previous : next;
     });
-  }, [adminListTasks, isAdmin, view, activeTab]);
+  }, [adminListTasks, isAdmin, isAdminMemberPreview, view, activeTab]);
 
   const { data: members } = useListMembers({ query: { queryKey: getListMembersQueryKey() } });
   const { data: platforms } = useListPlatforms({ query: { queryKey: getListPlatformsQueryKey() } });
@@ -1435,6 +1455,20 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   });
   const selectAllAdminTasks = () => setSelectedTaskIds(new Set(adminListTasks?.map((t) => t.id) ?? []));
   const clearSel = () => { setSelectedTaskIds(new Set()); setBulkReassignId("none"); };
+
+  const resetFilters = () => {
+    setSearchQuery("");
+    setFilterPlatform("all");
+    setFilterMember("all");
+    setAdminPreviewMemberId("none");
+    setFilterReciter("all");
+    setFilterMosque("all");
+    setFilterStatus("all");
+    setFilterDueDate("all");
+    setQuickDateFilter(null);
+    setSelectedCalendarDate(null);
+    clearSel();
+  };
 
   const handleBulkDelete = async () => {
     if (!confirm(`نقل ${selectedTaskIds.size} مهمة إلى السلة؟`)) return;
@@ -1942,20 +1976,42 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         </Select>
 
         {view === "list" && isAdmin && (
-          <Select value={filterMember} onValueChange={setFilterMember}>
-            <SelectTrigger className="min-w-[150px] bg-background">
-              <SelectValue placeholder="كل الأعضاء" />
-            </SelectTrigger>
-            <SelectContent dir="rtl">
-              <SelectItem value="all">كل الأعضاء</SelectItem>
-              {user?.memberId && (
-                <SelectItem value="mine">مهامي</SelectItem>
-              )}
-              {members?.filter((m) => m.id !== user?.memberId).map((m) => (
-                <SelectItem key={m.id} value={m.id.toString()}>{m.name}</SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+          <>
+            <Select value={filterMember} onValueChange={setFilterMember} disabled={isAdminMemberPreview}>
+              <SelectTrigger className="min-w-[150px] bg-background">
+                <SelectValue placeholder="كل الأعضاء" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="all">كل الأعضاء</SelectItem>
+                {user?.memberId && (
+                  <SelectItem value="mine">مهامي</SelectItem>
+                )}
+                {members?.filter((m) => m.id !== user?.memberId).map((m) => (
+                  <SelectItem key={m.id} value={m.id.toString()}>{m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={adminPreviewMemberId}
+              onValueChange={(value) => {
+                setAdminPreviewMemberId(value);
+                if (value !== "none") {
+                  setFilterMember("all");
+                  setView("list");
+                }
+              }}
+            >
+              <SelectTrigger className="min-w-[170px] bg-background">
+                <SelectValue placeholder="عرض كعضو" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="none">عرض كمدير</SelectItem>
+                {members?.map((m) => (
+                  <SelectItem key={m.id} value={m.id.toString()}>عرض كـ {m.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </>
         )}
 
         <Select value={filterStatus} onValueChange={setFilterStatus}>
@@ -2005,7 +2061,59 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             </Select>
           </div>
         )}
+
+        <Button type="button" variant="outline" className="gap-2" onClick={resetFilters}>
+          <RotateCcw className="h-4 w-4" />
+          إعادة تعيين الفلاتر
+        </Button>
       </div>
+      )}
+
+      {activeTab === "active" && view === "list" && (
+        <div className="rounded-lg border border-border bg-card p-3 shadow-sm">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+              <CalendarDays className="h-4 w-4 text-sidebar-primary" />
+              الأسبوع الحالي
+            </div>
+            {quickDateFilter && (
+              <button
+                type="button"
+                onClick={() => setQuickDateFilter(null)}
+                className="text-xs font-medium text-sidebar-primary hover:underline"
+              >
+                عرض كل الأيام
+              </button>
+            )}
+          </div>
+          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+            {quickWeekDays.map((day) => {
+              const selected = quickDateFilter ? isSameDay(day, quickDateFilter) : false;
+              const today = isSameDay(day, new Date());
+              return (
+                <button
+                  key={day.toISOString()}
+                  type="button"
+                  onClick={() => {
+                    setQuickDateFilter(startOfDay(day));
+                    setFilterDueDate("all");
+                  }}
+                  className={cn(
+                    "rounded-md border px-3 py-2 text-center transition-colors",
+                    selected
+                      ? "border-sidebar-primary bg-sidebar-primary text-sidebar-primary-foreground"
+                      : today
+                        ? "border-sidebar-primary/40 bg-sidebar-primary/5 text-sidebar-primary"
+                        : "border-border bg-background hover:bg-muted/50"
+                  )}
+                >
+                  <span className="block text-xs font-semibold">{format(day, "EEEE", { locale: ar })}</span>
+                  <span className="block text-sm font-bold">{format(day, "d MMM", { locale: ar })}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
       )}
 
       {/* Trash view */}
@@ -2322,9 +2430,14 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       ) : (
         /* List view */
         <div className="bg-card border border-border rounded-lg shadow-sm overflow-hidden">
-          {!isAdmin ? (
+          {(!isAdmin || isAdminMemberPreview) ? (
             /* ── Member view: day-expanded rows with collapsed completed ── */
             <>
+              {isAdminMemberPreview && (
+                <div className="border-b border-blue-100 bg-blue-50/60 px-4 py-2 text-sm font-medium text-blue-700">
+                  تعرض الآن صفحة المهام كما يراها العضو المحدد، مع بقاء صلاحياتك كمدير محفوظة.
+                </div>
+              )}
               {pendingMemberRows.length === 0 && completedMemberRows.length === 0 ? (
                 <div className="p-12 text-center text-muted-foreground flex flex-col items-center">
                   <CircleDashed className="h-12 w-12 mb-4 text-muted-foreground/50" />
@@ -2687,7 +2800,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       />
 
       {/* Bulk action bar */}
-      {isAdmin && selectedTaskIds.size > 0 && (
+      {isAdmin && !isAdminMemberPreview && selectedTaskIds.size > 0 && (
         <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-sidebar-primary text-sidebar-primary-foreground px-4 py-2.5 rounded-xl shadow-2xl border border-white/10">
           <span className="font-semibold text-sm">{selectedTaskIds.size} مهمة محددة</span>
           <div className="h-5 w-px bg-white/20 mx-1" />

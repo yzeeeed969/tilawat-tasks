@@ -23,6 +23,8 @@ import {
   ListTodo,
   RefreshCw,
   Bell,
+  BookOpen,
+  Layers,
 } from "lucide-react";
 import {
   Dialog,
@@ -357,9 +359,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
     { href: "/tasks", label: "المهام", icon: CheckSquare, show: true },
     { href: "/members", label: "الأعضاء", icon: Users, show: canViewMembers },
     { href: "/reports", label: "التقارير", icon: BarChart3, show: canViewReports },
+    { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
+    { href: "/platforms", label: "المنصات", icon: Layers, show: canManageSettings },
     { href: "/settings", label: "الإعدادات", icon: Settings, show: canManageSettings },
     { href: "/account", label: "حسابي", icon: User, show: true },
-    { href: "/help", label: "مساعدة", icon: HelpCircle, show: true },
   ].filter((item) => item.show);
 
   const name = user?.displayName || user?.username || "مستخدم";

@@ -58,14 +58,27 @@ import {
   Eye,
   EyeOff,
   Filter,
+  Download,
+  FileSpreadsheet,
+  FileText,
+  ExternalLink,
 } from "lucide-react";
 import { PlatformIcon, getPlatformEmoji } from "@/lib/platform-icon";
 import { cn } from "@/lib/utils";
 import { useToast } from "@/hooks/use-toast";
+import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 
 const WEEK_OPTS = { weekStartsOn: 0 as const };
 
 type Period = "today" | "week" | "month" | "all";
+type ProofPeriod = "today" | "week" | "month" | "custom";
 
 function StatCard({
   label,
@@ -125,6 +138,42 @@ function isIncompleteOverdue(task: TaskWithDetails, today: Date) {
   );
 }
 
+function parseDateInput(value: string, boundary: "start" | "end") {
+  const [year, month, day] = value.split("-").map(Number);
+  if (!year || !month || !day) return null;
+  const date = new Date(year, month - 1, day);
+  return boundary === "start" ? startOfDay(date) : endOfDay(date);
+}
+
+function statusLabel(status: string | null | undefined) {
+  return status === "completed" ? "مكتملة" : "قيد التنفيذ";
+}
+
+function escapeCsvCell(value: unknown) {
+  const text = String(value ?? "");
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+function downloadTextFile(content: string, fileName: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+}
+
 function CompletionTimingBadge({ task }: { task: TaskWithDetails }) {
   if (isCompletedLate(task)) {
     return <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50">مكتملة متأخرة</Badge>;
@@ -141,6 +190,10 @@ export default function Reports() {
   const [copied, setCopied] = useState(false);
   const [hideMemberNames, setHideMemberNames] = useState(false);
   const [selectedReportMemberIds, setSelectedReportMemberIds] = useState<number[]>([]);
+  const [proofPeriod, setProofPeriod] = useState<ProofPeriod>("week");
+  const [proofStartDate, setProofStartDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [proofEndDate, setProofEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
+  const [showProofMemberNames, setShowProofMemberNames] = useState(false);
   const { toast } = useToast();
 
   const { data: allTasks } = useListTasks(
@@ -271,6 +324,16 @@ export default function Reports() {
       .sort((a, b) => b.periodCompleted - a.periodCompleted);
   }, [memberStats, allTasks, reportTasks, selectedReportMemberIdSet, period, periodInterval, today]);
 
+  const anonymousMemberLabels = useMemo(() => {
+    const labels = new Map<number, string>();
+    memberRows.forEach((row, index) => labels.set(row.member.id, `عضو ${index + 1}`));
+    return labels;
+  }, [memberRows]);
+
+  const getDisplayMemberName = useCallback((member: { id: number; name: string }) => {
+    return hideMemberNames ? anonymousMemberLabels.get(member.id) ?? "عضو" : member.name;
+  }, [anonymousMemberLabels, hideMemberNames]);
+
   const platformRows = useMemo(() => {
     if (!platformStats || !allTasks) return [];
     return platformStats.map((stat) => {
@@ -357,6 +420,61 @@ export default function Reports() {
       .sort((a, b) => b.completedTasks - a.completedTasks);
   }, [allTasks, reportTasks, period, periodInterval, today]);
 
+  const proofInterval = useMemo(() => {
+    if (proofPeriod === "today") return { start: dayStart, end: dayEnd };
+    if (proofPeriod === "week") return { start: weekStart, end: weekEnd };
+    if (proofPeriod === "month") return { start: monthStart, end: monthEnd };
+    const start = parseDateInput(proofStartDate, "start");
+    const end = parseDateInput(proofEndDate, "end");
+    if (!start || !end || start.getTime() > end.getTime()) return null;
+    return { start, end };
+  }, [proofPeriod, dayStart, dayEnd, weekStart, weekEnd, monthStart, monthEnd, proofStartDate, proofEndDate]);
+
+  const proofRows = useMemo(() => {
+    if (!proofInterval) return [];
+    return reportTasks
+      .filter((task) => Boolean(task.submissionUrl && task.dueDate))
+      .filter((task) => isWithinInterval(new Date(task.dueDate!), proofInterval))
+      .map((task) => ({
+        taskDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "—",
+        taskTitle: task.title,
+        proofUrl: task.submissionUrl ?? "",
+        platform: task.platform?.name ?? "—",
+        reciter: task.reciter?.name ?? "—",
+        status: statusLabel(task.status),
+        members: taskAssignees(task).map((member) => member.name).join("، "),
+      }))
+      .sort((a, b) => a.taskDate.localeCompare(b.taskDate));
+  }, [proofInterval, reportTasks]);
+
+  const proofExportRows = useMemo(() => {
+    const headers = ["تاريخ المهمة", "اسم المهمة", "رابط الشاهد", "المنصة", "القارئ", "حالة المهمة"];
+    if (showProofMemberNames) headers.push("اسم العضو");
+    const rows = proofRows.map((row) => {
+      const values = [row.taskDate, row.taskTitle, row.proofUrl, row.platform, row.reciter, row.status];
+      if (showProofMemberNames) values.push(row.members);
+      return values;
+    });
+    return { headers, rows };
+  }, [proofRows, showProofMemberNames]);
+
+  const handleProofCsvExport = useCallback(() => {
+    const csv = [
+      proofExportRows.headers.map(escapeCsvCell).join(","),
+      ...proofExportRows.rows.map((row) => row.map(escapeCsvCell).join(",")),
+    ].join("\n");
+    downloadTextFile(`\ufeff${csv}`, `tilawat-proofs-${format(new Date(), "yyyy-MM-dd")}.csv`, "text/csv;charset=utf-8");
+  }, [proofExportRows]);
+
+  const handleProofExcelExport = useCallback(() => {
+    const headerHtml = proofExportRows.headers.map((header) => `<th>${escapeHtml(header)}</th>`).join("");
+    const rowsHtml = proofExportRows.rows
+      .map((row) => `<tr>${row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("")}</tr>`)
+      .join("");
+    const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table border="1"><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`;
+    downloadTextFile(html, `tilawat-proofs-${format(new Date(), "yyyy-MM-dd")}.xls`, "application/vnd.ms-excel;charset=utf-8");
+  }, [proofExportRows]);
+
   // WhatsApp export (weekly mode)
   const buildWhatsAppText = useCallback(() => {
     if (!periodStats || !memberRows || !platformRows) return "";
@@ -398,7 +516,7 @@ export default function Reports() {
     for (const row of memberRows) {
       const lateStr = row.periodCompletedLate > 0 ? ` | 🟠 مكتملة متأخرة: ${row.periodCompletedLate}` : "";
       const overdueStr = row.periodOverdue > 0 ? ` | ⚠️ غير مكتملة متأخرة: ${row.periodOverdue}` : "";
-      const memberPrefix = hideMemberNames ? "" : `*${row.member.name}*: `;
+      const memberPrefix = `*${getDisplayMemberName(row.member)}*: `;
       lines.push(`• ${memberPrefix}✅ ${row.periodCompleted} مكتملة | 🟢 في الوقت: ${row.periodCompletedOnTime}${lateStr}${overdueStr}`);
     }
 
@@ -422,7 +540,7 @@ export default function Reports() {
       for (const task of periodStats.completed) {
         const emoji = getPlatformEmoji(task.platform.name);
         const timing = isCompletedLate(task) ? "مكتملة متأخرة" : "مكتملة في الوقت";
-        const assignees = hideMemberNames ? "" : ` — ${taskAssignees(task).map((member) => member.name).join("، ")}`;
+        const assignees = ` — ${taskAssignees(task).map(getDisplayMemberName).join("، ")}`;
         lines.push(`${emoji} ${task.title}${assignees} — ${timing}`);
       }
     }
@@ -432,7 +550,7 @@ export default function Reports() {
     lines.push("_تم إنشاء هذا التقرير تلقائياً من نظام إدارة مهام تلاوة الحرمين_ 🕌");
 
     return lines.join("\n");
-  }, [periodStats, memberRows, platformRows, period, weekStart, weekEnd, referenceMonth, hideMemberNames]);
+  }, [periodStats, memberRows, platformRows, period, weekStart, weekEnd, referenceMonth, getDisplayMemberName]);
 
   const handleCopy = useCallback(async () => {
     const text = buildWhatsAppText();
@@ -649,6 +767,105 @@ export default function Reports() {
       </div>
 
       {/* Summary cards */}
+      <Card className="border-border/60 shadow-sm print:hidden">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <Download className="h-5 w-5 text-sidebar-primary" />
+            تصدير الشواهد
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 md:grid-cols-4">
+            <Select value={proofPeriod} onValueChange={(value) => setProofPeriod(value as ProofPeriod)}>
+              <SelectTrigger>
+                <SelectValue placeholder="الفترة" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="today">اليوم</SelectItem>
+                <SelectItem value="week">هذا الأسبوع</SelectItem>
+                <SelectItem value="month">هذا الشهر</SelectItem>
+                <SelectItem value="custom">نطاق مخصص</SelectItem>
+              </SelectContent>
+            </Select>
+            {proofPeriod === "custom" && (
+              <>
+                <Input type="date" value={proofStartDate} onChange={(event) => setProofStartDate(event.target.value)} />
+                <Input type="date" value={proofEndDate} onChange={(event) => setProofEndDate(event.target.value)} />
+              </>
+            )}
+            <Button
+              type="button"
+              variant={showProofMemberNames ? "default" : "outline"}
+              onClick={() => setShowProofMemberNames((value) => !value)}
+              className={cn(
+                "gap-2",
+                showProofMemberNames && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+              )}
+            >
+              {showProofMemberNames ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
+              إظهار اسم العضو
+            </Button>
+          </div>
+
+          <div className="rounded-lg border border-border overflow-hidden">
+            <Table>
+              <TableHeader className="bg-muted/40">
+                <TableRow>
+                  <TableHead className="text-right font-bold">تاريخ المهمة</TableHead>
+                  <TableHead className="text-right font-bold">اسم المهمة</TableHead>
+                  <TableHead className="text-right font-bold">رابط الشاهد</TableHead>
+                  <TableHead className="text-right font-bold">المنصة</TableHead>
+                  <TableHead className="text-right font-bold">القارئ</TableHead>
+                  <TableHead className="text-right font-bold">الحالة</TableHead>
+                  {showProofMemberNames && <TableHead className="text-right font-bold">العضو</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {proofRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={showProofMemberNames ? 7 : 6} className="text-center text-muted-foreground py-8">
+                      لا توجد شواهد في الفترة المحددة
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  proofRows.map((row, index) => (
+                    <TableRow key={`${row.taskDate}-${row.proofUrl}-${index}`}>
+                      <TableCell className="text-sm text-muted-foreground">{row.taskDate}</TableCell>
+                      <TableCell className="font-medium">{row.taskTitle}</TableCell>
+                      <TableCell>
+                        <a href={row.proofUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100">
+                          <ExternalLink className="h-3 w-3" />
+                          رابط
+                        </a>
+                      </TableCell>
+                      <TableCell>{row.platform}</TableCell>
+                      <TableCell>{row.reciter}</TableCell>
+                      <TableCell>{row.status}</TableCell>
+                      {showProofMemberNames && <TableCell>{row.members}</TableCell>}
+                    </TableRow>
+                  ))
+                )}
+              </TableBody>
+            </Table>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <p className="text-sm text-muted-foreground">النتائج: {proofRows.length} شاهد</p>
+            <div className="flex flex-wrap gap-2">
+              <Button variant="outline" className="gap-2" onClick={handleProofExcelExport} disabled={proofRows.length === 0}>
+                <FileSpreadsheet className="h-4 w-4" />
+                تصدير Excel
+              </Button>
+              <Button variant="outline" className="gap-2" onClick={handleProofCsvExport} disabled={proofRows.length === 0}>
+                <FileText className="h-4 w-4" />
+                تصدير CSV
+              </Button>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Summary cards */}
       <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
         <StatCard
           label="مكتملة"
@@ -746,7 +963,7 @@ export default function Reports() {
                           )}
                         </button>
                       </TableCell>
-                      <TableCell className="font-semibold">{hideMemberNames ? "" : row.member.name}</TableCell>
+                      <TableCell className="font-semibold">{getDisplayMemberName(row.member)}</TableCell>
                       <TableCell className="text-sm text-muted-foreground">{row.member.role}</TableCell>
                       <TableCell>
                         <span className="font-bold text-green-600">{row.periodCompleted}</span>
@@ -989,7 +1206,7 @@ export default function Reports() {
                       </div>
                     </TableCell>
                     <TableCell className="text-sm">
-                      {hideMemberNames ? "" : taskAssignees(task).map((member) => member.name).join("، ")}
+                      {taskAssignees(task).map(getDisplayMemberName).join("، ")}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
                       {task.dueDate

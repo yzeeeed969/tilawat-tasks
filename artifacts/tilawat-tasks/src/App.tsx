@@ -11,6 +11,8 @@ import Tasks from "@/pages/tasks";
 import Members from "@/pages/members";
 import Reports from "@/pages/reports";
 import Settings from "@/pages/settings";
+import RecitersPage from "@/pages/reciters";
+import PlatformsPage from "@/pages/platforms";
 import Account from "@/pages/account";
 import SignInPage from "@/pages/sign-in";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -97,6 +99,16 @@ function AppRouter() {
       <Route path="/settings">
         <ProtectedRoute>
           <AppLayout><Settings /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/reciters">
+        <ProtectedRoute>
+          <AppLayout><RecitersPage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/platforms">
+        <ProtectedRoute>
+          <AppLayout><PlatformsPage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/account">

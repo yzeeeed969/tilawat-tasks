@@ -625,7 +625,7 @@ function UserManagementSection() {
 }
 
 // ── Reciters Section ──────────────────────────────────────────────────────────
-function RecitersSection() {
+export function RecitersSection() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: reciters, isLoading } = useListReciters({}, { query: { queryKey: getListRecitersQueryKey() } });
@@ -1128,7 +1128,7 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
 }
 
 // ── Platforms Section ─────────────────────────────────────────────────────────
-function PlatformsSection() {
+export function PlatformsSection() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { data: platforms, isLoading } = useListPlatforms({ query: { queryKey: getListPlatformsQueryKey() } });
