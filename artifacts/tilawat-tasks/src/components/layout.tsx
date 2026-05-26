@@ -22,6 +22,7 @@ import {
   CheckCircle2,
   ListTodo,
   RefreshCw,
+  Bell,
 } from "lucide-react";
 import {
   Dialog,
@@ -196,6 +197,12 @@ function UserCard() {
               <User className="h-4 w-4" />
               حسابي
             </DropdownMenuItem>
+            <Link href="/account">
+              <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
+                <Bell className="h-4 w-4" />
+                ربط Telegram
+              </DropdownMenuItem>
+            </Link>
             <DropdownMenuItem className="cursor-pointer flex items-center gap-2" onClick={handleSwitchAccount} disabled={switching}>
               {switching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               {user?.role === "admin" ? "تبديل إلى حساب عضو" : "تبديل إلى حساب المدير"}
@@ -351,6 +358,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     { href: "/members", label: "الأعضاء", icon: Users, show: canViewMembers },
     { href: "/reports", label: "التقارير", icon: BarChart3, show: canViewReports },
     { href: "/settings", label: "الإعدادات", icon: Settings, show: canManageSettings },
+    { href: "/account", label: "حسابي", icon: User, show: true },
     { href: "/help", label: "مساعدة", icon: HelpCircle, show: true },
   ].filter((item) => item.show);
 
@@ -457,6 +465,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   <DropdownMenuItem className="cursor-pointer flex items-center gap-2 mt-1">
                     <HelpCircle className="h-4 w-4" />
                     دليل الاستخدام
+                  </DropdownMenuItem>
+                </Link>
+                <Link href="/account">
+                  <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
+                    <Bell className="h-4 w-4" />
+                    ربط Telegram
                   </DropdownMenuItem>
                 </Link>
                 <DropdownMenuItem className="cursor-pointer flex items-center gap-2" onClick={handleSwitchAccount}>

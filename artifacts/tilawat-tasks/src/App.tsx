@@ -11,6 +11,7 @@ import Tasks from "@/pages/tasks";
 import Members from "@/pages/members";
 import Reports from "@/pages/reports";
 import Settings from "@/pages/settings";
+import Account from "@/pages/account";
 import SignInPage from "@/pages/sign-in";
 import ResetPasswordPage from "@/pages/reset-password";
 import Help from "@/pages/help";
@@ -96,6 +97,11 @@ function AppRouter() {
       <Route path="/settings">
         <ProtectedRoute>
           <AppLayout><Settings /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/account">
+        <ProtectedRoute>
+          <AppLayout><Account /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/help">
