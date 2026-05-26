@@ -25,6 +25,16 @@ function parseTelegramStartToken(text: unknown) {
   return token;
 }
 
+function telegramWebhookReply(chatId: unknown, text: string) {
+  return {
+    method: "sendMessage",
+    chat_id: chatId,
+    text,
+    parse_mode: "HTML",
+    disable_web_page_preview: true,
+  };
+}
+
 // Public Telegram webhook. Security is handled by the secret path segment.
 router.post("/telegram/webhook/:secret", async (req, res) => {
   if (!process.env.TELEGRAM_WEBHOOK_SECRET || req.params.secret !== process.env.TELEGRAM_WEBHOOK_SECRET) {
@@ -37,7 +47,20 @@ router.post("/telegram/webhook/:secret", async (req, res) => {
   const chatId = message?.chat?.id;
   const username = message?.from?.username;
 
-  if (!token || chatId === undefined || chatId === null) {
+  if (chatId === undefined || chatId === null) {
+    res.json({ ok: true });
+    return;
+  }
+
+  if (!token) {
+    if (typeof message?.text === "string" && message.text.trim().startsWith("/start")) {
+      res.json(telegramWebhookReply(
+        chatId,
+        "رمز الربط غير موجود.\nأنشئ رمز ربط جديد من الموقع ثم أرسله هنا كاملًا، مثل:\n<code>/start الرمز</code>",
+      ));
+      return;
+    }
+
     res.json({ ok: true });
     return;
   }
@@ -48,9 +71,15 @@ router.post("/telegram/webhook/:secret", async (req, res) => {
       chatId: String(chatId),
       telegramUsername: typeof username === "string" ? username : null,
     });
-    res.json({ ok: true });
+    res.json(telegramWebhookReply(
+      chatId,
+      "تم ربط حسابك في Telegram بنجاح.\nيمكنك الآن الرجوع إلى الموقع والضغط على <b>إرسال اختبار لي</b>.",
+    ));
   } catch {
-    res.json({ ok: true });
+    res.json(telegramWebhookReply(
+      chatId,
+      "رمز الربط غير صالح أو منتهي.\nأنشئ رمزًا جديدًا من الموقع ثم أرسله هنا خلال 30 دقيقة.",
+    ));
   }
 });
 
