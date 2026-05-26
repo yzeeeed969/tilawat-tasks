@@ -2,7 +2,7 @@ import { Router } from "express";
 import { db, telegramRecipientsTable } from "@workspace/db";
 import { and, eq } from "drizzle-orm";
 import { requireAdmin, requireAuth } from "../middlewares/auth";
-import { isTelegramConfigured } from "../services/telegram";
+import { isTelegramConfigured, sendTelegramMessage } from "../services/telegram";
 import {
   createTelegramLinkToken,
   disconnectTelegramForUser,
@@ -25,14 +25,9 @@ function parseTelegramStartToken(text: unknown) {
   return token;
 }
 
-function telegramWebhookReply(chatId: unknown, text: string) {
-  return {
-    method: "sendMessage",
-    chat_id: chatId,
-    text,
-    parse_mode: "HTML",
-    disable_web_page_preview: true,
-  };
+async function replyToTelegramStart(chatId: unknown, text: string) {
+  if (chatId === undefined || chatId === null) return;
+  await sendTelegramMessage(String(chatId), text);
 }
 
 // Public Telegram webhook. Security is handled by the secret path segment.
@@ -54,10 +49,11 @@ router.post("/telegram/webhook/:secret", async (req, res) => {
 
   if (!token) {
     if (typeof message?.text === "string" && message.text.trim().startsWith("/start")) {
-      res.json(telegramWebhookReply(
+      await replyToTelegramStart(
         chatId,
         "رمز الربط غير موجود.\nأنشئ رمز ربط جديد من الموقع ثم أرسله هنا كاملًا، مثل:\n<code>/start الرمز</code>",
-      ));
+      );
+      res.json({ ok: true });
       return;
     }
 
@@ -71,15 +67,17 @@ router.post("/telegram/webhook/:secret", async (req, res) => {
       chatId: String(chatId),
       telegramUsername: typeof username === "string" ? username : null,
     });
-    res.json(telegramWebhookReply(
+    await replyToTelegramStart(
       chatId,
       "تم ربط حسابك في Telegram بنجاح.\nيمكنك الآن الرجوع إلى الموقع والضغط على <b>إرسال اختبار لي</b>.",
-    ));
+    );
+    res.json({ ok: true });
   } catch {
-    res.json(telegramWebhookReply(
+    await replyToTelegramStart(
       chatId,
       "رمز الربط غير صالح أو منتهي.\nأنشئ رمزًا جديدًا من الموقع ثم أرسله هنا خلال 30 دقيقة.",
-    ));
+    );
+    res.json({ ok: true });
   }
 });
 
