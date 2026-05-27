@@ -145,6 +145,9 @@ export interface Task {
   recurrenceIntervalDays?: number | null;
   recurrenceDurationDays?: number | null;
   recurrenceDays?: string | null;
+  weeklyQuotaRequired?: number | null;
+  weeklyQuotaPeriodStart?: string | null;
+  weeklyQuotaPeriodEnd?: string | null;
   lastRecurredAt?: string | null;
   submissionUrl?: string | null;
   pageId?: number | null;
@@ -204,6 +207,9 @@ export interface TaskWithDetails {
   recurrenceIntervalDays?: number | null;
   recurrenceDurationDays?: number | null;
   recurrenceDays?: string | null;
+  weeklyQuotaRequired?: number | null;
+  weeklyQuotaPeriodStart?: string | null;
+  weeklyQuotaPeriodEnd?: string | null;
   lastRecurredAt?: string | null;
   submissionUrl?: string | null;
   pageId?: number | null;
@@ -269,6 +275,7 @@ export interface CreateTaskBody {
   recurrenceIntervalDays?: number | null;
   recurrenceDurationDays?: number | null;
   recurrenceDays?: string | null;
+  weeklyQuotaRequired?: number | null;
   pageId?: number | null;
 }
 
@@ -330,6 +337,7 @@ export interface UpdateTaskBody {
   recurrenceIntervalDays?: number | null;
   recurrenceDurationDays?: number | null;
   recurrenceDays?: string | null;
+  weeklyQuotaRequired?: number | null;
   submissionUrl?: string | null;
   pageId?: number | null;
   updateScope?: UpdateTaskBodyUpdateScope;

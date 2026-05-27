@@ -18,6 +18,7 @@ type GenerateInput = {
   startDate: Date;
   recurrenceType: RecurrenceType;
   recurrenceDays?: string | null;
+  weeklyQuotaRequired?: number | null;
 };
 
 function startOfDay(date: Date): Date {
@@ -30,6 +31,12 @@ function addDays(date: Date, days: number): Date {
   const d = new Date(date);
   d.setDate(d.getDate() + days);
   return d;
+}
+
+function weekRangeFor(date: Date) {
+  const start = startOfDay(date);
+  start.setDate(start.getDate() - start.getDay());
+  return { start, end: addDays(start, 6) };
 }
 
 function addMonthsClamped(date: Date, months: number): Date {
@@ -77,6 +84,22 @@ function upcomingDates(startDate: Date, recurrenceType: RecurrenceType, recurren
   return dates;
 }
 
+function upcomingWeeklyQuotaPeriods(startDate: Date): Array<{ periodStart: Date; periodEnd: Date; dueDate: Date }> {
+  const initial = weekRangeFor(startDate).start;
+  const today = startOfDay(new Date());
+  const windowEnd = addDays(today, GENERATION_WINDOW_DAYS);
+  const periods: Array<{ periodStart: Date; periodEnd: Date; dueDate: Date }> = [];
+
+  for (let cursor = initial; cursor <= windowEnd; cursor = addDays(cursor, 7)) {
+    const { start, end } = weekRangeFor(cursor);
+    if (end >= today) {
+      periods.push({ periodStart: start, periodEnd: end, dueDate: end });
+    }
+  }
+
+  return periods;
+}
+
 async function syncTaskMembers(taskId: number, memberIds: number[], tx: any) {
   if (memberIds.length === 0) return;
   await tx.insert(taskMembersTable).values(memberIds.map((memberId) => ({ taskId, memberId })));
@@ -90,18 +113,25 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
     throw new Error("At least one member is required");
   }
 
-  const dates = upcomingDates(input.startDate, input.recurrenceType, input.recurrenceDays);
+  const weeklyQuotaRequired = input.weeklyQuotaRequired ?? null;
+  const periods = weeklyQuotaRequired
+    ? upcomingWeeklyQuotaPeriods(input.startDate)
+    : upcomingDates(input.startDate, input.recurrenceType, input.recurrenceDays).map((dueDate) => ({
+        periodStart: dueDate,
+        periodEnd: null,
+        dueDate,
+      }));
   const generatedIds: number[] = [];
-  const generateUntil = dates.length > 0 ? dates[dates.length - 1] : input.startDate;
+  const generateUntil = periods.length > 0 ? periods[periods.length - 1].dueDate : input.startDate;
 
   await db.transaction(async (tx: any) => {
-    for (const dueDate of dates) {
+    for (const occurrence of periods) {
       const existing = await tx
         .select({ id: tasksTable.id })
         .from(tasksTable)
         .where(and(
           eq(tasksTable.seriesId, input.seriesId),
-          sql`date(${tasksTable.dueDate}) = date(${dueDate})`,
+          sql`date(${tasksTable.dueDate}) = date(${occurrence.dueDate})`,
         ))
         .limit(1);
 
@@ -117,13 +147,16 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
         status: "pending",
         priority: input.priority ?? "normal",
         progress: 0,
-        startDate: dueDate,
-        endDate: null,
-        dueDate,
+        startDate: weeklyQuotaRequired ? occurrence.periodStart : occurrence.dueDate,
+        endDate: weeklyQuotaRequired ? occurrence.periodEnd : null,
+        dueDate: occurrence.dueDate,
         recurrence: "none",
         recurrenceIntervalDays: null,
         recurrenceDurationDays: null,
         recurrenceDays: input.recurrenceType === "weekly" ? input.recurrenceDays ?? null : null,
+        weeklyQuotaRequired,
+        weeklyQuotaPeriodStart: weeklyQuotaRequired ? occurrence.periodStart : null,
+        weeklyQuotaPeriodEnd: weeklyQuotaRequired ? occurrence.periodEnd : null,
         pageId: input.pageId ?? null,
       }).onConflictDoNothing({
         target: [tasksTable.seriesId, tasksTable.dueDate],
@@ -195,6 +228,7 @@ export async function syncActiveSeries() {
       startDate: series.startDate,
       recurrenceType: series.recurrenceType,
       recurrenceDays: templateTask.recurrenceDays,
+      weeklyQuotaRequired: (templateTask as any).weeklyQuotaRequired ?? null,
     });
 
     syncedSeriesIds.push(series.id);

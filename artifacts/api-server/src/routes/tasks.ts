@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable } from "@workspace/db";
+import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable } from "@workspace/db";
 import { eq, and, inArray, isNull, isNotNull, ilike, or, sql } from "drizzle-orm";
 import {
   CreateTaskBody,
@@ -12,8 +12,18 @@ import {
 import { generateUpcomingTasksForSeries, syncActiveSeries } from "../services/task-engine";
 import { notifyTelegramTaskCompleted } from "../services/telegram-notification-engine";
 import { canCreateTask, canDeleteTask, canEditTask, canViewTask } from "../lib/permissions";
+import { ensureTaskQuotaSchema } from "../services/task-quota-schema";
 
 const router = Router();
+
+router.use(async (_req, _res, next) => {
+  try {
+    await ensureTaskQuotaSchema();
+    next();
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Helper: fetch all members for a set of task IDs
 async function fetchTaskMembersMap(taskIds: number[]): Promise<Map<number, { id: number; name: string; role: string; createdAt: Date; isActive: boolean; phone: string | null; avatarUrl: string | null; lastLoginAt: Date | null }[]>> {
@@ -256,6 +266,9 @@ const TASK_SELECT = {
   recurrenceIntervalDays: tasksTable.recurrenceIntervalDays,
   recurrenceDurationDays: tasksTable.recurrenceDurationDays,
   recurrenceDays: tasksTable.recurrenceDays,
+  weeklyQuotaRequired: tasksTable.weeklyQuotaRequired,
+  weeklyQuotaPeriodStart: tasksTable.weeklyQuotaPeriodStart,
+  weeklyQuotaPeriodEnd: tasksTable.weeklyQuotaPeriodEnd,
   lastRecurredAt: tasksTable.lastRecurredAt,
   submissionUrl: tasksTable.submissionUrl,
   pageId: tasksTable.pageId,
@@ -330,6 +343,28 @@ function normalizeDate(value: unknown): Date | null {
   return date;
 }
 
+function addDays(date: Date, days: number): Date {
+  const d = new Date(date);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
+function getWeekRange(date: Date) {
+  const start = normalizeDate(date)!;
+  start.setDate(start.getDate() - start.getDay());
+  const end = addDays(start, 6);
+  return { start, end };
+}
+
+function parseWeeklyQuotaRequired(value: unknown): number | null {
+  if (value === undefined || value === null || value === "") return null;
+  const quota = Number(value);
+  if (!Number.isInteger(quota) || quota < 1 || quota > 50) {
+    throw new Error("INVALID_WEEKLY_QUOTA");
+  }
+  return quota;
+}
+
 function daysBetweenDates(from: Date, to: Date) {
   const dayMs = 24 * 60 * 60 * 1000;
   return Math.round((normalizeDate(to)!.getTime() - normalizeDate(from)!.getTime()) / dayMs);
@@ -401,6 +436,32 @@ async function fetchTaskForPermission(taskId: number) {
   return { ...task, memberIds };
 }
 
+async function fetchTaskProofsMap(taskIds: number[]) {
+  if (taskIds.length === 0) return new Map<number, { id: number; taskId: number; url: string; note: string | null; createdByUserId: number | null; createdAt: Date }[]>();
+  const rows = await db
+    .select({
+      id: taskProofsTable.id,
+      taskId: taskProofsTable.taskId,
+      url: taskProofsTable.url,
+      note: taskProofsTable.note,
+      createdByUserId: taskProofsTable.createdByUserId,
+      createdAt: taskProofsTable.createdAt,
+    })
+    .from(taskProofsTable)
+    .where(and(
+      inArray(taskProofsTable.taskId, taskIds),
+      isNull(taskProofsTable.deletedAt),
+    ))
+    .orderBy(taskProofsTable.createdAt);
+
+  const map = new Map<number, { id: number; taskId: number; url: string; note: string | null; createdByUserId: number | null; createdAt: Date }[]>();
+  for (const row of rows) {
+    if (!map.has(row.taskId)) map.set(row.taskId, []);
+    map.get(row.taskId)!.push(row);
+  }
+  return map;
+}
+
 // Helper: build full task response
 async function buildTaskResponse(taskId: number) {
   const [fullTask] = await db
@@ -420,7 +481,8 @@ async function buildTaskResponse(taskId: number) {
     reciter = r ?? null;
   }
 
-  return { ...fullTask, members: membersMap.get(taskId) ?? [fullTask.member], reciter };
+  const proofsMap = await fetchTaskProofsMap([taskId]);
+  return { ...fullTask, members: membersMap.get(taskId) ?? [fullTask.member], reciter, proofs: proofsMap.get(taskId) ?? [] };
 }
 
 router.get("/tasks", async (req, res) => {
@@ -497,6 +559,7 @@ router.get("/tasks", async (req, res) => {
 
   const taskIds = tasks.map((t) => t.id);
   const membersMap = await fetchTaskMembersMap(taskIds);
+  const proofsMap = await fetchTaskProofsMap(taskIds);
 
   // Fetch reciters for tasks
   const reciterIds = [...new Set(
@@ -525,6 +588,7 @@ router.get("/tasks", async (req, res) => {
     reciter: taskReciterMap.get(t.id) != null
       ? recitersMap.get(taskReciterMap.get(t.id)!) ?? null
       : null,
+    proofs: proofsMap.get(t.id) ?? [],
   }));
 
   res.json(result);
@@ -562,7 +626,18 @@ router.post("/tasks", async (req, res) => {
     res.status(400).json({ error: "Invalid recurrence settings" });
     return;
   }
+  let weeklyQuotaRequired: number | null = null;
+  try {
+    weeklyQuotaRequired = parseWeeklyQuotaRequired((req.body as any).weeklyQuotaRequired);
+  } catch {
+    res.status(400).json({ error: "Invalid weeklyQuotaRequired" });
+    return;
+  }
   const recurrence = seriesType === "operational" ? seriesRecurrenceType : ((body.recurrence ?? "none") as string);
+  if (weeklyQuotaRequired && (seriesType !== "operational" || seriesRecurrenceType !== "weekly")) {
+    res.status(400).json({ error: "Weekly quota tasks require operational weekly recurrence" });
+    return;
+  }
   const startDate = normalizeDate(body.startDate ?? body.dueDate);
   const endDate = normalizeDate((req.body as any).endDate);
   const intervalDays = body.recurrenceIntervalDays && body.recurrenceIntervalDays > 0 ? body.recurrenceIntervalDays : 1;
@@ -617,12 +692,14 @@ router.post("/tasks", async (req, res) => {
       startDate,
       recurrenceType: seriesRecurrenceType,
       recurrenceDays: weeklyRecurrenceDays,
+      weeklyQuotaRequired,
     });
 
     const firstTaskId = generatedIds[0] ?? null;
     await logActivity(req, "task_series_created", "task_series", series.id, body.title, {
       generatedTasks: generatedIds.length,
       recurrenceDays: weeklyRecurrenceDays,
+      weeklyQuotaRequired,
     });
     if (firstTaskId) {
       await notifyTaskAssigned(firstTaskId, body.title, body.memberIds).catch(() => {});
@@ -674,6 +751,9 @@ router.post("/tasks", async (req, res) => {
         recurrenceIntervalDays: null,
         recurrenceDurationDays: null,
         recurrenceDays: null,
+        weeklyQuotaRequired: null,
+        weeklyQuotaPeriodStart: null,
+        weeklyQuotaPeriodEnd: null,
         pageId: body.pageId ?? null,
       }).returning();
       await syncTaskMembers(t.id, body.memberIds);
@@ -707,6 +787,9 @@ router.post("/tasks", async (req, res) => {
     recurrenceIntervalDays: body.recurrenceIntervalDays ?? null,
     recurrenceDurationDays: body.recurrenceDurationDays ?? null,
     recurrenceDays: (body as any).recurrenceDays ?? null,
+    weeklyQuotaRequired,
+    weeklyQuotaPeriodStart: weeklyQuotaRequired ? getWeekRange(startDate).start : null,
+    weeklyQuotaPeriodEnd: weeklyQuotaRequired ? getWeekRange(startDate).end : null,
     pageId: body.pageId ?? null,
   }).returning();
 
@@ -785,6 +868,16 @@ router.put("/tasks/:id", async (req, res) => {
   const updateScope: TaskUpdateScope = canApplySeriesScope ? requestedUpdateScope : "single";
 
   const updateData: Record<string, unknown> = {};
+  let weeklyQuotaRequired: number | null | undefined;
+  if ("weeklyQuotaRequired" in (req.body as any)) {
+    try {
+      weeklyQuotaRequired = parseWeeklyQuotaRequired((req.body as any).weeklyQuotaRequired);
+      updateData.weeklyQuotaRequired = weeklyQuotaRequired;
+    } catch {
+      res.status(400).json({ error: "Invalid weeklyQuotaRequired" });
+      return;
+    }
+  }
   if (body.title !== undefined) updateData.title = body.title;
   if (body.description !== undefined) updateData.description = body.description;
   if (body.platformId !== undefined) updateData.platformId = body.platformId;
@@ -806,6 +899,14 @@ router.put("/tasks/:id", async (req, res) => {
       return;
     }
   }
+  if (weeklyQuotaRequired && body.startDate) {
+    const range = getWeekRange(new Date(body.startDate as unknown as string));
+    updateData.weeklyQuotaPeriodStart = range.start;
+    updateData.weeklyQuotaPeriodEnd = range.end;
+    updateData.dueDate = range.end;
+    updateData.startDate = range.start;
+    updateData.endDate = range.end;
+  }
   const completedAt = body.status === "completed" ? new Date() : null;
   if (body.status !== undefined) {
     updateData.status = body.status;
@@ -815,6 +916,18 @@ router.put("/tasks/:id", async (req, res) => {
   if (body.progress !== undefined) updateData.progress = body.progress;
   if ("submissionUrl" in body) updateData.submissionUrl = body.submissionUrl ?? null;
   if ("pageId" in body) updateData.pageId = body.pageId ?? null;
+
+  const effectiveWeeklyQuotaRequired = weeklyQuotaRequired ?? (currentTask as any).weeklyQuotaRequired ?? null;
+  if (body.status === "completed" && effectiveWeeklyQuotaRequired) {
+    const proofCount = await db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(taskProofsTable)
+      .where(and(eq(taskProofsTable.taskId, id), isNull(taskProofsTable.deletedAt)));
+    if ((proofCount[0]?.count ?? 0) < effectiveWeeklyQuotaRequired) {
+      res.status(400).json({ error: "Weekly quota requires more proofs before completion" });
+      return;
+    }
+  }
 
   let updatedTaskIds = [id];
   if (updateScope === "single") {
@@ -950,6 +1063,87 @@ router.put("/tasks/:id", async (req, res) => {
   res.json(taskResponse);
 });
 
+router.post("/tasks/:id/proofs", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "Invalid task id" });
+    return;
+  }
+
+  const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  try {
+    new URL(url);
+  } catch {
+    res.status(400).json({ error: "Invalid proof URL" });
+    return;
+  }
+
+  const task = await fetchTaskForPermission(id);
+  if (!task) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+
+  if (!canEditTask((req as any).currentUser, task)) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const currentUser = (req as any).currentUser;
+  let shouldNotifyCompleted = false;
+  let completedAt: Date | null = null;
+
+  await db.transaction(async (tx: any) => {
+    await tx.insert(taskProofsTable).values({
+      taskId: id,
+      url,
+      createdByUserId: currentUser?.id ?? null,
+    });
+
+    const [{ count }] = await tx
+      .select({ count: sql<number>`count(*)::int` })
+      .from(taskProofsTable)
+      .where(and(eq(taskProofsTable.taskId, id), isNull(taskProofsTable.deletedAt)));
+
+    const required = (task as any).weeklyQuotaRequired as number | null;
+    const progress = required ? Math.min(100, Math.round((count / required) * 100)) : task.progress;
+    const updateData: Record<string, unknown> = {
+      submissionUrl: task.submissionUrl ?? url,
+      progress,
+    };
+
+    if (required && count >= required && task.status !== "completed") {
+      completedAt = new Date();
+      updateData.status = "completed";
+      updateData.completedAt = completedAt;
+      shouldNotifyCompleted = true;
+    }
+
+    await tx.update(tasksTable).set(updateData).where(eq(tasksTable.id, id));
+  });
+
+  if (shouldNotifyCompleted) {
+    await notifyTaskCompleted({
+      id,
+      title: task.title,
+      memberId: task.memberId,
+      submissionUrl: task.submissionUrl ?? url,
+      completedAt,
+    }).catch(() => {});
+    await notifyTelegramTaskCompleted({
+      id,
+      title: task.title,
+      memberId: task.memberId,
+      submissionUrl: task.submissionUrl ?? url,
+      completedAt,
+    }).catch(() => {});
+  }
+
+  await logActivity(req, "task_proof_created", "task", id, task.title, { url });
+  const taskResponse = await buildTaskResponse(id);
+  res.status(201).json(taskResponse);
+});
+
 // Soft delete (move to trash)
 router.delete("/tasks/:id", async (req, res) => {
   const { id } = DeleteTaskParams.parse({ id: Number(req.params.id) });
@@ -996,6 +1190,9 @@ router.post("/tasks/:id/duplicate", async (req, res) => {
     recurrenceDurationDays: original.recurrenceDurationDays,
     pageId: original.pageId,
     recurrenceDays: original.recurrenceDays,
+    weeklyQuotaRequired: (original as any).weeklyQuotaRequired ?? null,
+    weeklyQuotaPeriodStart: (original as any).weeklyQuotaPeriodStart ?? null,
+    weeklyQuotaPeriodEnd: (original as any).weeklyQuotaPeriodEnd ?? null,
   }).returning();
 
   // Copy task members

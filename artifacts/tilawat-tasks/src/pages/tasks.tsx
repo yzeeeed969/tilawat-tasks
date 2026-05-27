@@ -171,7 +171,7 @@ const taskSchema = z.object({
   status: z.enum(["pending", "completed"]).optional(),
   priority: z.enum(["urgent", "normal", "low"]).optional(),
   progress: z.coerce.number().min(0).max(100).optional(),
-  seriesType: z.enum(["temporary", "operational"]).optional(),
+  seriesType: z.enum(["temporary", "operational", "weekly_quota"]).optional(),
   startDate: z.string().min(1, { message: "تاريخ البداية مطلوب" }),
   endDate: z.string().optional(),
   dueDate: z.string().optional(),
@@ -179,6 +179,7 @@ const taskSchema = z.object({
   recurrenceIntervalDays: z.coerce.number().min(1).max(365).optional().nullable(),
   recurrenceDurationDays: z.coerce.number().min(1).max(365).optional().nullable(),
   recurrenceDays: z.string().optional().nullable(),
+  weeklyQuotaRequired: z.coerce.number().min(1, { message: "أدخل عددًا صحيحًا" }).max(50, { message: "الحد الأعلى 50 مرة" }).optional().nullable(),
   submissionUrl: z.string().url({ message: "أدخل رابطاً صحيحاً" }).or(z.literal("")).optional().nullable(),
 }).superRefine((data, ctx) => {
   if ((data.seriesType ?? "temporary") === "operational" && data.recurrence !== "weekly" && data.recurrence !== "monthly") {
@@ -186,6 +187,13 @@ const taskSchema = z.object({
       code: z.ZodIssueCode.custom,
       message: "اختر تكراراً أسبوعياً أو شهرياً",
       path: ["recurrence"],
+    });
+  }
+  if (data.seriesType === "weekly_quota" && !data.weeklyQuotaRequired) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "حدد عدد مرات الإنجاز المطلوبة في الأسبوع",
+      path: ["weeklyQuotaRequired"],
     });
   }
   if (data.startDate && data.endDate && new Date(data.endDate) < new Date(data.startDate)) {
@@ -215,6 +223,13 @@ const submissionUrlSchema = z.object({
 type TaskFormValues = z.infer<typeof taskSchema>;
 type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
 type EditTaskScope = "single" | "future" | "series";
+type TaskProof = {
+  id: number;
+  taskId: number;
+  url: string;
+  note?: string | null;
+  createdAt?: string | Date;
+};
 
 const EDIT_SCOPE_MESSAGES: Record<EditTaskScope, string> = {
   single: "سيتم تعديل هذه المهمة فقط.",
@@ -227,6 +242,108 @@ const MOSQUE_LABEL: Record<string, string> = {
   haram: "المسجد الحرام",
 };
 const MOSQUE_ICON: Record<string, string> = { nabawi: "🕌", haram: "🕋" };
+
+function taskProofs(task: TaskWithDetails): TaskProof[] {
+  return Array.isArray((task as any).proofs) ? (task as any).proofs : [];
+}
+
+function isWeeklyQuotaTask(task: TaskWithDetails) {
+  return Number((task as any).weeklyQuotaRequired ?? 0) > 0;
+}
+
+function weeklyQuotaInfo(task: TaskWithDetails) {
+  const required = Number((task as any).weeklyQuotaRequired ?? 0);
+  const proofs = taskProofs(task);
+  return {
+    required,
+    completed: proofs.length,
+    remaining: Math.max(required - proofs.length, 0),
+    isQuota: required > 0,
+  };
+}
+
+function WeeklyQuotaBadge({ task }: { task: TaskWithDetails }) {
+  const quota = weeklyQuotaInfo(task);
+  if (!quota.isQuota) return null;
+  return (
+    <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
+      <Repeat2 className="h-2.5 w-2.5" />
+      هدف أسبوعي {quota.completed}/{quota.required}
+    </span>
+  );
+}
+
+function TaskProofCell({
+  task,
+  onAdd,
+}: {
+  task: TaskWithDetails;
+  onAdd: (task: TaskWithDetails) => void;
+}) {
+  const quota = weeklyQuotaInfo(task);
+  if (quota.isQuota) {
+    const proofs = taskProofs(task);
+    return (
+      <div className="flex items-center gap-1.5 flex-wrap">
+        <span className={cn(
+          "inline-flex items-center gap-1 text-xs font-medium border rounded-full px-2 py-0.5",
+          quota.completed >= quota.required
+            ? "text-green-700 bg-green-50 border-green-200"
+            : "text-amber-700 bg-amber-50 border-amber-200"
+        )}>
+          {quota.completed}/{quota.required}
+        </span>
+        {proofs.slice(0, 2).map((proof, index) => (
+          <a
+            key={proof.id}
+            href={proof.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100 transition-colors"
+            title={proof.url}
+          >
+            <ExternalLink className="h-3 w-3 shrink-0" />
+            {index + 1}
+          </a>
+        ))}
+        {proofs.length > 2 && <span className="text-[10px] text-muted-foreground">+{proofs.length - 2}</span>}
+        {quota.completed < quota.required && (
+          <button
+            onClick={() => onAdd(task)}
+            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 border border-dashed border-muted-foreground/30 hover:border-sidebar-primary/50 rounded-full px-2 py-0.5 transition-colors"
+            title="إضافة شاهد"
+          >
+            <Link2 className="h-3 w-3" />
+            أضف
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  return task.submissionUrl ? (
+    <div className="flex items-center gap-1.5">
+      <a
+        href={task.submissionUrl}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100 transition-colors max-w-[80px] truncate"
+        title={task.submissionUrl}
+      >
+        <ExternalLink className="h-3 w-3 shrink-0" />
+        <span className="truncate">رابط</span>
+      </a>
+      <button onClick={() => onAdd(task)} className="h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors">
+        <Pencil className="h-3 w-3" />
+      </button>
+    </div>
+  ) : (
+    <button onClick={() => onAdd(task)} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 border border-dashed border-muted-foreground/30 hover:border-sidebar-primary/50 rounded-full px-2 py-0.5 transition-colors">
+      <Link2 className="h-3 w-3" />
+      أضف
+    </button>
+  );
+}
 
 type DueStatusTask = {
   dueDate?: string | Date | null;
@@ -388,6 +505,7 @@ function TaskFormFields({
   const seriesType = watch("seriesType") ?? "temporary";
   const recurrence = watch("recurrence") ?? "none";
   const recurrenceDays = watch("recurrenceDays") ?? "";
+  const weeklyQuotaRequired = watch("weeklyQuotaRequired");
   const selectedPlatform = platforms?.find((p) => p.id === platformId);
   const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
   const applicationReciters = useMemo(
@@ -442,10 +560,14 @@ function TaskFormFields({
     if (seriesType === "operational" && recurrence !== "weekly" && recurrence !== "monthly") {
       setValue("recurrence", "weekly");
     }
+    if (seriesType === "weekly_quota") {
+      if (recurrence !== "weekly") setValue("recurrence", "weekly");
+      if (!weeklyQuotaRequired) setValue("weeklyQuotaRequired", 3);
+    }
     if ((seriesType !== "operational" || recurrence !== "weekly") && recurrenceDays) {
       setValue("recurrenceDays", null);
     }
-  }, [seriesType, recurrence, recurrenceDays, setValue]);
+  }, [seriesType, recurrence, recurrenceDays, weeklyQuotaRequired, setValue]);
 
   // Auto-set reciterId from page when page changes
   useEffect(() => {
@@ -691,6 +813,7 @@ function TaskFormFields({
                 <SelectContent dir="rtl">
                   <SelectItem value="temporary">مهمة مؤقتة</SelectItem>
                   <SelectItem value="operational">مهمة تشغيلية متكررة</SelectItem>
+                  <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -775,7 +898,28 @@ function TaskFormFields({
             }}
           />
         )}
-        <div className={cn("grid gap-3", seriesType === "operational" ? "grid-cols-1" : "grid-cols-2")}>
+        {seriesType === "weekly_quota" && (
+          <FormField
+            name="weeklyQuotaRequired"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>عدد مرات الإنجاز في الأسبوع</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={field.value ?? 3}
+                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : null)}
+                    placeholder="مثال: 3"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+        <div className={cn("grid gap-3", seriesType === "operational" || seriesType === "weekly_quota" ? "grid-cols-1" : "grid-cols-2")}>
         <FormField
           name="startDate"
           render={({ field }) => (
@@ -821,6 +965,8 @@ function TaskFormFields({
             ? recurrence === "monthly"
               ? "ينشئ النظام مهاماً مستقلة شهرياً في نفس تاريخ البداية ضمن نافذة 60 يوماً قادمة."
               : "ينشئ النظام مهاماً مستقلة أسبوعياً في نفس يوم البداية ضمن نافذة 60 يوماً قادمة."
+            : seriesType === "weekly_quota"
+              ? "ينشئ النظام مهمة واحدة لكل أسبوع. يضيف العضو الشواهد حتى يصل إلى العدد المطلوب، ثم تكتمل المهمة تلقائياً."
             : "إذا تركت النهاية فارغة تُنشأ مهمة ليوم واحد فقط. وإذا اخترت نهاية، ينشئ النظام مهمة مستقلة لكل يوم من البداية حتى النهاية، ولكل يوم شاهد وزر إتمام مستقل."}
         </p>
       </div>
@@ -1413,6 +1559,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     recurrenceIntervalDays: null,
     recurrenceDurationDays: null,
     recurrenceDays: null,
+    weeklyQuotaRequired: 3,
     priority: "normal",
     progress: 0,
   };
@@ -1433,6 +1580,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     const allMembers = task.members && task.members.length > 0 ? task.members : [task.member];
     const reciter = task.reciter as Reciter | null | undefined;
     const taskRecurrence = (task.recurrence ?? "none") as TaskFormValues["recurrence"];
+    const weeklyQuotaRequired = Number((task as any).weeklyQuotaRequired ?? 0);
     editForm.reset({
       title: task.title,
       description: task.description ?? "",
@@ -1443,14 +1591,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       status: task.status as TaskFormValues["status"],
       priority: (task.priority ?? "normal") as TaskFormValues["priority"],
       progress: task.progress ?? 0,
-      seriesType: taskRecurrence === "weekly" || taskRecurrence === "monthly" ? "operational" : "temporary",
-      startDate: (task as any).startDate ? format(new Date((task as any).startDate), "yyyy-MM-dd") : "",
+      seriesType: weeklyQuotaRequired > 0 ? "weekly_quota" : taskRecurrence === "weekly" || taskRecurrence === "monthly" ? "operational" : "temporary",
+      startDate: (task as any).weeklyQuotaPeriodStart
+        ? format(new Date((task as any).weeklyQuotaPeriodStart), "yyyy-MM-dd")
+        : (task as any).startDate ? format(new Date((task as any).startDate), "yyyy-MM-dd") : "",
       dueDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "",
       endDate: (task as any).endDate ? format(new Date((task as any).endDate), "yyyy-MM-dd") : "",
       recurrence: taskRecurrence,
       recurrenceIntervalDays: (task as any).recurrenceIntervalDays ?? null,
       recurrenceDurationDays: (task as any).recurrenceDurationDays ?? null,
       recurrenceDays: (task as any).recurrenceDays ?? null,
+      weeklyQuotaRequired: weeklyQuotaRequired > 0 ? weeklyQuotaRequired : 3,
     });
   };
 
@@ -1508,10 +1659,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const onCreateSubmit = async (data: TaskFormValues) => {
     const seriesType = data.seriesType ?? "temporary";
-    const recurrence = seriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
-    const recurrenceDays = seriesType === "operational" && recurrence === "weekly"
+    const isWeeklyQuota = seriesType === "weekly_quota";
+    const apiSeriesType = isWeeklyQuota ? "operational" : seriesType;
+    const recurrence = apiSeriesType === "operational" ? (isWeeklyQuota ? "weekly" : data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
+    const recurrenceDays = apiSeriesType === "operational" && recurrence === "weekly" && !isWeeklyQuota
       ? data.recurrenceDays ?? null
       : null;
+    const weeklyQuotaRequired = isWeeklyQuota ? Number(data.weeklyQuotaRequired ?? 3) : null;
     const selectedPlatform = platforms?.find((p) => p.id === data.platformId);
     const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
     let pageId = data.pageId ?? null;
@@ -1533,7 +1687,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       const reciter = reciters?.find((r) => r.id === data.reciterId);
       const taskTitle = isApplicationPlatform
         ? [data.appPrayer, reciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ")
-        : data.title || "مهمة جديدة";
+        : isWeeklyQuota
+          ? `${data.title || selectedPlatform?.name || "مهمة"} — هدف أسبوعي (${weeklyQuotaRequired} مرات)`
+          : data.title || "مهمة جديدة";
 
       await createTask.mutateAsync({
         data: {
@@ -1545,16 +1701,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           status: "pending",
           priority: data.priority ?? "normal",
           progress: data.progress ?? 0,
-          seriesType,
+          seriesType: apiSeriesType,
           startDate: new Date(data.startDate).toISOString(),
           dueDate: new Date(data.startDate).toISOString(),
-          endDate: seriesType === "temporary" && data.endDate ? new Date(data.endDate).toISOString() : undefined,
+          endDate: apiSeriesType === "temporary" && data.endDate ? new Date(data.endDate).toISOString() : undefined,
           recurrence,
           recurrenceIntervalDays: null,
           recurrenceDurationDays: null,
           recurrenceDays,
+          weeklyQuotaRequired,
           pageId,
-          expandDailyInstances: seriesType === "temporary",
+          expandDailyInstances: apiSeriesType === "temporary",
           recurrencePattern: recurrence,
         } as any,
       });
@@ -1581,8 +1738,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       if (!confirmed) return;
     }
     const seriesType = data.seriesType ?? "temporary";
-    const recurrence = seriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
-    const recurrenceDays = seriesType === "operational" && recurrence === "weekly"
+    const isWeeklyQuota = seriesType === "weekly_quota";
+    const apiSeriesType = isWeeklyQuota ? "operational" : seriesType;
+    const recurrence = isWeeklyQuota ? "none" : apiSeriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
+    const recurrenceDays = apiSeriesType === "operational" && recurrence === "weekly" && !isWeeklyQuota
       ? data.recurrenceDays ?? null
       : null;
     updateTask.mutate(
@@ -1599,11 +1758,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           progress: data.progress ?? 0,
           startDate: new Date(data.startDate).toISOString(),
           dueDate: new Date(data.startDate).toISOString(),
-          endDate: seriesType === "temporary" && data.endDate ? new Date(data.endDate).toISOString() : undefined,
+          endDate: apiSeriesType === "temporary" && data.endDate ? new Date(data.endDate).toISOString() : undefined,
           recurrence,
           recurrenceIntervalDays: null,
           recurrenceDurationDays: null,
           recurrenceDays,
+          weeklyQuotaRequired: isWeeklyQuota ? Number(data.weeklyQuotaRequired ?? 3) : null,
           pageId: data.pageId ?? null,
           updateScope: effectiveEditScope,
         } as any,
@@ -1622,10 +1782,18 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const handleStatusChange = (id: number, status: TaskStatus) => {
     if (status === "completed") {
       const task = tasks?.find((t) => t.id === id);
-      if (!task?.submissionUrl) {
+      if (task && isWeeklyQuotaTask(task)) {
+        const quota = weeklyQuotaInfo(task);
+        if (quota.completed < quota.required) {
+          toast({ title: `أضف ${quota.remaining} شاهد قبل إكمال الهدف الأسبوعي`, variant: "destructive" });
+          openUrlDialog(task);
+          return;
+        }
+      }
+      if (task && !task.submissionUrl && !isWeeklyQuotaTask(task)) {
         toast({ title: "يجب إضافة رابط الشاهد أولاً لإكمال المهمة", variant: "destructive" });
         setPendingCompleteId(id);
-        openUrlDialog(task!);
+        openUrlDialog(task);
         return;
       }
     }
@@ -1665,13 +1833,38 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const openUrlDialog = (task: TaskWithDetails) => {
-    setUrlDialog({ taskId: task.id, currentUrl: task.submissionUrl ?? "" });
-    urlForm.reset({ url: task.submissionUrl ?? "" });
+    const isQuota = isWeeklyQuotaTask(task);
+    setUrlDialog({ taskId: task.id, currentUrl: isQuota ? "" : task.submissionUrl ?? "" });
+    urlForm.reset({ url: isQuota ? "" : task.submissionUrl ?? "" });
   };
 
-  const handleSubmissionUrl = (data: { url: string }) => {
+  const handleSubmissionUrl = async (data: { url: string }) => {
     if (!urlDialog) return;
     const taskId = urlDialog.taskId;
+    const task = tasks?.find((t) => t.id === taskId);
+    if (task && isWeeklyQuotaTask(task)) {
+      if (!data.url) {
+        toast({ title: "أدخل رابط الشاهد", variant: "destructive" });
+        return;
+      }
+      try {
+        const response = await fetch(`/api/tasks/${taskId}/proofs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          credentials: "include",
+          body: JSON.stringify({ url: data.url }),
+        });
+        if (!response.ok) throw new Error("Failed to save proof");
+        await invalidateTasks();
+        toast({ title: "تم حفظ الشاهد" });
+        setPendingCompleteId(null);
+        setUrlDialog(null);
+        urlForm.reset({ url: "" });
+      } catch {
+        toast({ title: "حدث خطأ أثناء حفظ الشاهد", variant: "destructive" });
+      }
+      return;
+    }
     updateTask.mutate(
       { id: taskId, data: { submissionUrl: data.url || null } },
       {
@@ -2384,6 +2577,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               )}
                             >
                               <p className="font-semibold truncate">{task.title}</p>
+                              {isWeeklyQuotaTask(task) && (
+                                <p className="text-[10px] text-amber-700">
+                                  {weeklyQuotaInfo(task).completed}/{weeklyQuotaInfo(task).required} شواهد
+                                </p>
+                              )}
                               {reciter && <p className="text-muted-foreground truncate">{reciter.name}</p>}
                               <div className="flex items-center justify-between gap-1 mt-1">
                                 <div className="flex items-center gap-1 min-w-0">
@@ -2498,6 +2696,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               <TableCell className="font-medium">
                                 <div className="flex flex-col gap-0.5">
                                   <span>{task.title}</span>
+                                  <WeeklyQuotaBadge task={task} />
                                 </div>
                               </TableCell>
                               <TableCell>
@@ -2514,18 +2713,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                 {reciter ? <span className="text-sm">{reciter.name}</span> : <span className="text-xs text-muted-foreground">—</span>}
                               </TableCell>
                               <TableCell>
-                                {task.submissionUrl ? (
-                                  <div className="flex items-center gap-1.5">
-                                    <a href={task.submissionUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100 transition-colors max-w-[80px] truncate">
-                                      <ExternalLink className="h-3 w-3 shrink-0" /><span className="truncate">رابط</span>
-                                    </a>
-                                    <button onClick={() => openUrlDialog(task)} className="h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><Pencil className="h-3 w-3" /></button>
-                                  </div>
-                                ) : (
-                                  <button onClick={() => openUrlDialog(task)} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 border border-dashed border-muted-foreground/30 hover:border-sidebar-primary/50 rounded-full px-2 py-0.5 transition-colors">
-                                    <Link2 className="h-3 w-3" />أضف
-                                  </button>
-                                )}
+                                <TaskProofCell task={task} onAdd={openUrlDialog} />
                               </TableCell>
                               <TableCell>
                                 <button onClick={() => handleStatusChange(task.id, "completed")} title="تمت"
@@ -2569,6 +2757,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                   <TableCell className="w-[28%]">
                                     <div className="flex flex-col gap-0.5 opacity-60">
                                       <span className="font-medium line-through">{task.title}</span>
+                                      <WeeklyQuotaBadge task={task} />
                                     </div>
                                   </TableCell>
                                   <TableCell className="opacity-60">
@@ -2587,18 +2776,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                     {reciter ? <span className="text-sm text-muted-foreground">{reciter.name}</span> : <span className="text-xs text-muted-foreground">—</span>}
                                   </TableCell>
                                   <TableCell>
-                                    {task.submissionUrl ? (
-                                      <div className="flex items-center gap-1.5">
-                                        <a href={task.submissionUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100 transition-colors max-w-[80px] truncate">
-                                          <ExternalLink className="h-3 w-3 shrink-0" /><span className="truncate">رابط</span>
-                                        </a>
-                                        <button onClick={() => openUrlDialog(task)} className="h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"><Pencil className="h-3 w-3" /></button>
-                                      </div>
-                                    ) : (
-                                      <button onClick={() => openUrlDialog(task)} className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 border border-dashed border-muted-foreground/30 hover:border-sidebar-primary/50 rounded-full px-2 py-0.5 transition-colors">
-                                        <Link2 className="h-3 w-3" />أضف
-                                      </button>
-                                    )}
+                                    <TaskProofCell task={task} onAdd={openUrlDialog} />
                                   </TableCell>
                                   <TableCell>
                                     <button onClick={() => handleStatusChange(task.id, "pending")} title="إلغاء الإتمام"
@@ -2673,6 +2851,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span>{task.title}</span>
+                            <WeeklyQuotaBadge task={task} />
                             {task.recurrence && task.recurrence !== "none" && (
                               <span className={cn(
                                 "inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border",
@@ -2723,36 +2902,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                       <TableCell><TaskDueStatusLabel task={task} /></TableCell>
                       {/* Submission URL column */}
                       <TableCell>
-                        {task.submissionUrl ? (
-                          <div className="flex items-center gap-1.5">
-                            <a
-                              href={task.submissionUrl}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              title={task.submissionUrl}
-                              className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100 transition-colors max-w-[80px] truncate"
-                            >
-                              <ExternalLink className="h-3 w-3 shrink-0" />
-                              <span className="truncate">رابط</span>
-                            </a>
-                            <button
-                              onClick={() => openUrlDialog(task)}
-                              title="تعديل الرابط"
-                              className="h-5 w-5 rounded flex items-center justify-center text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                            >
-                              <Pencil className="h-3 w-3" />
-                            </button>
-                          </div>
-                        ) : (
-                          <button
-                            onClick={() => openUrlDialog(task)}
-                            title="إضافة رابط الشاهد"
-                            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 border border-dashed border-muted-foreground/30 hover:border-sidebar-primary/50 rounded-full px-2 py-0.5 transition-colors"
-                          >
-                            <Link2 className="h-3 w-3" />
-                            أضف
-                          </button>
-                        )}
+                        <TaskProofCell task={task} onAdd={openUrlDialog} />
                       </TableCell>
                       <TableCell>
                         {isAdmin ? (

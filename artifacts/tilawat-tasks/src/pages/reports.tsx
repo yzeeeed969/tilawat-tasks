@@ -118,6 +118,19 @@ function taskAssignees(task: TaskWithDetails) {
   return task.members && task.members.length > 0 ? task.members : [task.member];
 }
 
+type TaskProof = {
+  id?: number;
+  url?: string | null;
+  createdAt?: string | null;
+};
+
+function taskProofLinks(task: TaskWithDetails): string[] {
+  const proofs = Array.isArray((task as any).proofs) ? ((task as any).proofs as TaskProof[]) : [];
+  const proofUrls = proofs.map((proof) => proof.url).filter((url): url is string => Boolean(url));
+  if (proofUrls.length > 0) return proofUrls;
+  return task.submissionUrl ? [task.submissionUrl] : [];
+}
+
 function isAssignedToMember(task: TaskWithDetails, memberId: number) {
   return taskAssignees(task).some((member) => member.id === memberId);
 }
@@ -454,17 +467,19 @@ export default function Reports() {
   const proofRows = useMemo(() => {
     if (!proofInterval) return [];
     return reportTasks
-      .filter((task) => Boolean(task.submissionUrl && task.dueDate))
+      .filter((task) => Boolean(task.dueDate && taskProofLinks(task).length > 0))
       .filter((task) => isWithinInterval(new Date(task.dueDate!), proofInterval))
-      .map((task) => ({
-        taskDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "—",
-        taskTitle: task.title,
-        proofUrl: task.submissionUrl ?? "",
-        platform: task.platform?.name ?? "—",
-        reciter: task.reciter?.name ?? "—",
-        status: statusLabel(task.status),
-        members: taskAssignees(task).map((member) => member.name).join("، "),
-      }))
+      .flatMap((task) =>
+        taskProofLinks(task).map((proofUrl) => ({
+          taskDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "—",
+          taskTitle: task.title,
+          proofUrl,
+          platform: task.platform?.name ?? "—",
+          reciter: task.reciter?.name ?? "—",
+          status: statusLabel(task.status),
+          members: taskAssignees(task).map((member) => member.name).join("، "),
+        }))
+      )
       .sort((a, b) => a.taskDate.localeCompare(b.taskDate));
   }, [proofInterval, reportTasks]);
 
@@ -1072,16 +1087,21 @@ export default function Reports() {
                                         </div>
                                       </div>
                                       <CompletionTimingBadge task={task} />
-                                      {task.submissionUrl && (
-                                        <a
-                                          href={task.submissionUrl}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          onClick={(e) => e.stopPropagation()}
-                                          className="text-xs text-sidebar-primary hover:underline shrink-0"
-                                        >
-                                          رابط الشاهد
-                                        </a>
+                                      {taskProofLinks(task).length > 0 && (
+                                        <div className="flex flex-wrap gap-1 shrink-0">
+                                          {taskProofLinks(task).map((proofUrl, proofIndex) => (
+                                            <a
+                                              key={`${task.id}-proof-${proofIndex}`}
+                                              href={proofUrl}
+                                              target="_blank"
+                                              rel="noopener noreferrer"
+                                              onClick={(e) => e.stopPropagation()}
+                                              className="text-xs text-sidebar-primary hover:underline"
+                                            >
+                                              {taskProofLinks(task).length > 1 ? `شاهد ${proofIndex + 1}` : "رابط الشاهد"}
+                                            </a>
+                                          ))}
+                                        </div>
                                       )}
                                     </div>
                                   ))}

@@ -163,6 +163,9 @@ export const ListTasksResponseItem = zod.object({
   recurrenceIntervalDays: zod.number().nullish(),
   recurrenceDurationDays: zod.number().nullish(),
   recurrenceDays: zod.string().nullish(),
+  weeklyQuotaRequired: zod.number().nullish(),
+  weeklyQuotaPeriodStart: zod.coerce.date().nullish(),
+  weeklyQuotaPeriodEnd: zod.coerce.date().nullish(),
   lastRecurredAt: zod.coerce.date().nullish(),
   submissionUrl: zod.string().nullish(),
   pageId: zod.number().nullish(),
@@ -201,6 +204,7 @@ export const CreateTaskBody = zod.object({
   recurrenceIntervalDays: zod.number().nullish(),
   recurrenceDurationDays: zod.number().nullish(),
   recurrenceDays: zod.string().nullish(),
+  weeklyQuotaRequired: zod.number().nullish(),
   pageId: zod.number().nullish(),
 });
 
@@ -309,6 +313,7 @@ export const UpdateTaskBody = zod.object({
   recurrenceIntervalDays: zod.number().nullish(),
   recurrenceDurationDays: zod.number().nullish(),
   recurrenceDays: zod.string().nullish(),
+  weeklyQuotaRequired: zod.number().nullish(),
   submissionUrl: zod.string().nullish(),
   pageId: zod.number().nullish(),
   updateScope: zod.enum(["single", "future", "series"]).optional(),

@@ -5,6 +5,7 @@ export * from "./reciters";
 export * from "./task-series";
 export * from "./tasks";
 export * from "./task-members";
+export * from "./task-proofs";
 export * from "./comments";
 export * from "./users";
 export * from "./otp-codes";

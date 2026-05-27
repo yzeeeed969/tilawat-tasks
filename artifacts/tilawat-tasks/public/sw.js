@@ -1,4 +1,4 @@
-const CACHE_NAME = "tilawat-v14";
+const CACHE_NAME = "tilawat-v15";
 const STATIC_ASSETS = ["/manifest.json", "/favicon.svg", "/logo.svg"];
 
 self.addEventListener("install", (event) => {
