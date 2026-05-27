@@ -74,6 +74,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { formatHijriDate, useHijriPreference } from "@/lib/hijri-date";
 
 const WEEK_OPTS = { weekStartsOn: 0 as const };
 
@@ -182,6 +183,25 @@ function CompletionTimingBadge({ task }: { task: TaskWithDetails }) {
   return <Badge className="bg-green-50 text-green-700 border-green-200 hover:bg-green-50">مكتملة في الوقت</Badge>;
 }
 
+function DateWithHijri({
+  date,
+  formatPattern,
+  showHijri,
+}: {
+  date: Date | string | null | undefined;
+  formatPattern: string;
+  showHijri: boolean;
+}) {
+  if (!date) return <span>—</span>;
+  const value = new Date(date);
+  return (
+    <span className="inline-flex flex-col gap-0.5">
+      <span>{format(value, formatPattern, { locale: ar })}</span>
+      {showHijri && <span className="text-[10px] font-medium text-sidebar-primary/80">{formatHijriDate(value)}</span>}
+    </span>
+  );
+}
+
 export default function Reports() {
   const [period, setPeriod] = useState<Period>("week");
   const [weekOffset, setWeekOffset] = useState(0);
@@ -195,6 +215,7 @@ export default function Reports() {
   const [proofEndDate, setProofEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [showProofMemberNames, setShowProofMemberNames] = useState(false);
   const { toast } = useToast();
+  const { showHijri } = useHijriPreference();
 
   const { data: allTasks } = useListTasks(
     {},
@@ -654,6 +675,11 @@ export default function Reports() {
               <p className="text-sm font-bold text-foreground">
                 {format(weekStart, "d MMM", { locale: ar })} — {format(weekEnd, "d MMM yyyy", { locale: ar })}
               </p>
+              {showHijri && (
+                <p className="text-[11px] font-medium text-sidebar-primary/80">
+                  {formatHijriDate(weekStart, { day: "numeric", month: "long" })} — {formatHijriDate(weekEnd, { day: "numeric", month: "long", year: "numeric" })}
+                </p>
+              )}
               <p className="text-xs text-muted-foreground mt-0.5">
                 {dayNames[weekStart.getDay()]} — {dayNames[weekEnd.getDay()]}
               </p>
@@ -678,6 +704,11 @@ export default function Reports() {
               <p className="text-sm font-bold text-foreground">
                 {format(referenceMonth, "MMMM yyyy", { locale: ar })}
               </p>
+              {showHijri && (
+                <p className="text-[11px] font-medium text-sidebar-primary/80">
+                  {formatHijriDate(referenceMonth, { month: "long", year: "numeric" })}
+                </p>
+              )}
             </div>
             <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMonthOffset((o) => o - 1)}>
               <ChevronLeft className="h-4 w-4" />
@@ -696,6 +727,11 @@ export default function Reports() {
             <span className="text-sm font-bold text-foreground">
               {format(now, "EEEE، d MMMM yyyy", { locale: ar })}
             </span>
+            {showHijri && (
+              <span className="text-xs font-medium text-sidebar-primary/80">
+                {formatHijriDate(now)}
+              </span>
+            )}
           </div>
         )}
       </div>
@@ -830,7 +866,9 @@ export default function Reports() {
                 ) : (
                   proofRows.map((row, index) => (
                     <TableRow key={`${row.taskDate}-${row.proofUrl}-${index}`}>
-                      <TableCell className="text-sm text-muted-foreground">{row.taskDate}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        <DateWithHijri date={row.taskDate} formatPattern="yyyy-MM-dd" showHijri={showHijri} />
+                      </TableCell>
                       <TableCell className="font-medium">{row.taskTitle}</TableCell>
                       <TableCell>
                         <a href={row.proofUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100">
@@ -1209,14 +1247,10 @@ export default function Reports() {
                       {taskAssignees(task).map(getDisplayMemberName).join("، ")}
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {task.dueDate
-                        ? format(new Date(task.dueDate), "EEEE، d MMM", { locale: ar })
-                        : "—"}
+                      <DateWithHijri date={task.dueDate} formatPattern="EEEE، d MMM" showHijri={showHijri} />
                     </TableCell>
                     <TableCell className="text-sm text-muted-foreground">
-                      {task.completedAt
-                        ? format(new Date(task.completedAt), "EEEE، d MMM", { locale: ar })
-                        : "—"}
+                      <DateWithHijri date={task.completedAt} formatPattern="EEEE، d MMM" showHijri={showHijri} />
                     </TableCell>
                     <TableCell><CompletionTimingBadge task={task} /></TableCell>
                   </TableRow>

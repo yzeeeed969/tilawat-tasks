@@ -35,6 +35,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { NotificationsPanel } from "@/components/notifications-panel";
+import { useHijriPreference } from "@/lib/hijri-date";
 import {
   useRole,
   useIsAdmin,
@@ -82,6 +83,7 @@ function UserCard() {
   const isAdmin = useIsAdmin();
   const canManageSettingsLocal = useCanAccessSettings();
   const { dark, toggle } = useDarkMode();
+  const { showHijri, toggleHijri } = useHijriPreference();
   const [profileOpen, setProfileOpen] = useState(false);
   const [pwCurrent, setPwCurrent] = useState("");
   const [pwNew, setPwNew] = useState("");
@@ -175,6 +177,14 @@ function UserCard() {
         >
           {dark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-sidebar-foreground/60" />}
           <span className="text-sidebar-foreground/80">{dark ? "الوضع الفاتح" : "الوضع الداكن"}</span>
+        </button>
+        <button
+          onClick={toggleHijri}
+          className="mt-1 w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent/30 transition-colors text-sm"
+          title={showHijri ? "إخفاء التاريخ الهجري" : "إظهار التاريخ الهجري"}
+        >
+          <CalendarDays className="h-4 w-4 text-sidebar-foreground/60" />
+          <span className="text-sidebar-foreground/80">{showHijri ? "إخفاء التاريخ الهجري" : "إظهار التاريخ الهجري"}</span>
         </button>
       </div>
 

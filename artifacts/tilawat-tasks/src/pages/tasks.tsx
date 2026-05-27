@@ -110,6 +110,7 @@ import { useToast } from "@/hooks/use-toast";
 import { PlatformIcon } from "@/lib/platform-icon";
 import { cn } from "@/lib/utils";
 import { DatePickerInput } from "@/components/ui/date-picker-input";
+import { formatHijriDate, useHijriPreference } from "@/lib/hijri-date";
 
 const APP_PRAYER_OPTIONS = ["صلاة الفجر", "صلاة المغرب", "صلاة العشاء", "صلاة الجمعة"] as const;
 const ADMIN_LIST_LIMIT_OPTIONS = ["25", "50", "100", "all"] as const;
@@ -285,13 +286,21 @@ function TaskDueStatusLabel({ task }: { task: DueStatusTask }) {
   );
 }
 
-function TaskDayDateLabel({ dueDate }: { dueDate: string | Date | null | undefined }) {
+function TaskDayDateLabel({
+  dueDate,
+  showHijri = true,
+}: {
+  dueDate: string | Date | null | undefined;
+  showHijri?: boolean;
+}) {
   if (!dueDate) return <span className="text-muted-foreground text-xs">—</span>;
   const date = startOfDay(new Date(dueDate));
+  const hijriDate = showHijri ? formatHijriDate(date, { day: "numeric", month: "long", year: "numeric" }) : "";
   return (
     <div className="flex flex-col gap-0.5">
       <span className="text-sm font-semibold text-foreground">{format(date, "EEEE", { locale: ar })}</span>
       <span className="text-xs text-muted-foreground">{format(date, "d MMM yyyy", { locale: ar })}</span>
+      {hijriDate && <span className="text-[10px] font-medium text-sidebar-primary/80">{hijriDate}</span>}
     </div>
   );
 }
@@ -905,6 +914,7 @@ function ReciterGroupedView({
   onStatusChange: (id: number, status: TaskStatus) => void;
   updateTaskPending: boolean;
 }) {
+  const { showHijri } = useHijriPreference();
   if (!tasks) return null;
 
   // Filter tasks
@@ -1096,7 +1106,7 @@ function ReciterTaskCard({
                           </span>
                         )}
                         <TaskStatusBadge status={task.status} />
-                        <TaskDayDateLabel dueDate={task.dueDate} />
+                        <TaskDayDateLabel dueDate={task.dueDate} showHijri={showHijri} />
                         <TaskDueStatusLabel task={task} />
                       </div>
                       <div className="flex flex-wrap gap-1">
@@ -1207,6 +1217,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const { user } = useAuth();
+  const { showHijri } = useHijriPreference();
   const isAdmin = useIsAdmin();
   const role = useRole();
   const [completedCollapsed, setCompletedCollapsed] = useState(true);
@@ -2109,6 +2120,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 >
                   <span className="block text-xs font-semibold">{format(day, "EEEE", { locale: ar })}</span>
                   <span className="block text-sm font-bold">{format(day, "d MMM", { locale: ar })}</span>
+                  {showHijri && <span className="block text-[10px] font-medium opacity-80">{formatHijriDate(day, { day: "numeric", month: "short" })}</span>}
                 </button>
               );
             })}
@@ -2243,6 +2255,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   <p className="font-bold text-foreground">
                     {format(weekStart, "d MMMM", { locale: ar })} — {format(weekEnd, "d MMMM yyyy", { locale: ar })}
                   </p>
+                  {showHijri && (
+                    <p className="text-[11px] font-medium text-sidebar-primary/80">
+                      {formatHijriDate(weekStart, { day: "numeric", month: "long" })} — {formatHijriDate(weekEnd, { day: "numeric", month: "long", year: "numeric" })}
+                    </p>
+                  )}
                   {calendarWeekOffset === 0 && (
                     <p className="text-xs text-sidebar-primary font-medium">الأسبوع الحالي</p>
                   )}
@@ -2283,6 +2300,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   <div className="flex items-center gap-2 text-xs text-muted-foreground">
                     <span>
                       يعرض مهام {format(selectedDay, "EEEE، d MMMM", { locale: ar })}
+                      {showHijri ? ` / ${formatHijriDate(selectedDay, { day: "numeric", month: "long", year: "numeric" })}` : ""}
                     </span>
                     <button
                       onClick={() => setSelectedCalendarDate(null)}
@@ -2333,6 +2351,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         <p className={cn("text-lg font-black leading-tight", isT ? "text-sidebar-primary" : isPastDay ? "text-muted-foreground" : "text-foreground")}>
                           {format(day, "d")}
                         </p>
+                        {showHijri && (
+                          <p className="text-[10px] font-medium text-sidebar-primary/80">
+                            {formatHijriDate(day, { day: "numeric", month: "short" })}
+                          </p>
+                        )}
                       </div>
                       {/* Tasks */}
                       <div className="flex-1 p-1.5 space-y-1 overflow-y-auto max-h-[320px]">
@@ -2484,7 +2507,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                 </div>
                               </TableCell>
                               <TableCell>
-                                <TaskDayDateLabel dueDate={dueDate} />
+                                <TaskDayDateLabel dueDate={dueDate} showHijri={showHijri} />
                               </TableCell>
                               <TableCell><TaskDueStatusLabel task={task} /></TableCell>
                               <TableCell>
@@ -2556,7 +2579,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                   </TableCell>
                                   <TableCell>
                                     <div className="opacity-60">
-                                      <TaskDayDateLabel dueDate={dueDate} />
+                                      <TaskDayDateLabel dueDate={dueDate} showHijri={showHijri} />
                                     </div>
                                   </TableCell>
                                   <TableCell><TaskDueStatusLabel task={task} /></TableCell>
@@ -2696,7 +2719,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         </div>
                       </TableCell>
                       <TableCell><TaskStatusBadge status={task.status} /></TableCell>
-                      <TableCell><TaskDayDateLabel dueDate={task.dueDate} /></TableCell>
+                      <TableCell><TaskDayDateLabel dueDate={task.dueDate} showHijri={showHijri} /></TableCell>
                       <TableCell><TaskDueStatusLabel task={task} /></TableCell>
                       {/* Submission URL column */}
                       <TableCell>
