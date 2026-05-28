@@ -1144,6 +1144,60 @@ router.post("/tasks/:id/proofs", async (req, res) => {
   res.status(201).json(taskResponse);
 });
 
+router.put("/tasks/:id/proofs/:proofId", async (req, res) => {
+  const id = Number(req.params.id);
+  const proofId = Number(req.params.proofId);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(proofId) || proofId <= 0) {
+    res.status(400).json({ error: "Invalid task or proof id" });
+    return;
+  }
+
+  const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  try {
+    new URL(url);
+  } catch {
+    res.status(400).json({ error: "Invalid proof URL" });
+    return;
+  }
+
+  const task = await fetchTaskForPermission(id);
+  if (!task) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+
+  if (!canEditTask((req as any).currentUser, task)) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const [proof] = await db
+    .select()
+    .from(taskProofsTable)
+    .where(and(eq(taskProofsTable.id, proofId), eq(taskProofsTable.taskId, id), isNull(taskProofsTable.deletedAt)))
+    .limit(1);
+
+  if (!proof) {
+    res.status(404).json({ error: "Proof not found" });
+    return;
+  }
+
+  await db.transaction(async (tx: any) => {
+    await tx
+      .update(taskProofsTable)
+      .set({ url })
+      .where(and(eq(taskProofsTable.id, proofId), eq(taskProofsTable.taskId, id)));
+
+    if (task.submissionUrl === proof.url) {
+      await tx.update(tasksTable).set({ submissionUrl: url }).where(eq(tasksTable.id, id));
+    }
+  });
+
+  await logActivity(req, "task_proof_updated", "task", id, task.title, { proofId, url });
+  const taskResponse = await buildTaskResponse(id);
+  res.json(taskResponse);
+});
+
 // Soft delete (move to trash)
 router.delete("/tasks/:id", async (req, res) => {
   const { id } = DeleteTaskParams.parse({ id: Number(req.params.id) });

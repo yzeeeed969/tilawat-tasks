@@ -223,6 +223,12 @@ const submissionUrlSchema = z.object({
 type TaskFormValues = z.infer<typeof taskSchema>;
 type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
 type EditTaskScope = "single" | "future" | "series";
+type UrlDialogState = {
+  taskId: number;
+  currentUrl: string;
+  mode: "task-url" | "proof-create" | "proof-edit";
+  proofId?: number | null;
+};
 type TaskProof = {
   id: number;
   taskId: number;
@@ -276,9 +282,11 @@ function WeeklyQuotaBadge({ task }: { task: TaskWithDetails }) {
 function TaskProofCell({
   task,
   onAdd,
+  onManage,
 }: {
   task: TaskWithDetails;
   onAdd: (task: TaskWithDetails) => void;
+  onManage: (task: TaskWithDetails) => void;
 }) {
   const quota = weeklyQuotaInfo(task);
   if (quota.isQuota) {
@@ -293,20 +301,16 @@ function TaskProofCell({
         )}>
           {quota.completed}/{quota.required}
         </span>
-        {proofs.slice(0, 2).map((proof, index) => (
-          <a
-            key={proof.id}
-            href={proof.url}
-            target="_blank"
-            rel="noopener noreferrer"
+        {proofs.length > 0 && (
+          <button
+            onClick={() => onManage(task)}
             className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100 transition-colors"
-            title={proof.url}
+            title="عرض وتعديل الشواهد"
           >
             <ExternalLink className="h-3 w-3 shrink-0" />
-            {index + 1}
-          </a>
-        ))}
-        {proofs.length > 2 && <span className="text-[10px] text-muted-foreground">+{proofs.length - 2}</span>}
+            الشواهد
+          </button>
+        )}
         {quota.completed < quota.required && (
           <button
             onClick={() => onAdd(task)}
@@ -1349,7 +1353,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskWithDetails | null>(null);
   const [editTaskScope, setEditTaskScope] = useState<EditTaskScope>("series");
-  const [urlDialog, setUrlDialog] = useState<{ taskId: number; currentUrl: string } | null>(null);
+  const [urlDialog, setUrlDialog] = useState<UrlDialogState | null>(null);
+  const [proofsDialogTaskId, setProofsDialogTaskId] = useState<number | null>(null);
+  const [proofSaving, setProofSaving] = useState(false);
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [commentsTaskId, setCommentsTaskId] = useState<number | null>(null);
   const [commentsTaskTitle, setCommentsTaskTitle] = useState<string>("");
@@ -1477,6 +1483,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       return a.id - b.id;
     });
   }, [searchedTasks, filterPlatform, filterReciter, filterStatus, quickDateFilter, filterDueDate]);
+
+  const proofsDialogTask = useMemo(
+    () => tasks?.find((task) => task.id === proofsDialogTaskId) ?? null,
+    [tasks, proofsDialogTaskId]
+  );
 
   // Member rows (one row per task, sorted overdue-first then by dueDate)
   const memberRows = useMemo(() => {
@@ -1834,8 +1845,28 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const openUrlDialog = (task: TaskWithDetails) => {
     const isQuota = isWeeklyQuotaTask(task);
-    setUrlDialog({ taskId: task.id, currentUrl: isQuota ? "" : task.submissionUrl ?? "" });
+    setUrlDialog({
+      taskId: task.id,
+      currentUrl: isQuota ? "" : task.submissionUrl ?? "",
+      mode: isQuota ? "proof-create" : "task-url",
+      proofId: null,
+    });
     urlForm.reset({ url: isQuota ? "" : task.submissionUrl ?? "" });
+  };
+
+  const openProofsDialog = (task: TaskWithDetails) => {
+    setProofsDialogTaskId(task.id);
+  };
+
+  const openProofEditDialog = (task: TaskWithDetails, proof: TaskProof) => {
+    setProofsDialogTaskId(null);
+    setUrlDialog({
+      taskId: task.id,
+      currentUrl: proof.url,
+      mode: "proof-edit",
+      proofId: proof.id,
+    });
+    urlForm.reset({ url: proof.url });
   };
 
   const handleSubmissionUrl = async (data: { url: string }) => {
@@ -1847,21 +1878,28 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         toast({ title: "أدخل رابط الشاهد", variant: "destructive" });
         return;
       }
+      const isProofEdit = urlDialog.mode === "proof-edit" && typeof urlDialog.proofId === "number";
       try {
-        const response = await fetch(`/api/tasks/${taskId}/proofs`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ url: data.url }),
-        });
+        setProofSaving(true);
+        const response = await fetch(
+          isProofEdit ? `/api/tasks/${taskId}/proofs/${urlDialog.proofId}` : `/api/tasks/${taskId}/proofs`,
+          {
+            method: isProofEdit ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ url: data.url }),
+          }
+        );
         if (!response.ok) throw new Error("Failed to save proof");
         await invalidateTasks();
-        toast({ title: "تم حفظ الشاهد" });
+        toast({ title: isProofEdit ? "تم تعديل الشاهد" : "تم حفظ الشاهد" });
         setPendingCompleteId(null);
         setUrlDialog(null);
         urlForm.reset({ url: "" });
       } catch {
         toast({ title: "حدث خطأ أثناء حفظ الشاهد", variant: "destructive" });
+      } finally {
+        setProofSaving(false);
       }
       return;
     }
@@ -2011,11 +2049,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           <DialogHeader>
             <DialogTitle className="text-xl font-bold flex items-center gap-2">
               <Link2 className="h-5 w-5 text-sidebar-primary" />
-              رابط الشاهد على العمل
+              {urlDialog?.mode === "proof-edit" ? "تعديل الشاهد" : "رابط الشاهد على العمل"}
             </DialogTitle>
           </DialogHeader>
           <p className="text-sm text-muted-foreground">
-            أضف رابط المنشور أو المقطع كإثبات على إتمام المهمة — سيظهر للفريق كلّه.
+            {urlDialog?.mode === "proof-edit"
+              ? "عدّل رابط هذا الشاهد فقط. لن يتغير عدد الشواهد أو حالة المهمة."
+              : "أضف رابط المنشور أو المقطع كإثبات على إتمام المهمة — سيظهر للفريق كلّه."}
           </p>
           <form onSubmit={urlForm.handleSubmit(handleSubmissionUrl)} className="space-y-4 pt-2">
             <div className="space-y-2">
@@ -2035,24 +2075,93 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               <Button
                 type="submit"
                 className="flex-1 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
-                disabled={updateTask.isPending}
+                disabled={updateTask.isPending || proofSaving}
               >
-                {updateTask.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
-                حفظ الرابط
+                {updateTask.isPending || proofSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
+                {urlDialog?.mode === "proof-edit" ? "حفظ التعديل" : "حفظ الرابط"}
               </Button>
-              {urlDialog?.currentUrl && (
+              {urlDialog?.currentUrl && urlDialog?.mode === "task-url" && (
                 <Button
                   type="button"
                   variant="outline"
                   className="text-red-600 border-red-200 hover:bg-red-50"
                   onClick={() => handleSubmissionUrl({ url: "" })}
-                  disabled={updateTask.isPending}
+                  disabled={updateTask.isPending || proofSaving}
                 >
                   حذف
                 </Button>
               )}
             </div>
           </form>
+        </DialogContent>
+      </Dialog>
+
+      {/* Weekly quota proofs dialog */}
+      <Dialog open={!!proofsDialogTask} onOpenChange={(open) => { if (!open) setProofsDialogTaskId(null); }}>
+        <DialogContent className="sm:max-w-[560px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <ExternalLink className="h-5 w-5 text-sidebar-primary" />
+              شواهد المهمة
+            </DialogTitle>
+          </DialogHeader>
+          {proofsDialogTask && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                <p className="text-sm font-semibold text-sidebar-foreground">{proofsDialogTask.title}</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  يمكنك فتح أي شاهد أو تعديل رابطه دون تغيير عدد الشواهد أو حالة المهمة.
+                </p>
+              </div>
+              <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+                {taskProofs(proofsDialogTask).map((proof, index) => (
+                  <div key={proof.id} className="rounded-lg border border-border bg-background p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-3">
+                      <span className="text-sm font-semibold text-sidebar-foreground">شاهد {index + 1}</span>
+                      <div className="flex items-center gap-2">
+                        <a
+                          href={proof.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100"
+                        >
+                          <ExternalLink className="h-3.5 w-3.5" />
+                          فتح
+                        </a>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8 gap-1"
+                          onClick={() => openProofEditDialog(proofsDialogTask, proof)}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                          تعديل
+                        </Button>
+                      </div>
+                    </div>
+                    <p dir="ltr" className="break-all text-left text-xs text-muted-foreground">
+                      {proof.url}
+                    </p>
+                  </div>
+                ))}
+              </div>
+              {weeklyQuotaInfo(proofsDialogTask).completed < weeklyQuotaInfo(proofsDialogTask).required && (
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => {
+                    setProofsDialogTaskId(null);
+                    openUrlDialog(proofsDialogTask);
+                  }}
+                >
+                  <Link2 className="h-4 w-4" />
+                  إضافة شاهد جديد
+                </Button>
+              )}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 
@@ -2713,7 +2822,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                 {reciter ? <span className="text-sm">{reciter.name}</span> : <span className="text-xs text-muted-foreground">—</span>}
                               </TableCell>
                               <TableCell>
-                                <TaskProofCell task={task} onAdd={openUrlDialog} />
+                                <TaskProofCell task={task} onAdd={openUrlDialog} onManage={openProofsDialog} />
                               </TableCell>
                               <TableCell>
                                 <button onClick={() => handleStatusChange(task.id, "completed")} title="تمت"
@@ -2776,7 +2885,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                     {reciter ? <span className="text-sm text-muted-foreground">{reciter.name}</span> : <span className="text-xs text-muted-foreground">—</span>}
                                   </TableCell>
                                   <TableCell>
-                                    <TaskProofCell task={task} onAdd={openUrlDialog} />
+                                    <TaskProofCell task={task} onAdd={openUrlDialog} onManage={openProofsDialog} />
                                   </TableCell>
                                   <TableCell>
                                     <button onClick={() => handleStatusChange(task.id, "pending")} title="إلغاء الإتمام"
@@ -2902,7 +3011,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                       <TableCell><TaskDueStatusLabel task={task} /></TableCell>
                       {/* Submission URL column */}
                       <TableCell>
-                        <TaskProofCell task={task} onAdd={openUrlDialog} />
+                        <TaskProofCell task={task} onAdd={openUrlDialog} onManage={openProofsDialog} />
                       </TableCell>
                       <TableCell>
                         {isAdmin ? (
