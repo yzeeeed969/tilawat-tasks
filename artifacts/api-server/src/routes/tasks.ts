@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable } from "@workspace/db";
+import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable } from "@workspace/db";
 import { eq, and, inArray, isNull, isNotNull, ilike, or, sql } from "drizzle-orm";
 import {
   CreateTaskBody,
@@ -10,7 +10,7 @@ import {
   ListTasksQueryParams,
 } from "@workspace/api-zod";
 import { generateUpcomingTasksForSeries, syncActiveSeries } from "../services/task-engine";
-import { notifyTelegramTaskCompleted } from "../services/telegram-notification-engine";
+import { notifyTelegramTaskAssigned, notifyTelegramTaskCompleted } from "../services/telegram-notification-engine";
 import { canCreateTask, canDeleteTask, canEditTask, canViewTask } from "../lib/permissions";
 import { ensureTaskQuotaSchema } from "../services/task-quota-schema";
 
@@ -173,6 +173,44 @@ async function notifyTaskAssigned(taskId: number, taskTitle: string, memberIds: 
       title: "تم إسناد مهمة جديدة لك",
       body: taskTitle,
       taskId,
+      isRead: false,
+    }))
+  );
+}
+
+async function notifyTaskAssignedAfterReciterChange(input: {
+  taskId: number;
+  taskTitle: string;
+  memberId: number;
+  reciterName: string;
+  platformName: string;
+  dueDate: Date | null;
+}) {
+  const users = await db
+    .select({ id: usersTable.id })
+    .from(usersTable)
+    .where(and(
+      eq(usersTable.memberId, input.memberId),
+      eq(usersTable.isApproved, true),
+    ));
+
+  if (users.length === 0) return;
+
+  const body = [
+    `المهمة: ${input.taskTitle}`,
+    `القارئ: ${input.reciterName}`,
+    `المنصة: ${input.platformName}`,
+    input.dueDate ? `التاريخ: ${input.dueDate.toISOString()}` : null,
+    `فتح المهمة: /tasks/${input.taskId}`,
+  ].filter(Boolean).join("\n");
+
+  await db.insert(notificationsTable).values(
+    users.map((u) => ({
+      userId: u.id,
+      type: "task_assigned",
+      title: "تم إسناد مهمة إليك",
+      body,
+      taskId: input.taskId,
       isRead: false,
     }))
   );
@@ -817,6 +855,136 @@ router.get("/tasks/:id", async (req, res) => {
     res.status(404).json({ error: "Task not found" });
     return;
   }
+  res.json(taskResponse);
+});
+
+router.patch("/tasks/:id/quick-reciter", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "Invalid task id" });
+    return;
+  }
+
+  const reciterId = Number(req.body?.reciterId);
+  const requestedMemberId = req.body?.memberId === undefined || req.body?.memberId === null
+    ? null
+    : Number(req.body.memberId);
+
+  if (!Number.isInteger(reciterId) || reciterId <= 0) {
+    res.status(400).json({ error: "Invalid reciterId" });
+    return;
+  }
+  if (requestedMemberId !== null && (!Number.isInteger(requestedMemberId) || requestedMemberId <= 0)) {
+    res.status(400).json({ error: "Invalid memberId" });
+    return;
+  }
+
+  const currentUser = (req as any).currentUser;
+  if (currentUser?.role !== "admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const currentTask = await fetchTaskForPermission(id);
+  if (!currentTask) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+
+  const [reciter] = await db.select().from(recitersTable).where(eq(recitersTable.id, reciterId)).limit(1);
+  if (!reciter) {
+    res.status(404).json({ error: "Reciter not found" });
+    return;
+  }
+
+  const [platform] = await db.select().from(platformsTable).where(eq(platformsTable.id, currentTask.platformId)).limit(1);
+  if (!platform) {
+    res.status(404).json({ error: "Platform not found" });
+    return;
+  }
+
+  const [oldReciter] = currentTask.reciterId
+    ? await db.select().from(recitersTable).where(eq(recitersTable.id, currentTask.reciterId)).limit(1)
+    : [];
+
+  const [page] = await db
+    .select()
+    .from(platformPagesTable)
+    .where(and(eq(platformPagesTable.platformId, currentTask.platformId), eq(platformPagesTable.reciterId, reciterId)))
+    .limit(1);
+
+  const linkedMemberRows = page
+    ? await db.select({ memberId: pageMembersTable.memberId }).from(pageMembersTable).where(eq(pageMembersTable.pageId, page.id))
+    : [];
+  const linkedMemberIds = linkedMemberRows.map((row) => row.memberId);
+
+  let memberId = requestedMemberId;
+  if (linkedMemberIds.length === 1 && memberId === null) {
+    memberId = linkedMemberIds[0];
+  }
+  if (linkedMemberIds.length > 1 && memberId === null) {
+    res.status(400).json({ error: "Multiple linked members, memberId is required", linkedMemberIds });
+    return;
+  }
+  if (linkedMemberIds.length > 0 && memberId !== null && !linkedMemberIds.includes(memberId)) {
+    res.status(400).json({ error: "Member is not linked to this reciter page" });
+    return;
+  }
+  if (memberId === null) {
+    res.status(400).json({ error: "No linked member for this reciter, memberId is required" });
+    return;
+  }
+
+  const [member] = await db.select().from(membersTable).where(eq(membersTable.id, memberId)).limit(1);
+  if (!member) {
+    res.status(404).json({ error: "Member not found" });
+    return;
+  }
+
+  const oldMemberIds = currentTask.memberIds ?? [currentTask.memberId];
+  const title = oldReciter?.name && currentTask.title.includes(oldReciter.name)
+    ? currentTask.title.replace(oldReciter.name, reciter.name)
+    : currentTask.title;
+
+  await db.transaction(async (tx: any) => {
+    await tx
+      .update(tasksTable)
+      .set({
+        reciterId,
+        memberId,
+        pageId: page?.id ?? null,
+        title,
+      })
+      .where(eq(tasksTable.id, id));
+    await syncTaskMembersUsing(tx, id, [memberId!]);
+  });
+
+  await notifyTaskAssignedAfterReciterChange({
+    taskId: id,
+    taskTitle: title,
+    memberId,
+    reciterName: reciter.name,
+    platformName: platform.name,
+    dueDate: currentTask.dueDate,
+  }).catch(() => {});
+  await notifyTelegramTaskAssigned({
+    id,
+    title,
+    memberId,
+    dueDate: currentTask.dueDate,
+    reciterName: reciter.name,
+    platformName: platform.name,
+  }).catch(() => {});
+
+  await logActivity(req, "task_quick_reciter_changed", "task", id, title, {
+    fromReciterId: currentTask.reciterId,
+    toReciterId: reciterId,
+    fromMemberIds: oldMemberIds,
+    toMemberId: memberId,
+    pageId: page?.id ?? null,
+  });
+
+  const taskResponse = await buildTaskResponse(id);
   res.json(taskResponse);
 });
 

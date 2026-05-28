@@ -26,6 +26,7 @@ type NotificationType =
   | "telegram_admin_overdue"
   | "telegram_admin_task_completed"
   | "telegram_admin_daily_summary"
+  | "telegram_task_assigned"
   | "telegram_test";
 
 type Recipient = {
@@ -549,6 +550,45 @@ export async function notifyTelegramTaskCompleted(task: {
       text,
       recipientUserId: admin.userId,
       recipientMemberId: admin.memberId,
+      taskId: task.id,
+    });
+    if (result.sent) sent += 1;
+  }
+  return { sent };
+}
+
+export async function notifyTelegramTaskAssigned(task: {
+  id: number;
+  title: string;
+  memberId: number;
+  dueDate?: Date | null;
+  reciterName?: string | null;
+  platformName?: string | null;
+}) {
+  const settings = await getTelegramSettings();
+  if (!settings.enabled) return { sent: 0 };
+
+  const recipients = await getMemberRecipients([task.memberId]);
+  if (recipients.length === 0) return { sent: 0 };
+
+  let sent = 0;
+  for (const recipient of recipients) {
+    const text = [
+      "<b>تم إسناد مهمة إليك</b>",
+      `المهمة: ${escapeHtml(task.title)}`,
+      task.reciterName ? `القارئ: ${escapeHtml(task.reciterName)}` : "",
+      task.platformName ? `المنصة: ${escapeHtml(task.platformName)}` : "",
+      `التاريخ: ${escapeHtml(formatRiyadhDate(task.dueDate ?? null))}`,
+      `فتح المهمة: /tasks/${task.id}`,
+    ].filter(Boolean).join("\n");
+
+    const result = await sendLoggedTelegram({
+      type: "telegram_task_assigned",
+      dedupeKey: `telegram:task_assigned:${task.id}:member:${task.memberId}:${Date.now()}`,
+      chatId: recipient.chatId,
+      text,
+      recipientUserId: recipient.userId,
+      recipientMemberId: recipient.memberId,
       taskId: task.id,
     });
     if (result.sent) sent += 1;

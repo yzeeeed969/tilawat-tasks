@@ -1356,6 +1356,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [urlDialog, setUrlDialog] = useState<UrlDialogState | null>(null);
   const [proofsDialogTaskId, setProofsDialogTaskId] = useState<number | null>(null);
   const [proofSaving, setProofSaving] = useState(false);
+  const [quickReciterTask, setQuickReciterTask] = useState<TaskWithDetails | null>(null);
+  const [quickReciterId, setQuickReciterId] = useState("");
+  const [quickReciterMemberId, setQuickReciterMemberId] = useState("");
+  const [quickReciterMemberOptions, setQuickReciterMemberOptions] = useState<Array<{ id: number; name: string; role?: string | null }>>([]);
+  const [quickReciterHasLinkedMembers, setQuickReciterHasLinkedMembers] = useState(false);
+  const [quickReciterMembersLoading, setQuickReciterMembersLoading] = useState(false);
+  const [quickReciterSaving, setQuickReciterSaving] = useState(false);
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [commentsTaskId, setCommentsTaskId] = useState<number | null>(null);
   const [commentsTaskTitle, setCommentsTaskTitle] = useState<string>("");
@@ -1546,6 +1553,59 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const { data: members } = useListMembers({ query: { queryKey: getListMembersQueryKey() } });
   const { data: platforms } = useListPlatforms({ query: { queryKey: getListPlatformsQueryKey() } });
   const { data: reciters } = useListReciters({}, { query: { queryKey: getListRecitersQueryKey() } });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadLinkedMembers() {
+      if (!quickReciterTask || !quickReciterId || !members) return;
+      const reciterId = Number(quickReciterId);
+      if (!Number.isFinite(reciterId)) return;
+
+      setQuickReciterMembersLoading(true);
+      try {
+        const pagesRes = await fetch(`/api/platforms/${quickReciterTask.platform.id}/pages`, { credentials: "include" });
+        let linkedMemberIds: number[] = [];
+        if (pagesRes.ok) {
+          const pages = (await pagesRes.json()) as Array<{ id: number; reciterId?: number | null }>;
+          const page = pages.find((pg) => pg.reciterId === reciterId);
+          if (page) {
+            const membersRes = await fetch(`/api/platforms/${quickReciterTask.platform.id}/pages/${page.id}/members`, { credentials: "include" });
+            if (membersRes.ok) linkedMemberIds = await membersRes.json();
+          }
+        }
+
+        if (cancelled) return;
+        const linkedOptions = linkedMemberIds.length > 0
+          ? members.filter((member) => linkedMemberIds.includes(member.id))
+          : [];
+        const options = linkedOptions.length > 0 ? linkedOptions : members;
+        setQuickReciterHasLinkedMembers(linkedOptions.length > 0);
+        setQuickReciterMemberOptions(options);
+        setQuickReciterMemberId((current) =>
+          options.some((member) => String(member.id) === current)
+            ? current
+            : options[0] ? String(options[0].id) : ""
+        );
+      } catch {
+        if (cancelled) return;
+        setQuickReciterHasLinkedMembers(false);
+        setQuickReciterMemberOptions(members);
+        setQuickReciterMemberId((current) =>
+          members.some((member) => String(member.id) === current)
+            ? current
+            : members[0] ? String(members[0].id) : ""
+        );
+      } finally {
+        if (!cancelled) setQuickReciterMembersLoading(false);
+      }
+    }
+
+    loadLinkedMembers();
+    return () => {
+      cancelled = true;
+    };
+  }, [quickReciterTask, quickReciterId, members]);
 
   const updateTask = useUpdateTask();
   const createTask = useCreateTask();
@@ -1869,6 +1929,62 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     urlForm.reset({ url: proof.url });
   };
 
+  const openQuickReciterDialog = (task: TaskWithDetails) => {
+    const taskMembers = task.members && task.members.length > 0 ? task.members : [task.member];
+    setQuickReciterTask(task);
+    setQuickReciterId(task.reciter?.id ? String(task.reciter.id) : "");
+    setQuickReciterMemberOptions(taskMembers);
+    setQuickReciterMemberId(taskMembers[0] ? String(taskMembers[0].id) : "");
+    setQuickReciterHasLinkedMembers(false);
+  };
+
+  const closeQuickReciterDialog = () => {
+    setQuickReciterTask(null);
+    setQuickReciterId("");
+    setQuickReciterMemberId("");
+    setQuickReciterMemberOptions([]);
+    setQuickReciterHasLinkedMembers(false);
+    setQuickReciterMembersLoading(false);
+  };
+
+  const handleQuickReciterChange = async () => {
+    if (!quickReciterTask) return;
+    const reciterId = Number(quickReciterId);
+    const memberId = Number(quickReciterMemberId);
+    if (!Number.isFinite(reciterId) || reciterId <= 0) {
+      toast({ title: "اختر القارئ الجديد", variant: "destructive" });
+      return;
+    }
+    if (!Number.isFinite(memberId) || memberId <= 0) {
+      toast({ title: "اختر العضو المسؤول", variant: "destructive" });
+      return;
+    }
+
+    try {
+      setQuickReciterSaving(true);
+      const response = await fetch(`/api/tasks/${quickReciterTask.id}/quick-reciter`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ reciterId, memberId }),
+      });
+      if (!response.ok) {
+        const error = await response.json().catch(() => null);
+        throw new Error(error?.error ?? "Failed to change reciter");
+      }
+      await invalidateTasks();
+      toast({ title: "تم تغيير القارئ وإسناد المهمة للعضو المسؤول" });
+      closeQuickReciterDialog();
+    } catch (error) {
+      toast({
+        title: error instanceof Error ? error.message : "حدث خطأ أثناء تغيير القارئ",
+        variant: "destructive",
+      });
+    } finally {
+      setQuickReciterSaving(false);
+    }
+  };
+
   const handleSubmissionUrl = async (data: { url: string }) => {
     if (!urlDialog) return;
     const taskId = urlDialog.taskId;
@@ -2160,6 +2276,82 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   إضافة شاهد جديد
                 </Button>
               )}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Quick reciter change dialog */}
+      <Dialog open={!!quickReciterTask} onOpenChange={(open) => { if (!open) closeQuickReciterDialog(); }}>
+        <DialogContent className="sm:max-w-[520px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold flex items-center gap-2">
+              <MicVocal className="h-5 w-5 text-sidebar-primary" />
+              تغيير القارئ لهذه المهمة فقط
+            </DialogTitle>
+          </DialogHeader>
+          {quickReciterTask && (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-sidebar-foreground">
+                سيتم تغيير القارئ والعضو المسؤول لهذه المهمة فقط، دون تغيير السلسلة أو التاريخ أو الحالة أو الشواهد.
+              </div>
+              {quickReciterTask.status === "completed" && (
+                <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-700">
+                  هذه المهمة مكتملة. سيبقى الإكمال والشواهد كما هي.
+                </div>
+              )}
+              <div className="space-y-2">
+                <label className="text-sm font-medium">القارئ الجديد</label>
+                <Select value={quickReciterId} onValueChange={setQuickReciterId}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="اختر القارئ" />
+                  </SelectTrigger>
+                  <SelectContent dir="rtl">
+                    {(reciters ?? []).filter((reciter) => !isPlaceholderApplicationReciter(reciter.name)).map((reciter) => (
+                      <SelectItem key={reciter.id} value={String(reciter.id)}>
+                        {reciter.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <label className="text-sm font-medium">العضو المسؤول</label>
+                  {quickReciterMembersLoading && (
+                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      جار فحص الربط
+                    </span>
+                  )}
+                </div>
+                <Select value={quickReciterMemberId} onValueChange={setQuickReciterMemberId}>
+                  <SelectTrigger className="bg-background">
+                    <SelectValue placeholder="اختر العضو" />
+                  </SelectTrigger>
+                  <SelectContent dir="rtl">
+                    {quickReciterMemberOptions.map((member) => (
+                      <SelectItem key={member.id} value={String(member.id)}>
+                        {member.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <p className={cn("text-xs", quickReciterHasLinkedMembers ? "text-green-700" : "text-amber-700")}>
+                  {quickReciterHasLinkedMembers
+                    ? "تم عرض العضو أو الأعضاء المرتبطين بهذا القارئ في هذه المنصة."
+                    : "لا يوجد ربط محدد لهذا القارئ، يمكنك اختيار العضو يدويًا."}
+                </p>
+              </div>
+              <Button
+                type="button"
+                className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
+                disabled={quickReciterSaving || quickReciterMembersLoading}
+                onClick={handleQuickReciterChange}
+              >
+                {quickReciterSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
+                تأكيد تغيير القارئ
+              </Button>
             </div>
           )}
         </DialogContent>
@@ -2988,7 +3180,19 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                       <TableCell>
                         {reciter ? (
                           <div className="flex flex-col gap-0.5">
-                            <span className="text-sm font-medium">{reciter.name}</span>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-sm font-medium">{reciter.name}</span>
+                              {isAdmin && activeTab === "active" && (
+                                <button
+                                  type="button"
+                                  onClick={() => openQuickReciterDialog(task)}
+                                  className="h-6 w-6 rounded-md inline-flex items-center justify-center text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 transition-colors"
+                                  title="تغيير القارئ لهذه المهمة فقط"
+                                >
+                                  <Pencil className="h-3.5 w-3.5" />
+                                </button>
+                              )}
+                            </div>
                             <span className="text-[10px] text-muted-foreground">
                               {MOSQUE_ICON[reciter.mosque]} {reciter.mosque === "nabawi" ? "النبوي" : "الحرام"}
                             </span>
@@ -3024,6 +3228,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             <DropdownMenuContent align="end" className="w-48">
                               <DropdownMenuItem onClick={() => openEditDialog(task)} className="cursor-pointer flex items-center gap-2 font-medium">
                                 <Pencil className="h-4 w-4 text-sidebar-primary" />تعديل المهمة
+                              </DropdownMenuItem>
+                              <DropdownMenuItem onClick={() => openQuickReciterDialog(task)} className="cursor-pointer flex items-center gap-2">
+                                <MicVocal className="h-4 w-4 text-sidebar-primary/70" />تغيير القارئ
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => openComments(task)} className="cursor-pointer flex items-center gap-2">
                                 <MessageSquare className="h-4 w-4 text-sidebar-primary/70" />التعليقات
