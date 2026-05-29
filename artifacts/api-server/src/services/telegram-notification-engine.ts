@@ -17,6 +17,7 @@ import {
 } from "@workspace/db";
 import { ensureTelegramSchema } from "./telegram-schema";
 import { sendTelegramMessage } from "./telegram";
+import { getTaskUrl } from "../lib/public-url";
 
 const RIYADH_OFFSET_HOURS = 3;
 const LINK_TOKEN_BYTES = 18;
@@ -29,6 +30,7 @@ type NotificationType =
   | "telegram_admin_daily_summary"
   | "telegram_task_assigned"
   | "telegram_weekly_quota_reminder"
+  | "telegram_password_reset"
   | "telegram_test";
 
 type Recipient = {
@@ -266,13 +268,14 @@ async function sendLoggedTelegram(input: {
   dedupeKey: string;
   chatId: string;
   text: string;
+  replyMarkup?: unknown;
   recipientUserId?: number | null;
   recipientMemberId?: number | null;
   taskId?: number | null;
 }) {
   const log = await reserveLog(input);
   if (!log) return { sent: false, skipped: true };
-  const result = await sendTelegramMessage(input.chatId, input.text);
+  const result = await sendTelegramMessage(input.chatId, input.text, { replyMarkup: input.replyMarkup });
   await finalizeLog(log.id, result);
   return { sent: result.ok, skipped: false, error: result.error };
 }
@@ -458,9 +461,74 @@ async function getWeeklyQuotaReminderTasks(start: Date, end: Date): Promise<Week
   return rows.map((row) => ({ ...row, proofCount: Number(row.proofCount ?? 0) }));
 }
 
+function normalizeText(value: string | null | undefined) {
+  return String(value ?? "")
+    .replace(/[()（）\[\]{}]/g, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function platformEmoji(platformName: string | null | undefined) {
+  const normalized = normalizeText(platformName);
+  if (normalized.includes("يوتيوب") || normalized.includes("youtube")) return "🎬";
+  if (normalized.includes("انست") || normalized.includes("instagram")) return "📸";
+  if (normalized.includes("تلجرام") || normalized.includes("telegram")) return "✈️";
+  if (normalized.includes("تطبيق")) return "📱";
+  return "📌";
+}
+
+function taskDisplayParts(task: Pick<TaskRow, "title" | "platformName" | "reciterName">) {
+  const platformName = task.platformName || "";
+  const reciterName = task.reciterName || "";
+  const platformNorm = normalizeText(platformName);
+  const reciterNorm = normalizeText(reciterName);
+  const seen = new Set<string>();
+  const titleWithoutPlatformParen = task.title
+    .replace(/\(([^)]*)\)/g, (_match, inner) => normalizeText(inner) === platformNorm ? "" : `(${inner})`)
+    .trim();
+
+  const parts = titleWithoutPlatformParen
+    .split(/\s*[—–-]\s*/g)
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .filter((part) => {
+      const normalized = normalizeText(part);
+      if (!normalized) return false;
+      if (platformNorm && normalized === platformNorm) return false;
+      if (seen.has(normalized)) return false;
+      seen.add(normalized);
+      return true;
+    });
+
+  if (reciterName && !parts.some((part) => normalizeText(part) === reciterNorm)) {
+    parts.push(reciterName);
+  }
+
+  const title = parts.length > 0 ? parts.join(" — ") : task.title;
+  return { title, platformName, emoji: platformEmoji(platformName) };
+}
+
 function taskLine(task: TaskRow) {
-  const reciter = task.reciterName ? ` — ${task.reciterName}` : "";
-  return `• ${escapeHtml(task.title)}${reciter} (${escapeHtml(task.platformName)})`;
+  const display = taskDisplayParts(task);
+  const platform = display.platformName ? ` (${escapeHtml(display.platformName)})` : "";
+  return `• ${display.emoji} ${escapeHtml(display.title)}${platform}`;
+}
+
+function taskFieldLine(task: Pick<TaskRow, "title" | "platformName" | "reciterName">) {
+  const display = taskDisplayParts(task);
+  const platform = display.platformName ? ` (${escapeHtml(display.platformName)})` : "";
+  return `${display.emoji} ${escapeHtml(display.title)}${platform}`;
+}
+
+function taskLinkLine(taskId: number) {
+  return `فتح المهمة:\n${escapeHtml(getTaskUrl(taskId))}`;
+}
+
+function taskLinkButton(taskId: number) {
+  const url = getTaskUrl(taskId);
+  if (!/^https?:\/\//i.test(url)) return undefined;
+  return { inline_keyboard: [[{ text: "🔗 فتح المهمة", url }]] };
 }
 
 async function sendDailyMemberReminders(settings: TelegramSettings, now: Date) {
@@ -539,13 +607,14 @@ async function sendOverdueNotifications(settings: TelegramSettings, now: Date) {
         taskLine(task),
         `العضو: ${escapeHtml(task.memberName)}`,
         `الاستحقاق: ${escapeHtml(formatRiyadhDate(task.dueDate))}`,
-        `فتح المهمة: /tasks/${task.id}`,
+        taskLinkLine(task.id),
       ].join("\n");
       const result = await sendLoggedTelegram({
         type: "telegram_admin_overdue",
         dedupeKey: `telegram:admin_overdue:${dateKey}:task:${task.id}:admin:${admin.userId}`,
         chatId: admin.chatId,
         text,
+        replyMarkup: taskLinkButton(task.id),
         recipientUserId: admin.userId,
         recipientMemberId: admin.memberId,
         taskId: task.id,
@@ -657,21 +726,35 @@ export async function notifyTelegramTaskCompleted(task: {
   const admins = await getAdminRecipients();
   if (admins.length === 0) return { sent: 0 };
 
-  const [member] = await db
-    .select({ name: membersTable.name })
-    .from(membersTable)
-    .where(eq(membersTable.id, task.memberId))
+  const [details] = await db
+    .select({
+      memberName: membersTable.name,
+      taskTitle: tasksTable.title,
+      platformName: platformsTable.name,
+      reciterName: recitersTable.name,
+    })
+    .from(tasksTable)
+    .innerJoin(membersTable, eq(tasksTable.memberId, membersTable.id))
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(eq(tasksTable.id, task.id))
     .limit(1);
 
   let sent = 0;
   for (const admin of admins) {
     const text = [
-      "<b>تم إكمال مهمة</b>",
-      `العضو: ${escapeHtml(member?.name ?? "غير معروف")}`,
-      `المهمة: ${escapeHtml(task.title)}`,
-      `وقت الإكمال: ${escapeHtml(formatRiyadhDateTime(task.completedAt ?? new Date()))}`,
-      task.submissionUrl ? `الشاهد: ${escapeHtml(task.submissionUrl)}` : "",
-      `فتح المهمة: /tasks/${task.id}`,
+      "✅ <b>تم إكمال مهمة</b>",
+      "",
+      `👤 العضو: ${escapeHtml(details?.memberName ?? "غير معروف")}`,
+      `🎬 المهمة: ${taskFieldLine({
+        title: details?.taskTitle ?? task.title,
+        platformName: details?.platformName ?? null,
+        reciterName: details?.reciterName ?? null,
+      })}`,
+      `🕒 وقت الإكمال: ${escapeHtml(formatRiyadhDateTime(task.completedAt ?? new Date()))}`,
+      task.submissionUrl ? `🔗 الشاهد: ${escapeHtml(task.submissionUrl)}` : "",
+      "",
+      taskLinkLine(task.id),
     ].filter(Boolean).join("\n");
 
     const result = await sendLoggedTelegram({
@@ -679,6 +762,7 @@ export async function notifyTelegramTaskCompleted(task: {
       dedupeKey: `telegram:admin_completed:task:${task.id}:admin:${admin.userId}`,
       chatId: admin.chatId,
       text,
+      replyMarkup: taskLinkButton(task.id),
       recipientUserId: admin.userId,
       recipientMemberId: admin.memberId,
       taskId: task.id,
@@ -706,11 +790,15 @@ export async function notifyTelegramTaskAssigned(task: {
   for (const recipient of recipients) {
     const text = [
       "<b>تم إسناد مهمة إليك</b>",
-      `المهمة: ${escapeHtml(task.title)}`,
+      `المهمة: ${taskFieldLine({
+        title: task.title,
+        platformName: task.platformName ?? null,
+        reciterName: task.reciterName ?? null,
+      })}`,
       task.reciterName ? `القارئ: ${escapeHtml(task.reciterName)}` : "",
       task.platformName ? `المنصة: ${escapeHtml(task.platformName)}` : "",
       `التاريخ: ${escapeHtml(formatRiyadhDate(task.dueDate ?? null))}`,
-      `فتح المهمة: /tasks/${task.id}`,
+      taskLinkLine(task.id),
     ].filter(Boolean).join("\n");
 
     const result = await sendLoggedTelegram({
@@ -718,6 +806,7 @@ export async function notifyTelegramTaskAssigned(task: {
       dedupeKey: `telegram:task_assigned:${task.id}:member:${task.memberId}:${Date.now()}`,
       chatId: recipient.chatId,
       text,
+      replyMarkup: taskLinkButton(task.id),
       recipientUserId: recipient.userId,
       recipientMemberId: recipient.memberId,
       taskId: task.id,
@@ -855,9 +944,14 @@ export async function disconnectTelegramForUser(userId: number) {
     .where(eq(telegramRecipientsTable.userId, userId));
 }
 
+async function getRecipientForUser(userId: number) {
+  const [recipient] = await getMemberRecipients().then((recipients) => recipients.filter((row) => row.userId === userId));
+  return recipient ?? null;
+}
+
 export async function sendTelegramTestMessage(userId: number) {
   await ensureTelegramSchema();
-  const [recipient] = await getMemberRecipients().then((recipients) => recipients.filter((r) => r.userId === userId));
+  const recipient = await getRecipientForUser(userId);
   if (!recipient) throw new Error("لا يوجد ربط Telegram لهذا المستخدم");
 
   const result = await sendLoggedTelegram({
@@ -871,4 +965,40 @@ export async function sendTelegramTestMessage(userId: number) {
 
   if (!result.sent) throw new Error(result.error ?? "فشل إرسال رسالة الاختبار");
   return result;
+}
+
+export async function sendTelegramPasswordReset(input: {
+  userId: number;
+  displayName: string;
+  resetLink: string;
+  expiresAt: Date;
+}) {
+  await ensureTelegramSchema();
+  const recipient = await getRecipientForUser(input.userId);
+  if (!recipient) return { sent: false, skipped: true, reason: "not_linked" };
+
+  const text = [
+    "🔐 <b>استعادة كلمة المرور</b>",
+    "",
+    `مرحبًا ${escapeHtml(input.displayName)}،`,
+    "وصلنا طلبًا لإعادة تعيين كلمة مرور حسابك في نظام مهام تلاوة الحرمين.",
+    "",
+    `ينتهي الرابط: ${escapeHtml(formatRiyadhDateTime(input.expiresAt))}`,
+    "",
+    `رابط إعادة التعيين:\n${escapeHtml(input.resetLink)}`,
+    "",
+    "إذا لم تطلب هذا الإجراء، تجاهل هذه الرسالة.",
+  ].join("\n");
+
+  return sendLoggedTelegram({
+    type: "telegram_password_reset",
+    dedupeKey: `telegram:password_reset:user:${input.userId}:${Date.now()}`,
+    chatId: recipient.chatId,
+    text,
+    replyMarkup: /^https?:\/\//i.test(input.resetLink)
+      ? { inline_keyboard: [[{ text: "🔐 إعادة تعيين كلمة المرور", url: input.resetLink }]] }
+      : undefined,
+    recipientUserId: recipient.userId,
+    recipientMemberId: recipient.memberId,
+  });
 }

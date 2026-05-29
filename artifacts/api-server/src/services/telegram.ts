@@ -11,7 +11,11 @@ export function isTelegramConfigured() {
   return getTelegramToken().length > 0;
 }
 
-export async function sendTelegramMessage(chatId: string, text: string): Promise<TelegramSendResult> {
+export async function sendTelegramMessage(
+  chatId: string,
+  text: string,
+  options: { replyMarkup?: unknown } = {},
+): Promise<TelegramSendResult> {
   const token = getTelegramToken();
   if (!token) return { ok: false, error: "TELEGRAM_BOT_TOKEN is not configured" };
 
@@ -28,6 +32,7 @@ export async function sendTelegramMessage(chatId: string, text: string): Promise
         text,
         parse_mode: "HTML",
         disable_web_page_preview: true,
+        ...(options.replyMarkup ? { reply_markup: options.replyMarkup } : {}),
       }),
     });
     const body = await res.json().catch(() => ({})) as { ok?: boolean; description?: string };

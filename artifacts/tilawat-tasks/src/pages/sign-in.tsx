@@ -138,13 +138,13 @@ export default function SignInPage() {
             <div className="text-center mb-2">
               <h2 className="text-xl font-bold text-foreground">استرداد كلمة المرور</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                أدخل اسم المستخدم أو بريدك الإلكتروني وسيُرسل إليك رابط الاسترداد
+                أدخل اسم المستخدم أو البريد. إذا كان Telegram مربوطًا بالحساب سيصلك رابط الاسترداد هناك
               </p>
             </div>
             {forgotSent ? (
               <div className="space-y-4">
                 <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 text-sm text-center">
-                  إذا كان البريد أو الحساب مسجلاً في النظام، ستصلك رسالة الاسترداد قريباً
+                  إذا كان الحساب مسجلاً ومربوطًا بـ Telegram فسيصلك رابط الاسترداد هناك. وإن لم يكن مربوطًا فسنستخدم البريد المسجل إن وجد
                 </div>
                 <button
                   type="button"

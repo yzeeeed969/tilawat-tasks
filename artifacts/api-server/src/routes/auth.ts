@@ -3,17 +3,38 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { db } from "@workspace/db";
 import { usersTable, membersTable, activityLogTable, resetTokensTable } from "@workspace/db/schema";
-import { eq, count, and, gt } from "drizzle-orm";
+import { eq, count, and, gt, sql } from "drizzle-orm";
 import { sendPasswordResetEmail } from "../services/email";
 import { ensureAdminLinkedMember } from "../lib/user-member";
+import { getPublicAppUrl } from "../lib/public-url";
+import { sendTelegramPasswordReset } from "../services/telegram-notification-engine";
 
 function getAppDomain(req: any): string {
+  const publicUrl = getPublicAppUrl(req);
+  if (publicUrl) return publicUrl;
   const domains = process.env.REPLIT_DOMAINS;
   if (domains) return `https://${domains.split(",")[0].trim()}`;
   return `${req.protocol}://${req.get("host")}`;
 }
 
 const router = Router();
+let resetTokensSchemaPromise: Promise<unknown> | null = null;
+
+function ensureResetTokensSchema() {
+  if (!resetTokensSchemaPromise) {
+    resetTokensSchemaPromise = db.execute(sql`
+      CREATE TABLE IF NOT EXISTS reset_tokens (
+        id serial PRIMARY KEY,
+        user_id integer NOT NULL REFERENCES app_users(id) ON DELETE CASCADE,
+        token varchar(128) NOT NULL UNIQUE,
+        expires_at timestamp NOT NULL,
+        used boolean NOT NULL DEFAULT false,
+        created_at timestamp NOT NULL DEFAULT now()
+      )
+    `);
+  }
+  return resetTokensSchemaPromise;
+}
 
 // GET /api/auth/me — returns current session user
 router.get("/auth/me", async (req, res) => {
@@ -198,6 +219,7 @@ router.post("/auth/login", async (req, res) => {
 
 // POST /api/auth/forgot-password
 router.post("/auth/forgot-password", async (req, res) => {
+  await ensureResetTokensSchema();
   const { email, username } = req.body as { email?: string; username?: string };
   if (!email && !username) {
     res.status(400).json({ error: "أدخل البريد الإلكتروني أو اسم المستخدم" });
@@ -211,7 +233,7 @@ router.post("/auth/forgot-password", async (req, res) => {
     [user] = await db.select().from(usersTable).where(eq(usersTable.username, username.trim())).limit(1);
   }
 
-  if (!user || !user.email) {
+  if (!user) {
     res.json({ ok: true });
     return;
   }
@@ -225,13 +247,25 @@ router.post("/auth/forgot-password", async (req, res) => {
   const basePath = process.env.BASE_PATH ?? "";
   const domain = getAppDomain(req);
   const resetLink = `${domain}${basePath}/reset-password?token=${token}`;
-  await sendPasswordResetEmail(user.email, resetLink, user.displayName ?? user.username);
+
+  const displayName = user.displayName ?? user.username;
+  const telegramResult = await sendTelegramPasswordReset({
+    userId: user.id,
+    displayName,
+    resetLink,
+    expiresAt,
+  }).catch(() => ({ sent: false }));
+
+  if (!telegramResult.sent && user.email) {
+    await sendPasswordResetEmail(user.email, resetLink, displayName);
+  }
 
   res.json({ ok: true });
 });
 
 // POST /api/auth/reset-password
 router.post("/auth/reset-password", async (req, res) => {
+  await ensureResetTokensSchema();
   const { token, newPassword } = req.body as { token: string; newPassword: string };
   if (!token || !newPassword || newPassword.length < 6) {
     res.status(400).json({ error: "بيانات غير صالحة — كلمة المرور يجب أن تكون 6 أحرف على الأقل" });

@@ -204,6 +204,16 @@ function downloadTextFile(content: string, fileName: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+function formatHijriRange(start: Date, end: Date, showHijri: boolean) {
+  if (!showHijri) return "";
+  return `${formatHijriDate(start, { day: "numeric", month: "long" })} — ${formatHijriDate(end, { day: "numeric", month: "long", year: "numeric" })}`;
+}
+
+function formatDateForExport(date: string, hijriDate: string, showHijri: boolean) {
+  if (!showHijri || !hijriDate) return date;
+  return `${date}\n(${hijriDate})`;
+}
+
 async function fetchActivityLogs(): Promise<ActivityLogEntry[]> {
   const response = await fetch("/api/activity-log?limit=500", { credentials: "include" });
   if (!response.ok) return [];
@@ -557,8 +567,10 @@ export default function Reports() {
       .flatMap((task) => {
         const proofLinks = taskProofLinks(task);
         const links = proofLinks.length > 0 ? proofLinks : [null];
+        const taskDateValue = task.dueDate ? new Date(task.dueDate) : null;
         return links.map((proofUrl) => ({
-          taskDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "—",
+          taskDate: taskDateValue ? format(taskDateValue, "yyyy-MM-dd") : "—",
+          taskHijriDate: taskDateValue ? formatHijriDate(taskDateValue) : "",
           taskTitle: task.title,
           proofUrl,
           platform: task.platform?.name ?? "—",
@@ -583,12 +595,19 @@ export default function Reports() {
     const headers = ["تاريخ المهمة", "اسم المهمة", "رابط الشاهد", "المنصة", "القارئ", "حالة المهمة"];
     if (showProofMemberNames) headers.push("اسم العضو");
     const rows = proofRows.map((row) => {
-      const values = [row.taskDate, row.taskTitle, row.proofUrl ?? "لا يوجد شاهد", row.platform, row.reciter, row.status];
+      const values = [
+        formatDateForExport(row.taskDate, row.taskHijriDate, showHijri),
+        row.taskTitle,
+        row.proofUrl ?? "لا يوجد شاهد",
+        row.platform,
+        row.reciter,
+        row.status,
+      ];
       if (showProofMemberNames) values.push(row.members);
       return values;
     });
     return { headers, rows };
-  }, [proofRows, showProofMemberNames]);
+  }, [proofRows, showProofMemberNames, showHijri]);
 
   const handleProofCsvExport = useCallback(() => {
     const csv = [
@@ -670,6 +689,17 @@ export default function Reports() {
         ? format(referenceMonth, "MMMM yyyy", { locale: ar })
         : "إجمالي كل الوقت";
 
+    const hijriPeriodLabel =
+      !showHijri
+        ? ""
+        : period === "today"
+        ? formatHijriDate(now)
+        : period === "week"
+        ? formatHijriRange(weekStart, weekEnd, showHijri)
+        : period === "month"
+        ? formatHijriDate(referenceMonth, { month: "long", year: "numeric" })
+        : "";
+
     const periodTitle =
       period === "today" ? "اليومي" :
       period === "week" ? "الأسبوعي" :
@@ -683,6 +713,7 @@ export default function Reports() {
     const lines: string[] = [];
     lines.push(`📊 *التقرير ${periodTitle} — تلاوة الحرمين*`);
     lines.push(`🗓️ الفترة: ${periodLabel}`);
+    if (hijriPeriodLabel) lines.push(`(${hijriPeriodLabel})`);
     lines.push("");
     lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push(`📈 *ملخص الفترة*`);
@@ -723,7 +754,11 @@ export default function Reports() {
         const emoji = getPlatformEmoji(task.platform.name);
         const timing = isCompletedLate(task) ? "مكتملة متأخرة" : "مكتملة في الوقت";
         const assignees = ` — ${taskAssignees(task).map(getDisplayMemberName).join("، ")}`;
-        lines.push(`${emoji} ${task.title}${assignees} — ${timing}`);
+        const completedDate = task.completedAt ? new Date(task.completedAt) : task.dueDate ? new Date(task.dueDate) : null;
+        const completedDateText = completedDate
+          ? ` — ${format(completedDate, "d MMM yyyy", { locale: ar })}${showHijri ? ` (${formatHijriDate(completedDate)})` : ""}`
+          : "";
+        lines.push(`${emoji} ${task.title}${assignees} — ${timing}${completedDateText}`);
       }
     }
 
@@ -732,7 +767,7 @@ export default function Reports() {
     lines.push("_تم إنشاء هذا التقرير تلقائياً من نظام إدارة مهام تلاوة الحرمين_ 🕌");
 
     return lines.join("\n");
-  }, [periodStats, memberRows, platformRows, period, weekStart, weekEnd, referenceMonth, getDisplayMemberName]);
+  }, [periodStats, memberRows, platformRows, period, weekStart, weekEnd, referenceMonth, getDisplayMemberName, showHijri]);
 
   const handleCopy = useCallback(async () => {
     const text = buildWhatsAppText();
