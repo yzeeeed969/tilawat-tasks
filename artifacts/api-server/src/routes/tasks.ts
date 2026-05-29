@@ -176,6 +176,35 @@ async function notifyTaskAssigned(taskId: number, taskTitle: string, memberIds: 
       isRead: false,
     }))
   );
+
+  const [task] = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      dueDate: tasksTable.dueDate,
+      platformName: platformsTable.name,
+      reciterName: recitersTable.name,
+    })
+    .from(tasksTable)
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(eq(tasksTable.id, taskId))
+    .limit(1);
+
+  if (!task) return;
+
+  await Promise.all(
+    memberIds.map((memberId) =>
+      notifyTelegramTaskAssigned({
+        id: task.id,
+        title: task.title || taskTitle,
+        memberId,
+        dueDate: task.dueDate ?? null,
+        reciterName: task.reciterName ?? null,
+        platformName: task.platformName ?? null,
+      }).catch(() => {})
+    )
+  );
 }
 
 async function notifyTaskAssignedAfterReciterChange(input: {
