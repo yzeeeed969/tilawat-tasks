@@ -942,6 +942,9 @@ router.patch("/tasks/:id/quick-reciter", async (req, res) => {
   }
 
   const oldMemberIds = currentTask.memberIds ?? [currentTask.memberId];
+  const oldMemberRows = oldMemberIds.length > 0
+    ? await db.select({ id: membersTable.id, name: membersTable.name }).from(membersTable).where(inArray(membersTable.id, oldMemberIds))
+    : [];
   const title = oldReciter?.name && currentTask.title.includes(oldReciter.name)
     ? currentTask.title.replace(oldReciter.name, reciter.name)
     : currentTask.title;
@@ -978,9 +981,16 @@ router.patch("/tasks/:id/quick-reciter", async (req, res) => {
 
   await logActivity(req, "task_quick_reciter_changed", "task", id, title, {
     fromReciterId: currentTask.reciterId,
+    fromReciterName: oldReciter?.name ?? null,
     toReciterId: reciterId,
+    toReciterName: reciter.name,
     fromMemberIds: oldMemberIds,
+    fromMemberNames: oldMemberRows.map((row) => row.name),
     toMemberId: memberId,
+    toMemberName: member.name,
+    platformName: platform.name,
+    previousTitle: currentTask.title,
+    newTitle: title,
     pageId: page?.id ?? null,
   });
 

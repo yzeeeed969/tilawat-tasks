@@ -7,6 +7,7 @@ import {
   getGetPlatformStatsQueryKey,
 } from "@workspace/api-client-react";
 import type { TaskWithDetails } from "@workspace/api-client-react";
+import { useQuery } from "@tanstack/react-query";
 import {
   startOfWeek,
   endOfWeek,
@@ -62,6 +63,8 @@ import {
   FileSpreadsheet,
   FileText,
   ExternalLink,
+  History,
+  Link2Off,
 } from "lucide-react";
 import { PlatformIcon, getPlatformEmoji } from "@/lib/platform-icon";
 import { cn } from "@/lib/utils";
@@ -80,6 +83,19 @@ const WEEK_OPTS = { weekStartsOn: 0 as const };
 
 type Period = "today" | "week" | "month" | "all";
 type ProofPeriod = "today" | "week" | "month" | "custom";
+type ProofCoverage = "with_proof" | "missing_proof" | "all_tasks";
+type ProofTaskStatus = "all" | "completed" | "incomplete";
+
+type ActivityLogEntry = {
+  id: number;
+  userName: string | null;
+  action: string;
+  entityType: string | null;
+  entityId: number | null;
+  entityName: string | null;
+  meta?: Record<string, unknown> | null;
+  createdAt: string;
+};
 
 function StatCard({
   label,
@@ -188,6 +204,30 @@ function downloadTextFile(content: string, fileName: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
+async function fetchActivityLogs(): Promise<ActivityLogEntry[]> {
+  const response = await fetch("/api/activity-log?limit=500", { credentials: "include" });
+  if (!response.ok) return [];
+  return response.json();
+}
+
+function activityActionLabel(action: string) {
+  if (action === "task_quick_reciter_changed") return "تغيير قارئ/مسؤول";
+  if (action === "task_updated") return "تعديل مهمة";
+  if (action === "task_proof_created") return "إضافة شاهد";
+  if (action === "task_proof_updated") return "تعديل شاهد";
+  return action;
+}
+
+function metaText(meta: Record<string, unknown> | null | undefined, key: string) {
+  const value = meta?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function metaNumber(meta: Record<string, unknown> | null | undefined, key: string) {
+  const value = meta?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
 function CompletionTimingBadge({ task }: { task: TaskWithDetails }) {
   if (isCompletedLate(task)) {
     return <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50">مكتملة متأخرة</Badge>;
@@ -227,6 +267,11 @@ export default function Reports() {
   const [proofStartDate, setProofStartDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [proofEndDate, setProofEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [showProofMemberNames, setShowProofMemberNames] = useState(false);
+  const [proofCoverage, setProofCoverage] = useState<ProofCoverage>("with_proof");
+  const [proofPlatformFilter, setProofPlatformFilter] = useState("all");
+  const [proofReciterFilter, setProofReciterFilter] = useState("all");
+  const [proofMemberFilter, setProofMemberFilter] = useState("all");
+  const [proofStatusFilter, setProofStatusFilter] = useState<ProofTaskStatus>("all");
   const { toast } = useToast();
   const { showHijri } = useHijriPreference();
 
@@ -239,6 +284,11 @@ export default function Reports() {
   });
   const { data: platformStats } = useGetPlatformStats({
     query: { queryKey: getGetPlatformStatsQueryKey() },
+  });
+  const { data: activityLogs } = useQuery({
+    queryKey: ["activity-log", "reports"],
+    queryFn: fetchActivityLogs,
+    staleTime: 60_000,
   });
   const now = new Date();
   const today = useMemo(() => startOfDay(now), []);
@@ -454,6 +504,30 @@ export default function Reports() {
       .sort((a, b) => b.completedTasks - a.completedTasks);
   }, [allTasks, reportTasks, period, periodInterval, today]);
 
+  const proofPlatformOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    reportTasks.forEach((task) => {
+      if (task.platform?.id) map.set(task.platform.id, task.platform.name);
+    });
+    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }, [reportTasks]);
+
+  const proofReciterOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    reportTasks.forEach((task) => {
+      if (task.reciter?.id) map.set(task.reciter.id, task.reciter.name);
+    });
+    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }, [reportTasks]);
+
+  const proofMemberOptions = useMemo(() => {
+    const map = new Map<number, string>();
+    reportTasks.forEach((task) => {
+      taskAssignees(task).forEach((member) => map.set(member.id, member.name));
+    });
+    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }, [reportTasks]);
+
   const proofInterval = useMemo(() => {
     if (proofPeriod === "today") return { start: dayStart, end: dayEnd };
     if (proofPeriod === "week") return { start: weekStart, end: weekEnd };
@@ -467,27 +541,49 @@ export default function Reports() {
   const proofRows = useMemo(() => {
     if (!proofInterval) return [];
     return reportTasks
-      .filter((task) => Boolean(task.dueDate && taskProofLinks(task).length > 0))
+      .filter((task) => Boolean(task.dueDate))
       .filter((task) => isWithinInterval(new Date(task.dueDate!), proofInterval))
-      .flatMap((task) =>
-        taskProofLinks(task).map((proofUrl) => ({
+      .filter((task) => {
+        if (proofPlatformFilter !== "all" && String(task.platform?.id ?? "") !== proofPlatformFilter) return false;
+        if (proofReciterFilter !== "all" && String(task.reciter?.id ?? "") !== proofReciterFilter) return false;
+        if (proofMemberFilter !== "all" && !taskAssignees(task).some((member) => String(member.id) === proofMemberFilter)) return false;
+        if (proofStatusFilter === "completed" && task.status !== "completed") return false;
+        if (proofStatusFilter === "incomplete" && task.status === "completed") return false;
+        const hasProof = taskProofLinks(task).length > 0;
+        if (proofCoverage === "with_proof" && !hasProof) return false;
+        if (proofCoverage === "missing_proof" && hasProof) return false;
+        return true;
+      })
+      .flatMap((task) => {
+        const proofLinks = taskProofLinks(task);
+        const links = proofLinks.length > 0 ? proofLinks : [null];
+        return links.map((proofUrl) => ({
           taskDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "—",
           taskTitle: task.title,
           proofUrl,
           platform: task.platform?.name ?? "—",
           reciter: task.reciter?.name ?? "—",
           status: statusLabel(task.status),
+          hasProof: Boolean(proofUrl),
           members: taskAssignees(task).map((member) => member.name).join("، "),
-        }))
-      )
+        }));
+      })
       .sort((a, b) => a.taskDate.localeCompare(b.taskDate));
-  }, [proofInterval, reportTasks]);
+  }, [
+    proofInterval,
+    reportTasks,
+    proofCoverage,
+    proofPlatformFilter,
+    proofReciterFilter,
+    proofMemberFilter,
+    proofStatusFilter,
+  ]);
 
   const proofExportRows = useMemo(() => {
     const headers = ["تاريخ المهمة", "اسم المهمة", "رابط الشاهد", "المنصة", "القارئ", "حالة المهمة"];
     if (showProofMemberNames) headers.push("اسم العضو");
     const rows = proofRows.map((row) => {
-      const values = [row.taskDate, row.taskTitle, row.proofUrl, row.platform, row.reciter, row.status];
+      const values = [row.taskDate, row.taskTitle, row.proofUrl ?? "لا يوجد شاهد", row.platform, row.reciter, row.status];
       if (showProofMemberNames) values.push(row.members);
       return values;
     });
@@ -510,6 +606,56 @@ export default function Reports() {
     const html = `<!doctype html><html><head><meta charset="utf-8" /></head><body><table border="1"><thead><tr>${headerHtml}</tr></thead><tbody>${rowsHtml}</tbody></table></body></html>`;
     downloadTextFile(html, `tilawat-proofs-${format(new Date(), "yyyy-MM-dd")}.xls`, "application/vnd.ms-excel;charset=utf-8");
   }, [proofExportRows]);
+
+  const taskMap = useMemo(() => {
+    const map = new Map<number, TaskWithDetails>();
+    (allTasks ?? []).forEach((task) => map.set(task.id, task));
+    return map;
+  }, [allTasks]);
+
+  const taskChangeRows = useMemo(() => {
+    const taskActions = new Set(["task_quick_reciter_changed", "task_updated", "task_proof_created", "task_proof_updated"]);
+    return (activityLogs ?? [])
+      .filter((log) => log.entityType === "task" && taskActions.has(log.action) && log.entityId)
+      .filter((log) => period === "all" ? true : periodInterval ? isWithinInterval(new Date(log.createdAt), periodInterval) : true)
+      .filter((log) => {
+        if (selectedReportMemberIdSet.size === 0) return true;
+        const meta = log.meta ?? {};
+        const toMemberId = metaNumber(meta, "toMemberId");
+        const fromMemberIds = Array.isArray(meta.fromMemberIds) ? meta.fromMemberIds.filter((id): id is number => typeof id === "number") : [];
+        const task = log.entityId ? taskMap.get(log.entityId) : null;
+        return (
+          (toMemberId !== null && selectedReportMemberIdSet.has(toMemberId)) ||
+          fromMemberIds.some((id) => selectedReportMemberIdSet.has(id)) ||
+          Boolean(task && taskAssignees(task).some((member) => selectedReportMemberIdSet.has(member.id)))
+        );
+      })
+      .slice(0, 40)
+      .map((log) => {
+        const task = log.entityId ? taskMap.get(log.entityId) : null;
+        const logDate = new Date(log.createdAt);
+        let result = "غير معروف";
+        if (task?.status === "completed") {
+          result = task.completedAt && new Date(task.completedAt).getTime() >= logDate.getTime()
+            ? "أُنجزت بعد التعديل"
+            : "كانت مكتملة قبل التعديل";
+        } else if (task && isIncompleteOverdue(task, today)) {
+          result = "غير مكتملة ومتأخرة";
+        } else if (task) {
+          result = "بانتظار الإنجاز";
+        }
+
+        return {
+          ...log,
+          task,
+          result,
+          fromReciterName: metaText(log.meta, "fromReciterName"),
+          toReciterName: metaText(log.meta, "toReciterName"),
+          fromMemberNames: Array.isArray(log.meta?.fromMemberNames) ? log.meta.fromMemberNames.filter((name): name is string => typeof name === "string") : [],
+          toMemberName: metaText(log.meta, "toMemberName"),
+        };
+      });
+  }, [activityLogs, period, periodInterval, selectedReportMemberIdSet, taskMap, today]);
 
   // WhatsApp export (weekly mode)
   const buildWhatsAppText = useCallback(() => {
@@ -826,7 +972,7 @@ export default function Reports() {
           </CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 md:grid-cols-4">
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
             <Select value={proofPeriod} onValueChange={(value) => setProofPeriod(value as ProofPeriod)}>
               <SelectTrigger>
                 <SelectValue placeholder="الفترة" />
@@ -844,6 +990,59 @@ export default function Reports() {
                 <Input type="date" value={proofEndDate} onChange={(event) => setProofEndDate(event.target.value)} />
               </>
             )}
+            <Select value={proofCoverage} onValueChange={(value) => setProofCoverage(value as ProofCoverage)}>
+              <SelectTrigger>
+                <SelectValue placeholder="نوع الشواهد" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="with_proof">الشواهد الموجودة فقط</SelectItem>
+                <SelectItem value="missing_proof">المهام بدون شاهد</SelectItem>
+                <SelectItem value="all_tasks">الكل</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={proofStatusFilter} onValueChange={(value) => setProofStatusFilter(value as ProofTaskStatus)}>
+              <SelectTrigger>
+                <SelectValue placeholder="حالة المهمة" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="all">كل الحالات</SelectItem>
+                <SelectItem value="completed">مكتملة</SelectItem>
+                <SelectItem value="incomplete">غير مكتملة</SelectItem>
+              </SelectContent>
+            </Select>
+            <Select value={proofPlatformFilter} onValueChange={setProofPlatformFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="المنصة" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="all">كل المنصات</SelectItem>
+                {proofPlatformOptions.map((platform) => (
+                  <SelectItem key={platform.id} value={String(platform.id)}>{platform.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={proofReciterFilter} onValueChange={setProofReciterFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="القارئ" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="all">كل القراء</SelectItem>
+                {proofReciterOptions.map((reciter) => (
+                  <SelectItem key={reciter.id} value={String(reciter.id)}>{reciter.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select value={proofMemberFilter} onValueChange={setProofMemberFilter}>
+              <SelectTrigger>
+                <SelectValue placeholder="العضو" />
+              </SelectTrigger>
+              <SelectContent dir="rtl">
+                <SelectItem value="all">كل الأعضاء</SelectItem>
+                {proofMemberOptions.map((member) => (
+                  <SelectItem key={member.id} value={String(member.id)}>{member.name}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button
               type="button"
               variant={showProofMemberNames ? "default" : "outline"}
@@ -855,6 +1054,20 @@ export default function Reports() {
             >
               {showProofMemberNames ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
               إظهار اسم العضو
+            </Button>
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setProofCoverage("with_proof");
+                setProofPlatformFilter("all");
+                setProofReciterFilter("all");
+                setProofMemberFilter("all");
+                setProofStatusFilter("all");
+              }}
+              className="gap-2"
+            >
+              مسح فلاتر الشواهد
             </Button>
           </div>
 
@@ -886,10 +1099,17 @@ export default function Reports() {
                       </TableCell>
                       <TableCell className="font-medium">{row.taskTitle}</TableCell>
                       <TableCell>
-                        <a href={row.proofUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100">
-                          <ExternalLink className="h-3 w-3" />
-                          رابط
-                        </a>
+                        {row.proofUrl ? (
+                          <a href={row.proofUrl} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100">
+                            <ExternalLink className="h-3 w-3" />
+                            رابط
+                          </a>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs font-medium text-red-700 bg-red-50 border border-red-200 rounded-full px-2 py-0.5">
+                            <Link2Off className="h-3 w-3" />
+                            لا يوجد
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>{row.platform}</TableCell>
                       <TableCell>{row.reciter}</TableCell>
@@ -914,6 +1134,79 @@ export default function Reports() {
                 تصدير CSV
               </Button>
             </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/60 shadow-sm print:hidden">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <History className="h-5 w-5 text-sidebar-primary" />
+            سجل تغييرات المهام والإنجاز بعد التعديل
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="rounded-lg border border-border overflow-hidden">
+            <Table>
+              <TableHeader className="bg-muted/40">
+                <TableRow>
+                  <TableHead className="text-right font-bold">وقت التعديل</TableHead>
+                  <TableHead className="text-right font-bold">نوع التغيير</TableHead>
+                  <TableHead className="text-right font-bold">المهمة</TableHead>
+                  <TableHead className="text-right font-bold">التفاصيل</TableHead>
+                  <TableHead className="text-right font-bold">النتيجة الحالية</TableHead>
+                  <TableHead className="text-right font-bold">بواسطة</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {taskChangeRows.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
+                      لا توجد تغييرات على المهام ضمن الفترة المحددة
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  taskChangeRows.map((row) => {
+                    const memberChange = row.toMemberName
+                      ? `المسؤول: ${hideMemberNames ? "عضو" : row.toMemberName}`
+                      : null;
+                    const reciterChange = row.toReciterName
+                      ? `القارئ: ${row.fromReciterName ?? "—"} ← ${row.toReciterName}`
+                      : null;
+                    const proofChange = row.action.includes("proof") ? "تغيير في الشواهد" : null;
+                    return (
+                      <TableRow key={row.id}>
+                        <TableCell className="text-sm text-muted-foreground">
+                          <DateWithHijri date={row.createdAt} formatPattern="d MMM yyyy، h:mm a" showHijri={showHijri} />
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="font-medium">{activityActionLabel(row.action)}</Badge>
+                        </TableCell>
+                        <TableCell className="font-medium max-w-[260px] whitespace-normal">
+                          {row.task?.title ?? row.entityName ?? "مهمة غير موجودة"}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground whitespace-normal">
+                          {[reciterChange, memberChange, proofChange].filter(Boolean).join(" — ") || "تعديل عام"}
+                        </TableCell>
+                        <TableCell>
+                          <Badge
+                            className={cn(
+                              "font-medium",
+                              row.result.includes("بعد") ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-50" :
+                              row.result.includes("متأخرة") ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-50" :
+                              "bg-muted text-muted-foreground hover:bg-muted"
+                            )}
+                          >
+                            {row.result}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">{row.userName ?? "النظام"}</TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
           </div>
         </CardContent>
       </Card>

@@ -6,6 +6,7 @@ import {
   notificationLogsTable,
   platformsTable,
   recitersTable,
+  taskProofsTable,
   tasksTable,
   taskMembersTable,
   telegramLinkTokensTable,
@@ -27,6 +28,7 @@ type NotificationType =
   | "telegram_admin_task_completed"
   | "telegram_admin_daily_summary"
   | "telegram_task_assigned"
+  | "telegram_weekly_quota_reminder"
   | "telegram_test";
 
 type Recipient = {
@@ -49,6 +51,13 @@ type TaskRow = {
   memberName: string;
   platformName: string;
   reciterName: string | null;
+};
+
+type WeeklyQuotaTaskRow = TaskRow & {
+  weeklyQuotaRequired: number | null;
+  weeklyQuotaPeriodStart: Date | null;
+  weeklyQuotaPeriodEnd: Date | null;
+  proofCount: number;
 };
 
 function tokenHash(token: string) {
@@ -74,6 +83,7 @@ function riyadhParts(now = new Date()) {
     year: shifted.getUTCFullYear(),
     month: shifted.getUTCMonth() + 1,
     day: shifted.getUTCDate(),
+    weekday: shifted.getUTCDay(),
     hours: shifted.getUTCHours(),
     minutes: shifted.getUTCMinutes(),
   };
@@ -94,6 +104,24 @@ function riyadhDayRange(now = new Date()) {
     start: riyadhLocalToUtc(p.year, p.month, p.day, 0, 0, 0, 0),
     end: riyadhLocalToUtc(p.year, p.month, p.day, 23, 59, 59, 999),
   };
+}
+
+function riyadhWeekRange(now = new Date()) {
+  const p = riyadhParts(now);
+  return {
+    start: riyadhLocalToUtc(p.year, p.month, p.day - p.weekday, 0, 0, 0, 0),
+    end: riyadhLocalToUtc(p.year, p.month, p.day - p.weekday + 6, 23, 59, 59, 999),
+  };
+}
+
+function riyadhWeekKey(now = new Date()) {
+  const { start } = riyadhWeekRange(now);
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(start);
 }
 
 function isTimeReached(now: Date, time: string) {
@@ -376,6 +404,60 @@ async function getOverdueTasks(cutoff: Date) {
     .orderBy(asc(tasksTable.dueDate), asc(tasksTable.id));
 }
 
+async function getWeeklyQuotaReminderTasks(start: Date, end: Date): Promise<WeeklyQuotaTaskRow[]> {
+  const rows = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      status: tasksTable.status,
+      dueDate: tasksTable.dueDate,
+      completedAt: tasksTable.completedAt,
+      submissionUrl: tasksTable.submissionUrl,
+      memberId: tasksTable.memberId,
+      memberName: membersTable.name,
+      platformName: platformsTable.name,
+      reciterName: recitersTable.name,
+      weeklyQuotaRequired: tasksTable.weeklyQuotaRequired,
+      weeklyQuotaPeriodStart: tasksTable.weeklyQuotaPeriodStart,
+      weeklyQuotaPeriodEnd: tasksTable.weeklyQuotaPeriodEnd,
+      proofCount: sql<number>`count(${taskProofsTable.id})::int`,
+    })
+    .from(tasksTable)
+    .innerJoin(membersTable, eq(tasksTable.memberId, membersTable.id))
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .leftJoin(taskProofsTable, and(
+      eq(taskProofsTable.taskId, tasksTable.id),
+      isNull(taskProofsTable.deletedAt),
+    ))
+    .where(and(
+      isNull(tasksTable.deletedAt),
+      or(eq(tasksTable.status, "pending"), eq(tasksTable.status, "in_progress")),
+      sql`${tasksTable.weeklyQuotaRequired} IS NOT NULL`,
+      sql`${tasksTable.weeklyQuotaRequired} > 0`,
+      sql`coalesce(${tasksTable.weeklyQuotaPeriodEnd}, ${tasksTable.dueDate}) >= ${start}`,
+      sql`coalesce(${tasksTable.weeklyQuotaPeriodStart}, ${tasksTable.dueDate}) <= ${end}`,
+    ))
+    .groupBy(
+      tasksTable.id,
+      tasksTable.title,
+      tasksTable.status,
+      tasksTable.dueDate,
+      tasksTable.completedAt,
+      tasksTable.submissionUrl,
+      tasksTable.memberId,
+      membersTable.name,
+      platformsTable.name,
+      recitersTable.name,
+      tasksTable.weeklyQuotaRequired,
+      tasksTable.weeklyQuotaPeriodStart,
+      tasksTable.weeklyQuotaPeriodEnd,
+    )
+    .orderBy(asc(tasksTable.dueDate), asc(tasksTable.id));
+
+  return rows.map((row) => ({ ...row, proofCount: Number(row.proofCount ?? 0) }));
+}
+
 function taskLine(task: TaskRow) {
   const reciter = task.reciterName ? ` — ${task.reciterName}` : "";
   return `• ${escapeHtml(task.title)}${reciter} (${escapeHtml(task.platformName)})`;
@@ -513,6 +595,55 @@ async function sendAdminDailySummary(settings: TelegramSettings, now: Date) {
   return sent;
 }
 
+async function sendWeeklyQuotaReminders(settings: TelegramSettings, now: Date) {
+  if (!settings.notifyDailyReminder || !isTimeReached(now, settings.dailyReminderTime)) return 0;
+  const parts = riyadhParts(now);
+  if (parts.weekday < 4) return 0; // يبدأ التنبيه من الخميس حتى نهاية الأسبوع.
+
+  const { start, end } = riyadhWeekRange(now);
+  const weekKey = riyadhWeekKey(now);
+  const tasks = await getWeeklyQuotaReminderTasks(start, end);
+  const incompleteQuotaTasks = tasks.filter((task) => {
+    const required = Number(task.weeklyQuotaRequired ?? 0);
+    return required > 0 && Number(task.proofCount ?? 0) < required;
+  });
+  if (incompleteQuotaTasks.length === 0) return 0;
+
+  let sent = 0;
+  for (const task of incompleteQuotaTasks) {
+    const required = Number(task.weeklyQuotaRequired ?? 0);
+    const done = Number(task.proofCount ?? 0);
+    const remaining = Math.max(required - done, 0);
+    const assignedMemberIds = await getAssignedMemberIds(task.id, task.memberId);
+    const recipients = await getMemberRecipients(assignedMemberIds);
+
+    for (const recipient of recipients) {
+      if (!recipient.memberId) continue;
+      const text = [
+        "<b>تنبيه الهدف الأسبوعي</b>",
+        taskLine(task),
+        `المضاف: ${done}/${required}`,
+        `المتبقي: ${remaining} شاهد`,
+        `نهاية الأسبوع: ${escapeHtml(formatRiyadhDate(task.weeklyQuotaPeriodEnd ?? task.dueDate))}`,
+        "يرجى إضافة الشواهد قبل انتهاء الأسبوع.",
+      ].join("\n");
+
+      const result = await sendLoggedTelegram({
+        type: "telegram_weekly_quota_reminder",
+        dedupeKey: `telegram:weekly_quota:${weekKey}:task:${task.id}:member:${recipient.memberId}`,
+        chatId: recipient.chatId,
+        text,
+        recipientUserId: recipient.userId,
+        recipientMemberId: recipient.memberId,
+        taskId: task.id,
+      });
+      if (result.sent) sent += 1;
+    }
+  }
+
+  return sent;
+}
+
 export async function notifyTelegramTaskCompleted(task: {
   id: number;
   title: string;
@@ -603,9 +734,10 @@ export async function runTelegramNotificationCycle(now = new Date()) {
 
   const daily = await sendDailyMemberReminders(settings, now);
   const overdue = await sendOverdueNotifications(settings, now);
+  const weeklyQuota = await sendWeeklyQuotaReminders(settings, now);
   const summary = await sendAdminDailySummary(settings, now);
 
-  return { enabled: true, sent: daily + overdue + summary, daily, overdue, summary };
+  return { enabled: true, sent: daily + overdue + weeklyQuota + summary, daily, overdue, weeklyQuota, summary };
 }
 
 export async function listTelegramLogs(limit = 100) {
