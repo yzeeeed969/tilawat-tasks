@@ -17,7 +17,6 @@ import {
 } from "@workspace/db";
 import { ensureTelegramSchema } from "./telegram-schema";
 import { sendTelegramMessage } from "./telegram";
-import { getTaskUrl } from "../lib/public-url";
 
 const RIYADH_OFFSET_HOURS = 3;
 const LINK_TOKEN_BYTES = 18;
@@ -521,16 +520,6 @@ function taskFieldLine(task: Pick<TaskRow, "title" | "platformName" | "reciterNa
   return `${display.emoji} ${escapeHtml(display.title)}${platform}`;
 }
 
-function taskLinkLine(taskId: number) {
-  return `فتح المهمة:\n${escapeHtml(getTaskUrl(taskId))}`;
-}
-
-function taskLinkButton(taskId: number) {
-  const url = getTaskUrl(taskId);
-  if (!/^https?:\/\//i.test(url)) return undefined;
-  return { inline_keyboard: [[{ text: "🔗 فتح المهمة", url }]] };
-}
-
 async function sendDailyMemberReminders(settings: TelegramSettings, now: Date) {
   if (!settings.notifyDailyReminder || !isTimeReached(now, settings.dailyReminderTime)) return 0;
   const dateKey = riyadhDateKey(now);
@@ -607,14 +596,12 @@ async function sendOverdueNotifications(settings: TelegramSettings, now: Date) {
         taskLine(task),
         `العضو: ${escapeHtml(task.memberName)}`,
         `الاستحقاق: ${escapeHtml(formatRiyadhDate(task.dueDate))}`,
-        taskLinkLine(task.id),
       ].join("\n");
       const result = await sendLoggedTelegram({
         type: "telegram_admin_overdue",
         dedupeKey: `telegram:admin_overdue:${dateKey}:task:${task.id}:admin:${admin.userId}`,
         chatId: admin.chatId,
         text,
-        replyMarkup: taskLinkButton(task.id),
         recipientUserId: admin.userId,
         recipientMemberId: admin.memberId,
         taskId: task.id,
@@ -753,8 +740,6 @@ export async function notifyTelegramTaskCompleted(task: {
       })}`,
       `🕒 وقت الإكمال: ${escapeHtml(formatRiyadhDateTime(task.completedAt ?? new Date()))}`,
       task.submissionUrl ? `🔗 الشاهد: ${escapeHtml(task.submissionUrl)}` : "",
-      "",
-      taskLinkLine(task.id),
     ].filter(Boolean).join("\n");
 
     const result = await sendLoggedTelegram({
@@ -762,7 +747,6 @@ export async function notifyTelegramTaskCompleted(task: {
       dedupeKey: `telegram:admin_completed:task:${task.id}:admin:${admin.userId}`,
       chatId: admin.chatId,
       text,
-      replyMarkup: taskLinkButton(task.id),
       recipientUserId: admin.userId,
       recipientMemberId: admin.memberId,
       taskId: task.id,
@@ -798,7 +782,6 @@ export async function notifyTelegramTaskAssigned(task: {
       task.reciterName ? `القارئ: ${escapeHtml(task.reciterName)}` : "",
       task.platformName ? `المنصة: ${escapeHtml(task.platformName)}` : "",
       `التاريخ: ${escapeHtml(formatRiyadhDate(task.dueDate ?? null))}`,
-      taskLinkLine(task.id),
     ].filter(Boolean).join("\n");
 
     const result = await sendLoggedTelegram({
@@ -806,7 +789,6 @@ export async function notifyTelegramTaskAssigned(task: {
       dedupeKey: `telegram:task_assigned:${task.id}:member:${task.memberId}:${Date.now()}`,
       chatId: recipient.chatId,
       text,
-      replyMarkup: taskLinkButton(task.id),
       recipientUserId: recipient.userId,
       recipientMemberId: recipient.memberId,
       taskId: task.id,
