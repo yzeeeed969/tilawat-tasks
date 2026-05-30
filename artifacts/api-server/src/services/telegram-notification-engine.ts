@@ -151,6 +151,17 @@ function formatRiyadhDate(date: Date | null) {
   }).format(date);
 }
 
+function formatRiyadhDateWithYear(date: Date | null) {
+  if (!date) return "بدون تاريخ";
+  return new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
+    timeZone: "Asia/Riyadh",
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+  }).format(date);
+}
+
 function formatRiyadhDateTime(date: Date | null) {
   if (!date) return "غير محدد";
   return new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
@@ -717,6 +728,7 @@ export async function notifyTelegramTaskCompleted(task: {
     .select({
       memberName: membersTable.name,
       taskTitle: tasksTable.title,
+      dueDate: tasksTable.dueDate,
       platformName: platformsTable.name,
       reciterName: recitersTable.name,
     })
@@ -738,6 +750,7 @@ export async function notifyTelegramTaskCompleted(task: {
         platformName: details?.platformName ?? null,
         reciterName: details?.reciterName ?? null,
       })}`,
+      `📅 الاستحقاق: ${escapeHtml(formatRiyadhDateWithYear(details?.dueDate ?? null))}`,
       `🕒 وقت الإكمال: ${escapeHtml(formatRiyadhDateTime(task.completedAt ?? new Date()))}`,
       task.submissionUrl ? `🔗 الشاهد: ${escapeHtml(task.submissionUrl)}` : "",
     ].filter(Boolean).join("\n");

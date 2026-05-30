@@ -14,6 +14,7 @@ import Settings from "@/pages/settings";
 import RecitersPage from "@/pages/reciters";
 import PlatformsPage from "@/pages/platforms";
 import Account from "@/pages/account";
+import Achievements from "@/pages/achievements";
 import SignInPage from "@/pages/sign-in";
 import ResetPasswordPage from "@/pages/reset-password";
 import Help from "@/pages/help";
@@ -80,6 +81,7 @@ function AppRouter() {
   return (
     <Switch>
       <Route path="/" component={HomeRoute} />
+      <Route path="/achievements" component={Achievements} />
       <Route path="/sign-in" component={SignInPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
       <Route path="/tasks/:id" component={TaskLinkRoute} />

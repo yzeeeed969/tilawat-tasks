@@ -147,6 +147,10 @@ function taskProofLinks(task: TaskWithDetails): string[] {
   return task.submissionUrl ? [task.submissionUrl] : [];
 }
 
+function taskPublicationCount(task: TaskWithDetails) {
+  return Math.max(taskProofLinks(task).length, task.status === "completed" ? 1 : 0);
+}
+
 function isAssignedToMember(task: TaskWithDetails, memberId: number) {
   return taskAssignees(task).some((member) => member.id === memberId);
 }
@@ -271,6 +275,7 @@ export default function Reports() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [expandedMember, setExpandedMember] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
+  const [copiedExecutive, setCopiedExecutive] = useState(false);
   const [hideMemberNames, setHideMemberNames] = useState(false);
   const [selectedReportMemberIds, setSelectedReportMemberIds] = useState<number[]>([]);
   const [proofPeriod, setProofPeriod] = useState<ProofPeriod>("week");
@@ -466,6 +471,50 @@ export default function Reports() {
       };
     });
   }, [platformStats, allTasks, reportTasks, period, periodInterval, today]);
+
+  const executivePeriodLabel = useMemo(() => {
+    if (period === "today") return format(now, "EEEE، d MMMM yyyy", { locale: ar });
+    if (period === "week") return `${format(weekStart, "d MMM", { locale: ar })} — ${format(weekEnd, "d MMM yyyy", { locale: ar })}`;
+    if (period === "month") return format(referenceMonth, "MMMM yyyy", { locale: ar });
+    return "إجمالي كل الوقت";
+  }, [period, now, weekStart, weekEnd, referenceMonth]);
+
+  const executiveHijriLabel = useMemo(() => {
+    if (!showHijri) return "";
+    if (period === "today") return formatHijriDate(now);
+    if (period === "week") return formatHijriRange(weekStart, weekEnd, showHijri);
+    if (period === "month") return formatHijriDate(referenceMonth, { month: "long", year: "numeric" });
+    return "";
+  }, [period, now, weekStart, weekEnd, referenceMonth, showHijri]);
+
+  const executiveSummary = useMemo(() => {
+    const completed = periodStats?.completed ?? [];
+    const platformMap = new Map<number, {
+      platform: TaskWithDetails["platform"];
+      publications: number;
+      completedTasks: number;
+    }>();
+
+    for (const task of completed) {
+      const current = platformMap.get(task.platform.id) ?? {
+        platform: task.platform,
+        publications: 0,
+        completedTasks: 0,
+      };
+      current.publications += taskPublicationCount(task);
+      current.completedTasks += 1;
+      platformMap.set(task.platform.id, current);
+    }
+
+    const platformSummaries = [...platformMap.values()]
+      .sort((a, b) => b.publications - a.publications);
+
+    return {
+      totalPublications: completed.reduce((sum, task) => sum + taskPublicationCount(task), 0),
+      completedTasks: completed.length,
+      platformSummaries,
+    };
+  }, [periodStats]);
 
   const reciterRows = useMemo(() => {
     if (!allTasks) return [];
@@ -788,6 +837,35 @@ export default function Reports() {
     window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
   }, [buildWhatsAppText]);
 
+  const handleCopyExecutiveSummary = useCallback(async () => {
+    const lines = [
+      "📌 *تقرير إنجازات مختصر — تلاوات الحرمين*",
+      `🗓️ الفترة: ${executivePeriodLabel}`,
+      executiveHijriLabel ? `(${executiveHijriLabel})` : "",
+      "",
+      `📦 إجمالي المنشورات: ${executiveSummary.totalPublications}`,
+      `✅ المهام المكتملة: ${executiveSummary.completedTasks}`,
+      `📱 المنصات النشطة: ${executiveSummary.platformSummaries.length}`,
+    ];
+
+    if (executiveSummary.platformSummaries.length > 0) {
+      lines.push("", "📊 *الإنجازات حسب المنصات*");
+      for (const row of executiveSummary.platformSummaries) {
+        const emoji = getPlatformEmoji(row.platform.name, row.platform.icon ?? "");
+        lines.push(`${emoji} ${row.platform.name}: ${row.publications} منشور`);
+      }
+    }
+
+    try {
+      await navigator.clipboard.writeText(lines.filter(Boolean).join("\n"));
+      setCopiedExecutive(true);
+      toast({ title: "تم نسخ تقرير الإنجازات", description: "النص المختصر جاهز للمشاركة" });
+      setTimeout(() => setCopiedExecutive(false), 2500);
+    } catch {
+      toast({ title: "تعذّر النسخ", description: "حاول مجدداً", variant: "destructive" });
+    }
+  }, [executiveHijriLabel, executivePeriodLabel, executiveSummary, toast]);
+
   const dayNames = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
   const completionRate =
@@ -999,6 +1077,81 @@ export default function Reports() {
       </div>
 
       {/* Summary cards */}
+      <Card className="border-sidebar-primary/20 bg-sidebar-primary/5 shadow-sm">
+        <CardHeader className="pb-4">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <CardTitle className="text-lg font-bold flex items-center gap-2">
+                <FileText className="h-5 w-5 text-sidebar-primary" />
+                تقرير إنجازات مختصر
+              </CardTitle>
+              <p className="mt-1 text-sm text-muted-foreground">
+                مناسب للنشر والإدارة العليا، ويعرض الإنجاز المجمل فقط بدون أسماء أو تفاصيل تشغيلية.
+              </p>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleCopyExecutiveSummary}
+              className="w-fit gap-2 bg-background print:hidden"
+            >
+              {copiedExecutive ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
+              {copiedExecutive ? "تم النسخ" : "نسخ تقرير الإنجازات"}
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-5">
+          <div className="rounded-xl border border-border bg-background/80 px-4 py-3">
+            <p className="text-sm font-semibold text-foreground">الفترة: {executivePeriodLabel}</p>
+            {executiveHijriLabel && (
+              <p className="mt-1 text-xs font-medium text-sidebar-primary/80">({executiveHijriLabel})</p>
+            )}
+          </div>
+
+          <div className="grid gap-3 md:grid-cols-3">
+            <div className="rounded-xl border border-border bg-background/80 p-4">
+              <p className="text-xs font-medium text-muted-foreground">إجمالي المنشورات</p>
+              <p className="mt-2 text-2xl font-bold text-sidebar-primary">{executiveSummary.totalPublications}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-background/80 p-4">
+              <p className="text-xs font-medium text-muted-foreground">المهام المكتملة</p>
+              <p className="mt-2 text-2xl font-bold text-green-700">{executiveSummary.completedTasks}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-background/80 p-4">
+              <p className="text-xs font-medium text-muted-foreground">المنصات النشطة</p>
+              <p className="mt-2 text-2xl font-bold text-amber-700">{executiveSummary.platformSummaries.length}</p>
+            </div>
+          </div>
+
+          <div className="rounded-xl border border-border bg-background/80">
+            <div className="border-b border-border px-4 py-3">
+              <p className="text-sm font-bold text-foreground">الإنجازات حسب المنصات</p>
+            </div>
+            {executiveSummary.platformSummaries.length === 0 ? (
+              <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+                لا توجد مهام مكتملة ضمن الفترة الحالية.
+              </p>
+            ) : (
+              <div className="divide-y divide-border">
+                {executiveSummary.platformSummaries.map((row) => (
+                  <div key={row.platform.id} className="flex items-center justify-between gap-4 px-4 py-3">
+                    <div className="flex items-center gap-2 font-semibold text-foreground">
+                      <PlatformIcon name={row.platform.name} icon={row.platform.icon ?? ""} className="h-5 w-5" />
+                      <span>{row.platform.name}</span>
+                    </div>
+                    <div className="text-left text-sm">
+                      <p className="font-bold text-sidebar-primary">{row.publications} منشور</p>
+                      <p className="text-xs text-muted-foreground">{row.completedTasks} مهمة مكتملة</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="border-border/60 shadow-sm print:hidden">
         <CardHeader className="pb-4">
           <CardTitle className="text-lg font-bold flex items-center gap-2">
