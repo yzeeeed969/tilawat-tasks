@@ -71,14 +71,12 @@ function formatDate(date: string | Date) {
 
 function JoodLogoMark() {
   return (
-    <div className="flex items-center gap-3 rounded-lg border border-amber-200/80 bg-white/75 px-3 py-2 shadow-sm backdrop-blur">
-      <div className="flex h-11 w-11 items-center justify-center rounded-md bg-[#0f5b3d] text-lg font-black text-[#d8ad45]">
-        جود
-      </div>
-      <div className="leading-tight">
-        <p className="text-sm font-bold text-[#123f2e]">جمعية جود</p>
-        <p className="text-xs text-[#6b7f73]">لخدمة الحاج والمعتمر</p>
-      </div>
+    <div className="rounded-lg border border-amber-200/80 bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
+      <img
+        src="/jood-logo.png"
+        alt="جمعية جود لخدمة الحاج والمعتمر"
+        className="h-12 w-auto object-contain"
+      />
     </div>
   );
 }
