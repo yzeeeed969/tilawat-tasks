@@ -264,6 +264,7 @@ function weeklyQuotaInfo(task: TaskWithDetails) {
     required,
     completed: proofs.length,
     remaining: Math.max(required - proofs.length, 0),
+    extra: Math.max(proofs.length - required, 0),
     isQuota: required > 0,
   };
 }
@@ -275,6 +276,7 @@ function WeeklyQuotaBadge({ task }: { task: TaskWithDetails }) {
     <span className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-amber-50 text-amber-700 border-amber-200">
       <Repeat2 className="h-2.5 w-2.5" />
       هدف أسبوعي {quota.completed}/{quota.required}
+      {quota.extra > 0 && <span>+{quota.extra} إضافي</span>}
     </span>
   );
 }
@@ -301,6 +303,11 @@ function TaskProofCell({
         )}>
           {quota.completed}/{quota.required}
         </span>
+        {quota.extra > 0 && (
+          <span className="inline-flex items-center gap-1 text-xs font-medium border rounded-full px-2 py-0.5 text-blue-700 bg-blue-50 border-blue-200">
+            +{quota.extra} إضافي
+          </span>
+        )}
         {proofs.length > 0 && (
           <button
             onClick={() => onManage(task)}
@@ -311,16 +318,14 @@ function TaskProofCell({
             الشواهد
           </button>
         )}
-        {quota.completed < quota.required && (
-          <button
-            onClick={() => onAdd(task)}
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 border border-dashed border-muted-foreground/30 hover:border-sidebar-primary/50 rounded-full px-2 py-0.5 transition-colors"
-            title="إضافة شاهد"
-          >
-            <Link2 className="h-3 w-3" />
-            أضف
-          </button>
-        )}
+        <button
+          onClick={() => onAdd(task)}
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 border border-dashed border-muted-foreground/30 hover:border-sidebar-primary/50 rounded-full px-2 py-0.5 transition-colors"
+          title={quota.completed >= quota.required ? "إضافة شاهد إضافي" : "إضافة شاهد"}
+        >
+          <Link2 className="h-3 w-3" />
+          {quota.completed >= quota.required ? "أضف زيادة" : "أضف"}
+        </button>
       </div>
     );
   }
@@ -970,7 +975,7 @@ function TaskFormFields({
               ? "ينشئ النظام مهاماً مستقلة شهرياً في نفس تاريخ البداية ضمن نافذة 60 يوماً قادمة."
               : "ينشئ النظام مهاماً مستقلة أسبوعياً في نفس يوم البداية ضمن نافذة 60 يوماً قادمة."
             : seriesType === "weekly_quota"
-              ? "ينشئ النظام مهمة واحدة لكل أسبوع. يضيف العضو الشواهد حتى يصل إلى العدد المطلوب، ثم تكتمل المهمة تلقائياً."
+              ? "ينشئ النظام مهمة واحدة لكل أسبوع. يضيف العضو الشواهد حتى يصل إلى العدد المطلوب، ثم تكتمل المهمة تلقائياً، ويمكنه إضافة شواهد إضافية بعدها دون تغيير العدد المطلوب."
             : "إذا تركت النهاية فارغة تُنشأ مهمة ليوم واحد فقط. وإذا اخترت نهاية، ينشئ النظام مهمة مستقلة لكل يوم من البداية حتى النهاية، ولكل يوم شاهد وزر إتمام مستقل."}
         </p>
       </div>
@@ -2226,14 +2231,25 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
                 <p className="text-sm font-semibold text-sidebar-foreground">{proofsDialogTask.title}</p>
                 <p className="text-xs text-muted-foreground mt-1">
-                  يمكنك فتح أي شاهد أو تعديل رابطه دون تغيير عدد الشواهد أو حالة المهمة.
+                  المطلوب {weeklyQuotaInfo(proofsDialogTask).required} شواهد. يمكنك فتح أي شاهد أو تعديل رابطه أو إضافة شواهد إضافية دون تغيير العدد المطلوب أو حالة المهمة.
                 </p>
               </div>
               <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-                {taskProofs(proofsDialogTask).map((proof, index) => (
+                {taskProofs(proofsDialogTask).length === 0 ? (
+                  <p className="rounded-lg border border-dashed border-border bg-background p-4 text-center text-sm text-muted-foreground">
+                    لم تتم إضافة شواهد بعد.
+                  </p>
+                ) : taskProofs(proofsDialogTask).map((proof, index) => (
                   <div key={proof.id} className="rounded-lg border border-border bg-background p-3 space-y-2">
                     <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-semibold text-sidebar-foreground">شاهد {index + 1}</span>
+                      <span className="text-sm font-semibold text-sidebar-foreground">
+                        شاهد {index + 1}
+                        {index + 1 > weeklyQuotaInfo(proofsDialogTask).required && (
+                          <span className="mr-2 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                            إضافي
+                          </span>
+                        )}
+                      </span>
                       <div className="flex items-center gap-2">
                         <a
                           href={proof.url}
@@ -2262,20 +2278,20 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   </div>
                 ))}
               </div>
-              {weeklyQuotaInfo(proofsDialogTask).completed < weeklyQuotaInfo(proofsDialogTask).required && (
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full gap-2"
-                  onClick={() => {
-                    setProofsDialogTaskId(null);
-                    openUrlDialog(proofsDialogTask);
-                  }}
-                >
-                  <Link2 className="h-4 w-4" />
-                  إضافة شاهد جديد
-                </Button>
-              )}
+              <Button
+                type="button"
+                variant="outline"
+                className="w-full gap-2"
+                onClick={() => {
+                  setProofsDialogTaskId(null);
+                  openUrlDialog(proofsDialogTask);
+                }}
+              >
+                <Link2 className="h-4 w-4" />
+                {weeklyQuotaInfo(proofsDialogTask).completed >= weeklyQuotaInfo(proofsDialogTask).required
+                  ? "إضافة شاهد إضافي"
+                  : "إضافة شاهد جديد"}
+              </Button>
             </div>
           )}
         </DialogContent>
@@ -2881,6 +2897,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               {isWeeklyQuotaTask(task) && (
                                 <p className="text-[10px] text-amber-700">
                                   {weeklyQuotaInfo(task).completed}/{weeklyQuotaInfo(task).required} شواهد
+                                  {weeklyQuotaInfo(task).extra > 0 ? ` +${weeklyQuotaInfo(task).extra} إضافي` : ""}
                                 </p>
                               )}
                               {reciter && <p className="text-muted-foreground truncate">{reciter.name}</p>}
