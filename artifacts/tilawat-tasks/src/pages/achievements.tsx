@@ -2,7 +2,7 @@ import { useState, type ElementType } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { differenceInCalendarDays, format } from "date-fns";
 import { ar } from "date-fns/locale";
-import { BarChart3, CalendarDays, Clock, Globe2, LineChart, TrendingUp } from "lucide-react";
+import { BarChart3, CalendarDays, Clock, Eye, Globe2, LineChart, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -26,6 +26,11 @@ type PublicAchievements = {
   allTime: {
     totalPublications: number;
     completedTasks: number;
+  };
+  youtubeViews: {
+    totalViews: number | null;
+    updatedAt: string | null;
+    fetchedAt: string;
   };
   achievementsByPlatform: Array<{
     platformId: number;
@@ -282,8 +287,8 @@ export default function Achievements() {
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:py-10">
         {isLoading ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
-            {[...Array(5)].map((_, index) => <Skeleton key={index} className="h-32 rounded-lg bg-white/70" />)}
+          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            {[...Array(6)].map((_, index) => <Skeleton key={index} className="h-32 rounded-lg bg-white/70" />)}
           </div>
         ) : isError || !data ? (
           <Card className="border-red-200 bg-red-50/80">
@@ -293,7 +298,7 @@ export default function Achievements() {
           </Card>
         ) : (
           <>
-            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-5">
+            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
               <StatCard
                 title="إجمالي المنشورات"
                 value={formatNumber(data.totalPublications)}
@@ -326,6 +331,13 @@ export default function Achievements() {
                 icon={CalendarDays}
                 hint={`من ${formatDate(data.projectStartDate)}`}
                 tone="gold"
+              />
+              <StatCard
+                title="📺 مشاهدات يوتيوب الموثقة منذ رمضان 1447هـ"
+                value={data.youtubeViews.totalViews === null ? "غير متاح مؤقتًا" : `${formatNumber(data.youtubeViews.totalViews)} مشاهدة`}
+                icon={Eye}
+                hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${data.youtubeViews.updatedAt}` : "خاص بيوتيوب فقط"}
+                tone="blue"
               />
             </section>
 
