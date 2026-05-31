@@ -1446,8 +1446,8 @@ function TelegramSettingsSection() {
                 {data.recipients.length === 0 ? (
                   <p className="text-sm text-muted-foreground">لا يوجد ربط Telegram بعد.</p>
                 ) : (
-                  <div className="space-y-2">
-                    {data.recipients.slice(0, 8).map((recipient) => (
+                  <div className="space-y-2 max-h-96 overflow-y-auto pr-1">
+                    {data.recipients.map((recipient) => (
                       <div key={recipient.id} className="flex items-center justify-between gap-3 rounded-lg border border-border/50 px-3 py-2 text-sm">
                         <span>{recipient.displayName ?? recipient.memberName ?? recipient.username ?? "مستخدم"}</span>
                         <Badge variant={recipient.isEnabled ? "default" : "secondary"}>
