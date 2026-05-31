@@ -536,23 +536,32 @@ async function sendDailyMemberReminders(settings: TelegramSettings, now: Date) {
   const dateKey = riyadhDateKey(now);
   const { start, end } = riyadhDayRange(now);
   const tasks = await getTasksInRange(start, end);
-  const activeTasks = tasks.filter((task) => task.status !== "completed");
-  if (activeTasks.length === 0) return 0;
+  if (tasks.length === 0) return 0;
 
-  const assignedMap = await getAssignedMembersMap(activeTasks);
+  const assignedMap = await getAssignedMembersMap(tasks);
   const memberIds = [...new Set([...assignedMap.values()].flat())];
   const recipients = await getMemberRecipients(memberIds);
   let sent = 0;
 
   for (const recipient of recipients) {
     if (!recipient.memberId) continue;
-    const memberTasks = activeTasks.filter((task) => assignedMap.get(task.id)?.includes(recipient.memberId!));
+    const memberTasks = tasks.filter((task) => assignedMap.get(task.id)?.includes(recipient.memberId!));
     if (memberTasks.length === 0) continue;
+    const completedTasks = memberTasks.filter((task) => task.status === "completed");
+    const incompleteTasks = memberTasks.filter((task) => task.status !== "completed");
+    const completedLines = completedTasks.length > 0
+      ? ["✅ <b>مكتملة:</b>", ...completedTasks.map(taskLine)]
+      : [];
+    const incompleteLines = incompleteTasks.length > 0
+      ? ["⏳ <b>غير مكتملة:</b>", ...incompleteTasks.map(taskLine)]
+      : [];
     const text = [
-      "<b>تذكير مهام اليوم</b>",
+      "<b>ملخص مهامك اليوم</b>",
       `التاريخ: ${escapeHtml(formatRiyadhDate(now))}`,
       "",
-      ...memberTasks.map(taskLine),
+      ...completedLines,
+      ...(completedLines.length > 0 && incompleteLines.length > 0 ? [""] : []),
+      ...incompleteLines,
     ].join("\n");
 
     const result = await sendLoggedTelegram({

@@ -1381,7 +1381,7 @@ function TelegramSettingsSection() {
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <TelegramToggleRow
                 title="تذكير يومي للأعضاء"
-                description="يرسل لكل عضو مهامه غير المكتملة في هذا اليوم."
+                description="يرسل لكل عضو ملخص مهامه اليوم: المكتملة وغير المكتملة."
                 checked={settings.notifyDailyReminder}
                 onChange={(notifyDailyReminder) => saveMutation.mutate({ notifyDailyReminder })}
               />
