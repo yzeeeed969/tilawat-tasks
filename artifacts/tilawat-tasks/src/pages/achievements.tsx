@@ -1,13 +1,12 @@
 import { useState, type ElementType } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
+import { differenceInCalendarDays, format } from "date-fns";
 import { ar } from "date-fns/locale";
-import { BarChart3, CalendarDays, CheckCircle2, Clock, Globe2, LineChart, TrendingUp } from "lucide-react";
+import { BarChart3, CalendarDays, Clock, Globe2, LineChart, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlatformIcon } from "@/lib/platform-icon";
-import { formatHijriDate } from "@/lib/hijri-date";
 
 type PeriodKey = "7d" | "30d" | "90d" | "all";
 
@@ -132,6 +131,84 @@ function SectionTitle({ icon: Icon, title, hint }: { icon: ElementType; title: s
   );
 }
 
+function MonthlyGrowthChart({
+  rows,
+}: {
+  rows: PublicAchievements["monthlyGrowth"];
+}) {
+  if (rows.length === 0) {
+    return (
+      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
+        لا توجد بيانات نمو لهذه الفترة.
+      </p>
+    );
+  }
+
+  const maxValue = Math.max(...rows.map((row) => row.publications), 1);
+  const width = 860;
+  const height = 260;
+  const paddingX = 48;
+  const paddingTop = 26;
+  const paddingBottom = 48;
+  const chartHeight = height - paddingTop - paddingBottom;
+  const usableWidth = width - paddingX * 2;
+  const points = rows.map((row, index) => {
+    const x = rows.length === 1 ? width / 2 : paddingX + (index / (rows.length - 1)) * usableWidth;
+    const y = paddingTop + chartHeight - (row.publications / maxValue) * chartHeight;
+    return { ...row, x, y };
+  });
+  const baseline = height - paddingBottom;
+  const linePath = points.length === 1
+    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y}`
+    : points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  const areaPath = points.length === 1
+    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y} L ${width - paddingX} ${baseline} L ${paddingX} ${baseline} Z`
+    : `${linePath} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-[#efe6d8] bg-[#fffdf8] p-4">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-[260px] w-full" role="img" aria-label="رسم النمو الشهري">
+        <defs>
+          <linearGradient id="monthlyGrowthFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#0f5b3d" stopOpacity="0.28" />
+            <stop offset="100%" stopColor="#0f5b3d" stopOpacity="0.03" />
+          </linearGradient>
+        </defs>
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
+          const y = paddingTop + chartHeight * ratio;
+          return (
+            <line
+              key={`grid-${ratio}`}
+              x1={paddingX}
+              x2={width - paddingX}
+              y1={y}
+              y2={y}
+              stroke="#eadfcd"
+              strokeDasharray="5 7"
+            />
+          );
+        })}
+        <path d={areaPath} fill="url(#monthlyGrowthFill)" />
+        <path d={linePath} fill="none" stroke="#0f5b3d" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5" />
+        {points.map((point) => {
+          const date = new Date(point.monthStart);
+          return (
+            <g key={point.monthStart}>
+              <circle cx={point.x} cy={point.y} r="7" fill="#c59226" stroke="#fffaf0" strokeWidth="4" />
+              <text x={point.x} y={point.y - 16} textAnchor="middle" className="fill-[#103c2d] text-[18px] font-black">
+                {formatNumber(point.publications)}
+              </text>
+              <text x={point.x} y={height - 18} textAnchor="middle" className="fill-[#6f8378] text-[15px] font-bold">
+                {format(date, "MMM yyyy", { locale: ar })}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+    </div>
+  );
+}
+
 export default function Achievements() {
   const [period, setPeriod] = useState<PeriodKey>("30d");
   const { data, isLoading, isError } = useQuery({
@@ -140,9 +217,11 @@ export default function Achievements() {
     staleTime: 60_000,
   });
 
-  const maxMonthly = Math.max(...(data?.monthlyGrowth.map((row) => row.publications) ?? [0]), 1);
   const maxPlatform = Math.max(...(data?.achievementsByPlatform.map((row) => row.publications) ?? [0]), 1);
   const selectedPeriodLabel = periodOptions.find((option) => option.value === period)?.label ?? "آخر 30 يومًا";
+  const projectDays = data
+    ? Math.max(1, differenceInCalendarDays(new Date(data.lastUpdated), new Date(data.projectStartDate)) + 1)
+    : 0;
 
   return (
     <main dir="rtl" className="min-h-screen bg-[#f6f1e8] text-[#103c2d]">
@@ -156,12 +235,15 @@ export default function Achievements() {
           backgroundSize: "cover",
         }}
       >
-        <nav className="mx-auto flex w-full max-w-7xl items-center justify-between px-5 py-4 sm:px-8">
+        <nav className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
           <JoodLogoMark />
-          <div className="flex items-center gap-5 text-sm font-bold text-[#224f3d]">
-            <a href="#top" className="transition hover:text-[#b88724]">الرئيسية</a>
-            <a href="#platforms" className="transition hover:text-[#b88724]">منصاتنا</a>
-            <a href="#contact" className="transition hover:text-[#b88724]">التواصل</a>
+          <div className="text-right">
+            <p className="text-lg font-black text-[#0f3327]">إنجازات فريق تطبيق تلاوات الحرمين</p>
+            <p className="mt-1 text-xs font-semibold text-[#6d8177]">
+              {data?.lastUpdated
+                ? `آخر تحديث: ${format(new Date(data.lastUpdated), "EEEE، d MMMM yyyy، h:mm a", { locale: ar })}`
+                : "آخر تحديث: يتم تحميل البيانات"}
+            </p>
           </div>
         </nav>
 
@@ -177,11 +259,6 @@ export default function Achievements() {
             <p className="mt-4 max-w-2xl text-base font-semibold text-[#5d756b]">
               عرض رسمي مختصر لأثر العمل ومنجزاته عبر المنصات.
             </p>
-            {data?.lastUpdated && (
-              <p className="mt-5 text-sm text-[#6d8177]">
-                آخر تحديث: {format(new Date(data.lastUpdated), "EEEE، d MMMM yyyy، h:mm a", { locale: ar })}
-              </p>
-            )}
           </div>
 
           <div className="rounded-lg border border-[#decfae] bg-white/78 p-4 shadow-sm backdrop-blur">
@@ -224,13 +301,6 @@ export default function Achievements() {
                 hint={selectedPeriodLabel}
               />
               <StatCard
-                title="إجمالي الإنجازات"
-                value={formatNumber(data.completedTasks)}
-                icon={CheckCircle2}
-                hint="مهام مكتملة في الفترة"
-                tone="gold"
-              />
-              <StatCard
                 title="آخر 30 يومًا"
                 value={formatNumber(data.last30Publications)}
                 icon={Clock}
@@ -250,38 +320,16 @@ export default function Achievements() {
                 hint="منشور يوميًا تقريبًا"
                 tone="gold"
               />
+              <StatCard
+                title="منذ بداية المشروع"
+                value={`${formatNumber(projectDays)} يوم`}
+                icon={CalendarDays}
+                hint={`من ${formatDate(data.projectStartDate)}`}
+                tone="gold"
+              />
             </section>
 
-            <section className="grid gap-5 lg:grid-cols-[1fr_1.4fr]" id="platforms">
-              <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-                <CardContent className="p-6">
-                  <SectionTitle
-                    icon={CalendarDays}
-                    title="منذ بداية المشروع"
-                    hint="البداية المعتمدة: 24 مايو 2026"
-                  />
-                  <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-1">
-                    <div className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] p-4">
-                      <p className="text-sm font-bold text-[#6d8177]">تاريخ البداية</p>
-                      <p className="mt-2 text-2xl font-black">{formatDate(data.projectStartDate)}</p>
-                      <p className="mt-1 text-sm text-[#7c8f85]">
-                        {formatHijriDate(new Date(data.projectStartDate), { day: "numeric", month: "long", year: "numeric" })}
-                      </p>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div className="rounded-lg border border-emerald-100 bg-emerald-50 p-4">
-                        <p className="text-sm font-bold text-emerald-800">كل المنشورات</p>
-                        <p className="mt-2 text-3xl font-black text-emerald-900">{formatNumber(data.allTime.totalPublications)}</p>
-                      </div>
-                      <div className="rounded-lg border border-amber-100 bg-amber-50 p-4">
-                        <p className="text-sm font-bold text-amber-800">كل الإنجازات</p>
-                        <p className="mt-2 text-3xl font-black text-amber-900">{formatNumber(data.allTime.completedTasks)}</p>
-                      </div>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-
+            <section id="platforms">
               <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
                 <CardContent className="p-6">
                   <SectionTitle
@@ -300,7 +348,7 @@ export default function Achievements() {
                           <div className="flex items-center justify-between gap-3">
                             <div className="flex items-center gap-3 font-black">
                               <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#f4eddf]">
-                                <PlatformIcon name={platform.name} icon={platform.icon} className="h-5 w-5" />
+                                <PlatformIcon name={platform.name} className="h-5 w-5" />
                               </span>
                               <span>{platform.name}</span>
                             </div>
@@ -328,31 +376,7 @@ export default function Achievements() {
                     title="النمو الشهري"
                     hint="يبدأ من أول شهر توجد فيه بيانات فعلية فقط"
                   />
-                  {data.monthlyGrowth.length === 0 ? (
-                    <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
-                      لا توجد بيانات نمو لهذه الفترة.
-                    </p>
-                  ) : (
-                    <div className="space-y-4">
-                      {data.monthlyGrowth.map((row) => {
-                        const date = new Date(row.monthStart);
-                        return (
-                          <div key={`growth-${row.monthStart}`} className="grid gap-3 rounded-lg border border-[#efe6d8] bg-[#fffdf8] p-4 sm:grid-cols-[220px_1fr_100px] sm:items-center">
-                            <div>
-                              <p className="font-black text-[#103c2d]">
-                                {formatHijriDate(date, { month: "long", year: "numeric" })}
-                              </p>
-                              <p className="text-xs font-semibold text-[#7c8f85]">
-                                {format(date, "MMMM yyyy", { locale: ar })}
-                              </p>
-                            </div>
-                            <Progress value={(row.publications / maxMonthly) * 100} className="h-3 bg-[#eee4d2]" />
-                            <div className="text-lg font-black text-[#0f5b3d] sm:text-left">{formatNumber(row.publications)}</div>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                  <MonthlyGrowthChart rows={data.monthlyGrowth} />
                 </CardContent>
               </Card>
             </section>

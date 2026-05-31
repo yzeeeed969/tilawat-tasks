@@ -29,11 +29,14 @@ export function PlatformIcon({ name, icon, className = "h-4 w-4" }: PlatformIcon
   if (key.includes("twitter") || key.includes("تويتر")) {
     return <FaTwitter className={`text-black ${className}`} />;
   }
-  if (key.includes("telegram") || key.includes("تيليغرام") || key.includes("تلغرام")) {
+  if (key.includes("telegram") || key.includes("تيليغرام") || key.includes("تلغرام") || key.includes("تلجرام") || key.includes("تلقرام")) {
     return <FaTelegram className={`text-sky-500 ${className}`} />;
   }
   if (key.includes("tiktok") || key.includes("تيك")) {
     return <FaTiktok className={`text-black ${className}`} />;
+  }
+  if (key.includes("app") || key.includes("تطبيق")) {
+    return <Smartphone className={`text-emerald-700 ${className}`} />;
   }
 
   const appColors: Record<string, string> = {
@@ -57,7 +60,7 @@ export function getPlatformEmoji(name: string, icon?: string): string {
   if (key.includes("facebook") || key.includes("فيسبوك")) return "📘";
   if (key.includes("instagram") || key.includes("إنستغرام") || key.includes("انستغرام")) return "📸";
   if (key.includes("twitter") || key.includes("تويتر")) return "🐦";
-  if (key.includes("telegram") || key.includes("تيليغرام")) return "✈️";
+  if (key.includes("telegram") || key.includes("تيليغرام") || key.includes("تلغرام") || key.includes("تلجرام") || key.includes("تلقرام")) return "✈️";
   if (key.includes("tiktok") || key.includes("تيك")) return "🎵";
   if (key.includes("haramain") || key.includes("الحرمين")) return "🕌";
   if (key.includes("yasser") || key.includes("ياسر") || key.includes("maher") || key.includes("ماهر")) return "📱";
