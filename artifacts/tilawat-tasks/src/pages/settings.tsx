@@ -86,12 +86,14 @@ interface TelegramSettingsData {
     enabled: boolean;
     dailyReminderTime: string;
     dailySummaryTime: string;
+    dailyPublicSummaryTime: string;
     overdueAfterTime: string;
     notifyDailyReminder: boolean;
     notifyMemberOverdue: boolean;
     notifyAdminOverdue: boolean;
     notifyAdminCompleted: boolean;
     notifyAdminDailySummary: boolean;
+    notifyDailyPublicSummary: boolean;
     suppressRepeatHours: number;
   };
   recipients: Array<{
@@ -1337,7 +1339,7 @@ function TelegramSettingsSection() {
               onChange={(enabled) => saveMutation.mutate({ enabled })}
             />
 
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4">
               <div className="space-y-2">
                 <label className="text-sm font-semibold">وقت تذكير الأعضاء</label>
                 <Input
@@ -1354,6 +1356,15 @@ function TelegramSettingsSection() {
                   dir="ltr"
                   defaultValue={settings.dailySummaryTime}
                   onBlur={(e) => saveMutation.mutate({ dailySummaryTime: e.target.value })}
+                />
+              </div>
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">وقت ملخص النشر</label>
+                <Input
+                  type="time"
+                  dir="ltr"
+                  defaultValue={settings.dailyPublicSummaryTime}
+                  onBlur={(e) => saveMutation.mutate({ dailyPublicSummaryTime: e.target.value })}
                 />
               </div>
               <div className="space-y-2">
@@ -1408,6 +1419,12 @@ function TelegramSettingsSection() {
                 description="يعرض المنجز والمتأخر وغير المكتمل في اليوم."
                 checked={settings.notifyAdminDailySummary}
                 onChange={(notifyAdminDailySummary) => saveMutation.mutate({ notifyAdminDailySummary })}
+              />
+              <TelegramToggleRow
+                title="ملخص منشورات اليوم للنشر"
+                description="يرسل للمدير منشورات اليوم المكتملة التي لها شاهد، بدون أسماء الأعضاء أو المتأخرات."
+                checked={settings.notifyDailyPublicSummary}
+                onChange={(notifyDailyPublicSummary) => saveMutation.mutate({ notifyDailyPublicSummary })}
               />
             </div>
 

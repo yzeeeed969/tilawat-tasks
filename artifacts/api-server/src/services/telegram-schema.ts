@@ -11,6 +11,7 @@ async function runTelegramSchemaEnsure() {
       enabled boolean NOT NULL DEFAULT false,
       daily_reminder_time text NOT NULL DEFAULT '09:00',
       daily_summary_time text NOT NULL DEFAULT '21:00',
+      daily_public_summary_time text NOT NULL DEFAULT '23:30',
       overdue_after_time text NOT NULL DEFAULT '23:59',
       timezone text NOT NULL DEFAULT 'Asia/Riyadh',
       notify_daily_reminder boolean NOT NULL DEFAULT true,
@@ -18,11 +19,15 @@ async function runTelegramSchemaEnsure() {
       notify_admin_overdue boolean NOT NULL DEFAULT true,
       notify_admin_completed boolean NOT NULL DEFAULT true,
       notify_admin_daily_summary boolean NOT NULL DEFAULT true,
+      notify_daily_public_summary boolean NOT NULL DEFAULT false,
       suppress_repeat_hours integer NOT NULL DEFAULT 24,
       created_at timestamp NOT NULL DEFAULT now(),
       updated_at timestamp NOT NULL DEFAULT now()
     )
   `);
+
+  await db.execute(sql`ALTER TABLE telegram_settings ADD COLUMN IF NOT EXISTS daily_public_summary_time text NOT NULL DEFAULT '23:30'`);
+  await db.execute(sql`ALTER TABLE telegram_settings ADD COLUMN IF NOT EXISTS notify_daily_public_summary boolean NOT NULL DEFAULT false`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS telegram_recipients (

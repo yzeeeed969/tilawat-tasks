@@ -16,6 +16,7 @@ import {
   type TelegramSettings,
 } from "@workspace/db";
 import { ensureTelegramSchema } from "./telegram-schema";
+import { ensureTaskQuotaSchema } from "./task-quota-schema";
 import { sendTelegramMessage } from "./telegram";
 
 const RIYADH_OFFSET_HOURS = 3;
@@ -27,6 +28,7 @@ type NotificationType =
   | "telegram_admin_overdue"
   | "telegram_admin_task_completed"
   | "telegram_admin_daily_summary"
+  | "telegram_daily_public_summary"
   | "telegram_task_assigned"
   | "telegram_weekly_quota_reminder"
   | "telegram_password_reset"
@@ -59,6 +61,14 @@ type WeeklyQuotaTaskRow = TaskRow & {
   weeklyQuotaPeriodStart: Date | null;
   weeklyQuotaPeriodEnd: Date | null;
   proofCount: number;
+};
+
+type PublicPostTaskRow = Pick<TaskRow, "id" | "title" | "dueDate" | "completedAt" | "submissionUrl" | "platformName" | "reciterName">;
+
+type DailyPublication = PublicPostTaskRow & {
+  proofUrl: string;
+  proofIndex: number;
+  proofTotal: number;
 };
 
 function tokenHash(token: string) {
@@ -195,12 +205,14 @@ export async function updateTelegramSettings(input: Partial<{
   enabled: boolean;
   dailyReminderTime: string;
   dailySummaryTime: string;
+  dailyPublicSummaryTime: string;
   overdueAfterTime: string;
   notifyDailyReminder: boolean;
   notifyMemberOverdue: boolean;
   notifyAdminOverdue: boolean;
   notifyAdminCompleted: boolean;
   notifyAdminDailySummary: boolean;
+  notifyDailyPublicSummary: boolean;
   suppressRepeatHours: number;
 }>) {
   const current = await getTelegramSettings();
@@ -215,6 +227,10 @@ export async function updateTelegramSettings(input: Partial<{
     if (!parseTime(input.dailySummaryTime)) throw new Error("وقت ملخص المدير غير صحيح");
     update.dailySummaryTime = input.dailySummaryTime;
   }
+  if (input.dailyPublicSummaryTime !== undefined) {
+    if (!parseTime(input.dailyPublicSummaryTime)) throw new Error("وقت ملخص النشر غير صحيح");
+    update.dailyPublicSummaryTime = input.dailyPublicSummaryTime;
+  }
   if (input.overdueAfterTime !== undefined) {
     if (!parseTime(input.overdueAfterTime)) throw new Error("وقت التأخير غير صحيح");
     update.overdueAfterTime = input.overdueAfterTime;
@@ -224,6 +240,7 @@ export async function updateTelegramSettings(input: Partial<{
   if (typeof input.notifyAdminOverdue === "boolean") update.notifyAdminOverdue = input.notifyAdminOverdue;
   if (typeof input.notifyAdminCompleted === "boolean") update.notifyAdminCompleted = input.notifyAdminCompleted;
   if (typeof input.notifyAdminDailySummary === "boolean") update.notifyAdminDailySummary = input.notifyAdminDailySummary;
+  if (typeof input.notifyDailyPublicSummary === "boolean") update.notifyDailyPublicSummary = input.notifyDailyPublicSummary;
   if (input.suppressRepeatHours !== undefined) {
     if (!Number.isInteger(input.suppressRepeatHours) || input.suppressRepeatHours < 1 || input.suppressRepeatHours > 168) {
       throw new Error("مدة منع التكرار يجب أن تكون بين 1 و 168 ساعة");
@@ -531,6 +548,120 @@ function taskFieldLine(task: Pick<TaskRow, "title" | "platformName" | "reciterNa
   return `${display.emoji} ${escapeHtml(display.title)}${platform}`;
 }
 
+async function getDailyPublications(start: Date, end: Date): Promise<DailyPublication[]> {
+  await ensureTaskQuotaSchema();
+  const tasks = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      dueDate: tasksTable.dueDate,
+      completedAt: tasksTable.completedAt,
+      submissionUrl: tasksTable.submissionUrl,
+      platformName: platformsTable.name,
+      reciterName: recitersTable.name,
+    })
+    .from(tasksTable)
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(and(
+      isNull(tasksTable.deletedAt),
+      eq(tasksTable.status, "completed"),
+      gte(tasksTable.dueDate, start),
+      lte(tasksTable.dueDate, end),
+    ))
+    .orderBy(asc(platformsTable.name), asc(tasksTable.dueDate), asc(tasksTable.id));
+
+  if (tasks.length === 0) return [];
+
+  const taskIds = tasks.map((task) => task.id);
+  const proofRows = await db
+    .select({
+      taskId: taskProofsTable.taskId,
+      url: taskProofsTable.url,
+      createdAt: taskProofsTable.createdAt,
+    })
+    .from(taskProofsTable)
+    .where(and(
+      inArray(taskProofsTable.taskId, taskIds),
+      isNull(taskProofsTable.deletedAt),
+    ))
+    .orderBy(asc(taskProofsTable.createdAt), asc(taskProofsTable.id));
+
+  const proofsByTask = new Map<number, string[]>();
+  for (const proof of proofRows) {
+    const url = proof.url?.trim();
+    if (!url) continue;
+    const urls = proofsByTask.get(proof.taskId) ?? [];
+    urls.push(url);
+    proofsByTask.set(proof.taskId, urls);
+  }
+
+  return tasks.flatMap((task) => {
+    const proofUrls = proofsByTask.get(task.id);
+    const urls = proofUrls && proofUrls.length > 0
+      ? proofUrls
+      : task.submissionUrl?.trim()
+        ? [task.submissionUrl.trim()]
+        : [];
+
+    return urls.map((proofUrl, index) => ({
+      ...task,
+      proofUrl,
+      proofIndex: index + 1,
+      proofTotal: urls.length,
+    }));
+  });
+}
+
+function publicationLine(publication: DailyPublication) {
+  const display = taskDisplayParts(publication);
+  const proofLabel = publication.proofTotal > 1
+    ? `الشاهد ${publication.proofIndex}:`
+    : "الشاهد:";
+  return [
+    `• ${display.emoji} ${escapeHtml(display.title)}`,
+    `  ${proofLabel} ${escapeHtml(publication.proofUrl)}`,
+  ].join("\n");
+}
+
+function buildDailyPublicSummaryMessages(publications: DailyPublication[], now: Date) {
+  const grouped = new Map<string, DailyPublication[]>();
+  for (const publication of publications) {
+    const key = publication.platformName || "منصة غير محددة";
+    grouped.set(key, [...(grouped.get(key) ?? []), publication]);
+  }
+
+  const header = [
+    "<b>منشورات اليوم — تلاوات الحرمين</b>",
+    "",
+    escapeHtml(formatRiyadhDateWithYear(now)),
+    "",
+    `إجمالي المنشورات: ${publications.length}`,
+  ].join("\n");
+
+  const sections = [...grouped.entries()].map(([platformName, rows]) => [
+    `<b>${platformEmoji(platformName)} ${escapeHtml(platformName)}</b>`,
+    "",
+    ...rows.map(publicationLine),
+  ].join("\n"));
+
+  const messages: string[] = [];
+  let current = header;
+
+  for (const section of sections) {
+    const next = `${current}\n\n${section}`;
+    if (next.length > 3600 && current !== header) {
+      messages.push(current);
+      current = `${header}\n\n<b>متابعة المنشورات</b>\n\n${section}`;
+    } else {
+      current = next;
+    }
+  }
+
+  if (current.trim()) messages.push(current);
+  return messages;
+}
+
 async function sendDailyMemberReminders(settings: TelegramSettings, now: Date) {
   if (!settings.notifyDailyReminder || !isTimeReached(now, settings.dailyReminderTime)) return 0;
   const dateKey = riyadhDateKey(now);
@@ -668,6 +799,36 @@ async function sendAdminDailySummary(settings: TelegramSettings, now: Date) {
     });
     if (result.sent) sent += 1;
   }
+  return sent;
+}
+
+async function sendDailyPublicSummary(settings: TelegramSettings, now: Date) {
+  if (!settings.notifyDailyPublicSummary || !isTimeReached(now, settings.dailyPublicSummaryTime)) return 0;
+  const dateKey = riyadhDateKey(now);
+  const { start, end } = riyadhDayRange(now);
+  const publications = await getDailyPublications(start, end);
+  if (publications.length === 0) return 0;
+
+  const admins = await getAdminRecipients();
+  if (admins.length === 0) return 0;
+
+  const messages = buildDailyPublicSummaryMessages(publications, now);
+  let sent = 0;
+
+  for (const admin of admins) {
+    for (const [index, text] of messages.entries()) {
+      const result = await sendLoggedTelegram({
+        type: "telegram_daily_public_summary",
+        dedupeKey: `telegram:daily_public_summary:${dateKey}:admin:${admin.userId}:part:${index + 1}`,
+        chatId: admin.chatId,
+        text,
+        recipientUserId: admin.userId,
+        recipientMemberId: admin.memberId,
+      });
+      if (result.sent) sent += 1;
+    }
+  }
+
   return sent;
 }
 
@@ -829,8 +990,17 @@ export async function runTelegramNotificationCycle(now = new Date()) {
   const overdue = await sendOverdueNotifications(settings, now);
   const weeklyQuota = await sendWeeklyQuotaReminders(settings, now);
   const summary = await sendAdminDailySummary(settings, now);
+  const publicSummary = await sendDailyPublicSummary(settings, now);
 
-  return { enabled: true, sent: daily + overdue + weeklyQuota + summary, daily, overdue, weeklyQuota, summary };
+  return {
+    enabled: true,
+    sent: daily + overdue + weeklyQuota + summary + publicSummary,
+    daily,
+    overdue,
+    weeklyQuota,
+    summary,
+    publicSummary,
+  };
 }
 
 export async function listTelegramLogs(limit = 100) {
