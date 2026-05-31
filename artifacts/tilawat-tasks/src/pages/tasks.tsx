@@ -1353,6 +1353,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [filterStatus, setFilterStatus] = useState<string>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [quickDateFilter, setQuickDateFilter] = useState<Date | null>(null);
+  const [quickWeekOffset, setQuickWeekOffset] = useState(0);
   const [adminPreviewMemberId, setAdminPreviewMemberId] = useState<string>("none");
   const [activeTab, setActiveTab] = useState<"active" | "trash">("active");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -1541,10 +1542,30 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const adminListTotal = tasks?.length ?? 0;
   const adminListShown = adminListTasks?.length ?? 0;
+  const quickWeekStart = useMemo(() => {
+    return addWeeks(startOfWeek(new Date(), { weekStartsOn: 0 }), quickWeekOffset);
+  }, [quickWeekOffset]);
+
   const quickWeekDays = useMemo(() => {
-    const start = startOfWeek(new Date(), { weekStartsOn: 0 });
+    const start = quickWeekStart;
     return eachDayOfInterval({ start, end: addDays(start, 6) });
-  }, []);
+  }, [quickWeekStart]);
+
+  const quickWeekEnd = useMemo(() => addDays(quickWeekStart, 6), [quickWeekStart]);
+
+  const handleQuickWeekDateSelect = (value: string) => {
+    if (!value) {
+      setQuickDateFilter(null);
+      return;
+    }
+    const selectedDate = startOfDay(new Date(`${value}T00:00:00`));
+    if (Number.isNaN(selectedDate.getTime())) return;
+    const currentWeekStart = startOfWeek(new Date(), { weekStartsOn: 0 });
+    const selectedWeekStart = startOfWeek(selectedDate, { weekStartsOn: 0 });
+    setQuickWeekOffset(Math.round(differenceInDays(selectedWeekStart, currentWeekStart) / 7));
+    setQuickDateFilter(selectedDate);
+    setFilterDueDate("all");
+  };
 
   useEffect(() => {
     if (!isAdmin || isAdminMemberPreview || view !== "list" || activeTab !== "active") return;
@@ -2606,19 +2627,82 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       {activeTab === "active" && view === "list" && (
         <div className="rounded-lg border border-border bg-card p-3 shadow-sm">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-              <CalendarDays className="h-4 w-4 text-sidebar-primary" />
-              الأسبوع الحالي
+            <div className="flex flex-col gap-0.5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                <CalendarDays className="h-4 w-4 text-sidebar-primary" />
+                {quickWeekOffset === 0 ? "الأسبوع الحالي" : "الأسبوع المعروض"}
+              </div>
+              <div className="text-xs text-muted-foreground">
+                {format(quickWeekStart, "d MMMM", { locale: ar })} — {format(quickWeekEnd, "d MMMM yyyy", { locale: ar })}
+                {showHijri && (
+                  <span className="ms-1 text-sidebar-primary/80">
+                    ({formatHijriDate(quickWeekStart, { day: "numeric", month: "short" })} — {formatHijriDate(quickWeekEnd, { day: "numeric", month: "short", year: "numeric" })})
+                  </span>
+                )}
+              </div>
             </div>
-            {quickDateFilter && (
-              <button
+            <div className="flex flex-wrap items-center gap-2">
+              <Button
                 type="button"
-                onClick={() => setQuickDateFilter(null)}
-                className="text-xs font-medium text-sidebar-primary hover:underline"
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1"
+                onClick={() => {
+                  setQuickWeekOffset((previous) => previous - 1);
+                  setQuickDateFilter(null);
+                  setFilterDueDate("all");
+                }}
               >
-                عرض كل الأيام
-              </button>
-            )}
+                <ChevronRight className="h-4 w-4" />
+                السابق
+              </Button>
+              <div className="w-[170px]">
+                <DatePickerInput
+                  value={quickDateFilter ? format(quickDateFilter, "yyyy-MM-dd") : ""}
+                  onChange={handleQuickWeekDateSelect}
+                  placeholder="اختر تاريخًا"
+                  optional
+                />
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-9 gap-1"
+                onClick={() => {
+                  setQuickWeekOffset((previous) => previous + 1);
+                  setQuickDateFilter(null);
+                  setFilterDueDate("all");
+                }}
+              >
+                التالي
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              {(quickWeekOffset !== 0 || quickDateFilter) && (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-9 text-sidebar-primary"
+                  onClick={() => {
+                    setQuickWeekOffset(0);
+                    setQuickDateFilter(null);
+                    setFilterDueDate("all");
+                  }}
+                >
+                  رجوع للحالي
+                </Button>
+              )}
+              {quickDateFilter && (
+                <button
+                  type="button"
+                  onClick={() => setQuickDateFilter(null)}
+                  className="text-xs font-medium text-sidebar-primary hover:underline"
+                >
+                  عرض كل الأيام
+                </button>
+              )}
+            </div>
           </div>
           <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
             {quickWeekDays.map((day) => {
