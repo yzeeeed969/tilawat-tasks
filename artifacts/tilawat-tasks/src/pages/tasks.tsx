@@ -1585,21 +1585,26 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           ? members.filter((member) => linkedMemberIds.includes(member.id))
           : [];
         const options = linkedOptions.length > 0 ? linkedOptions : members;
+        const isOriginalReciter = quickReciterTask.reciter?.id === reciterId;
         setQuickReciterHasLinkedMembers(linkedOptions.length > 0);
         setQuickReciterMemberOptions(options);
         setQuickReciterMemberId((current) =>
-          options.some((member) => String(member.id) === current)
-            ? current
-            : options[0] ? String(options[0].id) : ""
+          linkedOptions.length > 0
+            ? options[0] ? String(options[0].id) : ""
+            : isOriginalReciter && options.some((member) => String(member.id) === current)
+              ? current
+              : ""
         );
       } catch {
         if (cancelled) return;
+        const reciterId = Number(quickReciterId);
+        const isOriginalReciter = quickReciterTask.reciter?.id === reciterId;
         setQuickReciterHasLinkedMembers(false);
         setQuickReciterMemberOptions(members);
         setQuickReciterMemberId((current) =>
-          members.some((member) => String(member.id) === current)
+          isOriginalReciter && members.some((member) => String(member.id) === current)
             ? current
-            : members[0] ? String(members[0].id) : ""
+            : ""
         );
       } finally {
         if (!cancelled) setQuickReciterMembersLoading(false);
@@ -2318,7 +2323,15 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               )}
               <div className="space-y-2">
                 <label className="text-sm font-medium">القارئ الجديد</label>
-                <Select value={quickReciterId} onValueChange={setQuickReciterId}>
+                <Select
+                  value={quickReciterId}
+                  onValueChange={(value) => {
+                    setQuickReciterId(value);
+                    if (quickReciterTask.reciter?.id !== Number(value)) {
+                      setQuickReciterMemberId("");
+                    }
+                  }}
+                >
                   <SelectTrigger className="bg-background">
                     <SelectValue placeholder="اختر القارئ" />
                   </SelectTrigger>
@@ -2356,13 +2369,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 <p className={cn("text-xs", quickReciterHasLinkedMembers ? "text-green-700" : "text-amber-700")}>
                   {quickReciterHasLinkedMembers
                     ? "تم عرض العضو أو الأعضاء المرتبطين بهذا القارئ في هذه المنصة."
-                    : "لا يوجد ربط محدد لهذا القارئ، يمكنك اختيار العضو يدويًا."}
+                    : "لا يوجد ربط محدد لهذا القارئ، اختر العضو المسؤول يدويًا قبل التأكيد."}
                 </p>
               </div>
               <Button
                 type="button"
                 className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
-                disabled={quickReciterSaving || quickReciterMembersLoading}
+                disabled={quickReciterSaving || quickReciterMembersLoading || !quickReciterMemberId}
                 onClick={handleQuickReciterChange}
               >
                 {quickReciterSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
