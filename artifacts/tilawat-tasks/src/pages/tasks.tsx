@@ -2314,7 +2314,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           {quickReciterTask && (
             <div className="space-y-4">
               <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-sidebar-foreground">
-                سيتم تغيير القارئ والعضو المسؤول لهذه المهمة فقط، دون تغيير السلسلة أو التاريخ أو الحالة أو الشواهد.
+                سيتم تغيير القارئ والعضو المسؤول لهذه المهمة فقط، وستختفي من قائمة العضو السابق. لن تتغير السلسلة أو التاريخ أو الحالة أو الشواهد.
               </div>
               {quickReciterTask.status === "completed" && (
                 <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-700">
