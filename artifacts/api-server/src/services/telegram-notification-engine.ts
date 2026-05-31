@@ -118,6 +118,39 @@ function riyadhDayRange(now = new Date()) {
   };
 }
 
+function riyadhDateInputRange(dateInput: string | undefined, now = new Date()) {
+  if (!dateInput) {
+    return {
+      ...riyadhDayRange(now),
+      displayDate: now,
+      dateKey: riyadhDateKey(now),
+    };
+  }
+
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateInput);
+  if (!match) throw new Error("تاريخ ملخص النشر غير صحيح");
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const probe = new Date(Date.UTC(year, month - 1, day));
+
+  if (
+    probe.getUTCFullYear() !== year ||
+    probe.getUTCMonth() !== month - 1 ||
+    probe.getUTCDate() !== day
+  ) {
+    throw new Error("تاريخ ملخص النشر غير صحيح");
+  }
+
+  return {
+    start: riyadhLocalToUtc(year, month, day, 0, 0, 0, 0),
+    end: riyadhLocalToUtc(year, month, day, 23, 59, 59, 999),
+    displayDate: riyadhLocalToUtc(year, month, day, 12, 0, 0, 0),
+    dateKey: dateInput,
+  };
+}
+
 function riyadhWeekRange(now = new Date()) {
   const p = riyadhParts(now);
   return {
@@ -833,18 +866,18 @@ async function sendDailyPublicSummary(settings: TelegramSettings, now: Date) {
   return sent;
 }
 
-export async function sendDailyPublicSummaryNow(userId: number, now = new Date()) {
+export async function sendDailyPublicSummaryNow(userId: number, dateInput?: string, now = new Date()) {
   await ensureTelegramSchema();
   const recipient = await getRecipientForUser(userId);
   if (!recipient) throw new Error("لا يوجد ربط Telegram لهذا المستخدم");
 
-  const { start, end } = riyadhDayRange(now);
+  const { start, end, displayDate, dateKey } = riyadhDateInputRange(dateInput, now);
   const publications = await getDailyPublications(start, end);
   if (publications.length === 0) {
-    return { sent: 0, publications: 0, messages: 0 };
+    return { sent: 0, publications: 0, messages: 0, date: dateKey };
   }
 
-  const messages = buildDailyPublicSummaryMessages(publications, now);
+  const messages = buildDailyPublicSummaryMessages(publications, displayDate);
   const manualRunId = crypto.randomUUID();
   let sent = 0;
   let lastError: string | undefined;
@@ -866,7 +899,7 @@ export async function sendDailyPublicSummaryNow(userId: number, now = new Date()
     throw new Error(lastError ?? "فشل إرسال ملخص منشورات اليوم");
   }
 
-  return { sent, publications: publications.length, messages: messages.length };
+  return { sent, publications: publications.length, messages: messages.length, date: dateKey };
 }
 
 async function sendWeeklyQuotaReminders(settings: TelegramSettings, now: Date) {

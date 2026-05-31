@@ -220,14 +220,29 @@ async function sendTelegramTest(userId?: number) {
   return body;
 }
 
-async function sendTelegramPublicSummaryNow() {
+function riyadhDateInputValue(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "Asia/Riyadh",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+  return year && month && day ? `${year}-${month}-${day}` : date.toISOString().slice(0, 10);
+}
+
+async function sendTelegramPublicSummaryNow(date: string) {
   const res = await fetch("/api/telegram/public-summary-now", {
     method: "POST",
+    headers: { "Content-Type": "application/json" },
     credentials: "include",
+    body: JSON.stringify({ date }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? "فشل إرسال ملخص منشورات اليوم");
-  return body as { sent: number; publications: number; messages: number };
+  return body as { sent: number; publications: number; messages: number; date: string };
 }
 
 // ── Permission checkbox ────────────────────────────────────────────────────────
@@ -1272,6 +1287,7 @@ function TelegramSettingsSection() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const [linkToken, setLinkToken] = useState<string | null>(null);
+  const [publicSummaryDate, setPublicSummaryDate] = useState(() => riyadhDateInputValue());
 
   const { data, isLoading } = useQuery({
     queryKey: ["telegram-settings"],
@@ -1319,10 +1335,10 @@ function TelegramSettingsSection() {
   });
 
   const publicSummaryMutation = useMutation({
-    mutationFn: sendTelegramPublicSummaryNow,
+    mutationFn: () => sendTelegramPublicSummaryNow(publicSummaryDate),
     onSuccess: (result) => {
       if ((result.publications ?? 0) === 0) {
-        toast({ title: "لا توجد منشورات مكتملة لها شاهد اليوم" });
+        toast({ title: "لا توجد منشورات مكتملة لها شاهد في التاريخ المحدد" });
       } else {
         toast({ title: `تم إرسال ملخص النشر — ${result.publications} منشور` });
       }
@@ -1455,18 +1471,27 @@ function TelegramSettingsSection() {
               <div>
                 <h3 className="font-bold">إرسال ملخص منشورات اليوم يدويًا</h3>
                 <p className="text-sm text-muted-foreground mt-1">
-                  يرسل لك الآن منشورات اليوم المكتملة التي لها شاهد، بدون التأثير على الإرسال التلقائي.
+                  اختر التاريخ ثم أرسل منشوراته المكتملة التي لها شاهد، بدون التأثير على الإرسال التلقائي.
                 </p>
               </div>
-              <Button
-                variant="outline"
-                onClick={() => publicSummaryMutation.mutate()}
-                disabled={publicSummaryMutation.isPending}
-                className="shrink-0"
-              >
-                {publicSummaryMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Send className="h-4 w-4 ml-2" />}
-                إرسال الملخص الآن
-              </Button>
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                <Input
+                  type="date"
+                  dir="ltr"
+                  value={publicSummaryDate}
+                  onChange={(e) => setPublicSummaryDate(e.target.value)}
+                  className="w-full sm:w-44"
+                />
+                <Button
+                  variant="outline"
+                  onClick={() => publicSummaryMutation.mutate()}
+                  disabled={publicSummaryMutation.isPending || !publicSummaryDate}
+                  className="shrink-0"
+                >
+                  {publicSummaryMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Send className="h-4 w-4 ml-2" />}
+                  إرسال الملخص الآن
+                </Button>
+              </div>
             </div>
 
             <div className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-3">

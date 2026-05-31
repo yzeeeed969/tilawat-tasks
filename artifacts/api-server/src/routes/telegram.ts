@@ -125,7 +125,8 @@ router.post("/telegram/run-due", requireAdmin, async (_req, res) => {
 router.post("/telegram/public-summary-now", requireAdmin, async (req, res) => {
   const user = (req as any).currentUser;
   try {
-    const result = await sendDailyPublicSummaryNow(user.id);
+    const requestedDate = typeof req.body?.date === "string" ? req.body.date : undefined;
+    const result = await sendDailyPublicSummaryNow(user.id, requestedDate);
     res.json(result);
   } catch (err) {
     res.status(400).json({ error: err instanceof Error ? err.message : "فشل إرسال ملخص منشورات اليوم" });
