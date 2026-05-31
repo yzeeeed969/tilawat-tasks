@@ -11,6 +11,7 @@ import {
   listTelegramLogs,
   listTelegramRecipients,
   runTelegramNotificationCycle,
+  sendDailyPublicSummaryNow,
   sendTelegramTestMessage,
   updateTelegramSettings,
 } from "../services/telegram-notification-engine";
@@ -118,6 +119,16 @@ router.post("/telegram/run-due", requireAdmin, async (_req, res) => {
     res.json(result);
   } catch (err) {
     res.status(500).json({ error: err instanceof Error ? err.message : "فشل تشغيل فحص Telegram" });
+  }
+});
+
+router.post("/telegram/public-summary-now", requireAdmin, async (req, res) => {
+  const user = (req as any).currentUser;
+  try {
+    const result = await sendDailyPublicSummaryNow(user.id);
+    res.json(result);
+  } catch (err) {
+    res.status(400).json({ error: err instanceof Error ? err.message : "فشل إرسال ملخص منشورات اليوم" });
   }
 });
 

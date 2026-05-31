@@ -29,6 +29,7 @@ type NotificationType =
   | "telegram_admin_task_completed"
   | "telegram_admin_daily_summary"
   | "telegram_daily_public_summary"
+  | "telegram_daily_public_summary_manual"
   | "telegram_task_assigned"
   | "telegram_weekly_quota_reminder"
   | "telegram_password_reset"
@@ -830,6 +831,42 @@ async function sendDailyPublicSummary(settings: TelegramSettings, now: Date) {
   }
 
   return sent;
+}
+
+export async function sendDailyPublicSummaryNow(userId: number, now = new Date()) {
+  await ensureTelegramSchema();
+  const recipient = await getRecipientForUser(userId);
+  if (!recipient) throw new Error("لا يوجد ربط Telegram لهذا المستخدم");
+
+  const { start, end } = riyadhDayRange(now);
+  const publications = await getDailyPublications(start, end);
+  if (publications.length === 0) {
+    return { sent: 0, publications: 0, messages: 0 };
+  }
+
+  const messages = buildDailyPublicSummaryMessages(publications, now);
+  const manualRunId = crypto.randomUUID();
+  let sent = 0;
+  let lastError: string | undefined;
+
+  for (const [index, text] of messages.entries()) {
+    const result = await sendLoggedTelegram({
+      type: "telegram_daily_public_summary_manual",
+      dedupeKey: `telegram:daily_public_summary_manual:${userId}:${manualRunId}:part:${index + 1}`,
+      chatId: recipient.chatId,
+      text,
+      recipientUserId: recipient.userId,
+      recipientMemberId: recipient.memberId,
+    });
+    if (result.sent) sent += 1;
+    if (result.error) lastError = result.error;
+  }
+
+  if (sent === 0 && messages.length > 0) {
+    throw new Error(lastError ?? "فشل إرسال ملخص منشورات اليوم");
+  }
+
+  return { sent, publications: publications.length, messages: messages.length };
 }
 
 async function sendWeeklyQuotaReminders(settings: TelegramSettings, now: Date) {

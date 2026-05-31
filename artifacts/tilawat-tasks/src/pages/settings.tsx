@@ -220,6 +220,16 @@ async function sendTelegramTest(userId?: number) {
   return body;
 }
 
+async function sendTelegramPublicSummaryNow() {
+  const res = await fetch("/api/telegram/public-summary-now", {
+    method: "POST",
+    credentials: "include",
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "فشل إرسال ملخص منشورات اليوم");
+  return body as { sent: number; publications: number; messages: number };
+}
+
 // ── Permission checkbox ────────────────────────────────────────────────────────
 function PermCheckbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
   return (
@@ -1308,6 +1318,19 @@ function TelegramSettingsSection() {
     onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
   });
 
+  const publicSummaryMutation = useMutation({
+    mutationFn: sendTelegramPublicSummaryNow,
+    onSuccess: (result) => {
+      if ((result.publications ?? 0) === 0) {
+        toast({ title: "لا توجد منشورات مكتملة لها شاهد اليوم" });
+      } else {
+        toast({ title: `تم إرسال ملخص النشر — ${result.publications} منشور` });
+      }
+      queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
+    },
+    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
+  });
+
   const settings = data?.settings;
 
   return (
@@ -1426,6 +1449,24 @@ function TelegramSettingsSection() {
                 checked={settings.notifyDailyPublicSummary}
                 onChange={(notifyDailyPublicSummary) => saveMutation.mutate({ notifyDailyPublicSummary })}
               />
+            </div>
+
+            <div className="rounded-xl border border-border/60 bg-muted/10 p-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+              <div>
+                <h3 className="font-bold">إرسال ملخص منشورات اليوم يدويًا</h3>
+                <p className="text-sm text-muted-foreground mt-1">
+                  يرسل لك الآن منشورات اليوم المكتملة التي لها شاهد، بدون التأثير على الإرسال التلقائي.
+                </p>
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => publicSummaryMutation.mutate()}
+                disabled={publicSummaryMutation.isPending}
+                className="shrink-0"
+              >
+                {publicSummaryMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Send className="h-4 w-4 ml-2" />}
+                إرسال الملخص الآن
+              </Button>
             </div>
 
             <div className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-3">
