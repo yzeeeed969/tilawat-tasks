@@ -4,6 +4,7 @@ export * from "./platform-pages";
 export * from "./reciters";
 export * from "./task-series";
 export * from "./tasks";
+export * from "./task-dependencies";
 export * from "./task-members";
 export * from "./task-proofs";
 export * from "./comments";

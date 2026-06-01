@@ -110,6 +110,8 @@ export const listTasksResponseProgressMax = 100;
 export const ListTasksResponseItem = zod.object({
   id: zod.number(),
   seriesId: zod.number().nullish(),
+  source: zod.enum(["admin_created", "member_created"]).optional(),
+  dependsOnTaskId: zod.number().nullish(),
   title: zod.string(),
   description: zod.string().optional(),
   platform: zod.object({
@@ -206,6 +208,8 @@ export const CreateTaskBody = zod.object({
   recurrenceDays: zod.string().nullish(),
   weeklyQuotaRequired: zod.number().nullish(),
   pageId: zod.number().nullish(),
+  dependsOnTaskId: zod.number().nullish(),
+  source: zod.enum(["admin_created", "member_created"]).optional(),
 });
 
 /**
@@ -221,6 +225,8 @@ export const getTaskResponseProgressMax = 100;
 export const GetTaskResponse = zod.object({
   id: zod.number(),
   seriesId: zod.number().nullish(),
+  source: zod.enum(["admin_created", "member_created"]).optional(),
+  dependsOnTaskId: zod.number().nullish(),
   title: zod.string(),
   description: zod.string().optional(),
   platform: zod.object({
@@ -316,6 +322,7 @@ export const UpdateTaskBody = zod.object({
   weeklyQuotaRequired: zod.number().nullish(),
   submissionUrl: zod.string().nullish(),
   pageId: zod.number().nullish(),
+  dependsOnTaskId: zod.number().nullish(),
   updateScope: zod.enum(["single", "future", "series"]).optional(),
 });
 
@@ -325,6 +332,8 @@ export const updateTaskResponseProgressMax = 100;
 export const UpdateTaskResponse = zod.object({
   id: zod.number(),
   seriesId: zod.number().nullish(),
+  source: zod.enum(["admin_created", "member_created"]).optional(),
+  dependsOnTaskId: zod.number().nullish(),
   title: zod.string(),
   description: zod.string().optional(),
   platform: zod.object({

@@ -33,6 +33,7 @@ export const tasksTable = pgTable("tasks", {
   weeklyQuotaRequired: integer("weekly_quota_required"),
   weeklyQuotaPeriodStart: timestamp("weekly_quota_period_start"),
   weeklyQuotaPeriodEnd: timestamp("weekly_quota_period_end"),
+  source: text("source").notNull().default("admin_created"),
   lastRecurredAt: timestamp("last_recurred_at"),
   submissionUrl: text("submission_url"),
   pageId: integer("page_id").references(() => platformPagesTable.id, { onDelete: "set null" }),

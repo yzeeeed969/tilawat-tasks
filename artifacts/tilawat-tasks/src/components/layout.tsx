@@ -364,16 +364,40 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const canManageSettings = useCanAccessSettings();
   const { dark, toggle } = useDarkMode();
 
-  const navItems = [
+  const primaryNavItems = [
     { href: "/", label: "الرئيسية", icon: LayoutDashboard, show: true },
     { href: "/tasks", label: "المهام", icon: CheckSquare, show: true },
     { href: "/members", label: "الأعضاء", icon: Users, show: canViewMembers },
     { href: "/reports", label: "التقارير", icon: BarChart3, show: canViewReports },
-    { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
-    { href: "/platforms", label: "المنصات", icon: Layers, show: canManageSettings },
-    { href: "/settings", label: "الإعدادات", icon: Settings, show: canManageSettings },
     { href: "/account", label: "حسابي", icon: User, show: true },
   ].filter((item) => item.show);
+
+  const adminNavItems = [
+    { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
+    { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
+    { href: "/settings#telegram", label: "Telegram", icon: Bell, show: canManageSettings },
+    { href: "/settings#public-stats", label: "إحصائيات عامة", icon: BarChart3, show: canManageSettings },
+    { href: "/settings#general", label: "الإعدادات العامة", icon: Settings, show: canManageSettings },
+  ].filter((item) => item.show);
+
+  const renderNavItem = (item: { href: string; label: string; icon: typeof LayoutDashboard }) => {
+    const itemPath = item.href.split("#")[0];
+    const isActive =
+      location === itemPath ||
+      (itemPath !== "/" && location.startsWith(itemPath));
+    return (
+      <Link key={item.href} href={item.href}>
+        <div className={`flex items-center gap-3 px-3 py-2.5 rounded-md cursor-pointer transition-colors ${
+          isActive
+            ? "bg-sidebar-primary text-sidebar-primary-foreground"
+            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+        }`}>
+          <item.icon className="h-5 w-5 shrink-0" />
+          <span className="font-medium">{item.label}</span>
+        </div>
+      </Link>
+    );
+  };
 
   const name = user?.displayName || user?.username || "مستخدم";
   const initials = name.split(" ").slice(0, 2).map((n: string) => n[0]).join("").toUpperCase();
@@ -417,23 +441,15 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </div>
 
         <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-          {navItems.map((item) => {
-            const isActive =
-              location === item.href ||
-              (item.href !== "/" && location.startsWith(item.href));
-            return (
-              <Link key={item.href} href={item.href}>
-                <div className={`flex items-center gap-3 px-3 py-2.5 rounded-md cursor-pointer transition-colors ${
-                  isActive
-                    ? "bg-sidebar-primary text-sidebar-primary-foreground"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                }`}>
-                  <item.icon className="h-5 w-5 shrink-0" />
-                  <span className="font-medium">{item.label}</span>
-                </div>
-              </Link>
-            );
-          })}
+          {primaryNavItems.map(renderNavItem)}
+          {adminNavItems.length > 0 && (
+            <div className="pt-3 mt-3 border-t border-sidebar-border/70">
+              <p className="px-3 pb-2 text-[11px] font-bold text-sidebar-foreground/50">إدارة النظام</p>
+              <div className="space-y-1">
+                {adminNavItems.map(renderNavItem)}
+              </div>
+            </div>
+          )}
         </nav>
 
         <UserCard />
@@ -510,7 +526,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         {/* ── Mobile Bottom Navigation ─────────────────────── */}
         <nav className="md:hidden fixed bottom-0 right-0 left-0 bg-sidebar border-t border-sidebar-border z-50 safe-area-bottom">
           <div className="flex items-stretch justify-around">
-            {navItems.filter(i => i.href !== "/help").map((item) => {
+            {primaryNavItems.slice(0, 5).map((item) => {
               const isActive =
                 location === item.href ||
                 (item.href !== "/" && location.startsWith(item.href));

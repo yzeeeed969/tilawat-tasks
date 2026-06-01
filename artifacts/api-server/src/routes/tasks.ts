@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable } from "@workspace/db";
+import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable } from "@workspace/db";
 import { eq, and, inArray, isNull, isNotNull, ilike, or, sql } from "drizzle-orm";
 import {
   CreateTaskBody,
@@ -10,15 +10,17 @@ import {
   ListTasksQueryParams,
 } from "@workspace/api-zod";
 import { generateUpcomingTasksForSeries, syncActiveSeries } from "../services/task-engine";
-import { notifyTelegramTaskAssigned, notifyTelegramTaskCompleted } from "../services/telegram-notification-engine";
+import { notifyTelegramTaskAssigned, notifyTelegramTaskCompleted, notifyTelegramTaskDependencyReady } from "../services/telegram-notification-engine";
 import { canCreateTask, canDeleteTask, canEditTask, canViewTask } from "../lib/permissions";
 import { ensureTaskQuotaSchema } from "../services/task-quota-schema";
+import { ensureTaskDependenciesSchema } from "../services/task-dependencies-schema";
 
 const router = Router();
 
 router.use(async (_req, _res, next) => {
   try {
     await ensureTaskQuotaSchema();
+    await ensureTaskDependenciesSchema();
     next();
   } catch (err) {
     next(err);
@@ -320,6 +322,7 @@ async function notifyTaskUpdated(taskId: number, taskTitle: string, memberIds: n
 const TASK_SELECT = {
   id: tasksTable.id,
   seriesId: tasksTable.seriesId,
+  source: tasksTable.source,
   title: tasksTable.title,
   description: tasksTable.description,
   status: tasksTable.status,
@@ -529,6 +532,149 @@ async function fetchTaskProofsMap(taskIds: number[]) {
   return map;
 }
 
+function parseOptionalTaskId(value: unknown): number | null {
+  if (value === undefined || value === null || value === "" || value === "none") return null;
+  const id = Number(value);
+  if (!Number.isInteger(id) || id <= 0) throw new Error("INVALID_TASK_DEPENDENCY");
+  return id;
+}
+
+async function fetchTaskDependenciesMap(taskIds: number[]) {
+  if (taskIds.length === 0) return new Map<number, number>();
+  const rows = await db
+    .select({
+      dependentTaskId: taskDependenciesTable.dependentTaskId,
+      prerequisiteTaskId: taskDependenciesTable.prerequisiteTaskId,
+    })
+    .from(taskDependenciesTable)
+    .where(inArray(taskDependenciesTable.dependentTaskId, taskIds));
+  return new Map(rows.map((row) => [row.dependentTaskId, row.prerequisiteTaskId]));
+}
+
+async function assertDependencyAllowed(dependentTaskId: number, prerequisiteTaskId: number) {
+  if (dependentTaskId === prerequisiteTaskId) throw new Error("SELF_DEPENDENCY");
+
+  const [dependent] = await db
+    .select({ id: tasksTable.id, deletedAt: tasksTable.deletedAt })
+    .from(tasksTable)
+    .where(eq(tasksTable.id, dependentTaskId))
+    .limit(1);
+  const [prerequisite] = await db
+    .select({ id: tasksTable.id, deletedAt: tasksTable.deletedAt })
+    .from(tasksTable)
+    .where(eq(tasksTable.id, prerequisiteTaskId))
+    .limit(1);
+
+  if (!dependent || dependent.deletedAt || !prerequisite || prerequisite.deletedAt) {
+    throw new Error("INVALID_TASK_DEPENDENCY");
+  }
+
+  let current = prerequisiteTaskId;
+  const seen = new Set<number>();
+  for (let depth = 0; depth < 100; depth += 1) {
+    if (current === dependentTaskId) throw new Error("CIRCULAR_TASK_DEPENDENCY");
+    if (seen.has(current)) return;
+    seen.add(current);
+
+    const [next] = await db
+      .select({ prerequisiteTaskId: taskDependenciesTable.prerequisiteTaskId })
+      .from(taskDependenciesTable)
+      .where(eq(taskDependenciesTable.dependentTaskId, current))
+      .limit(1);
+    if (!next) return;
+    current = next.prerequisiteTaskId;
+  }
+
+  throw new Error("CIRCULAR_TASK_DEPENDENCY");
+}
+
+async function assertPrerequisiteTaskExists(prerequisiteTaskId: number) {
+  const [prerequisite] = await db
+    .select({ id: tasksTable.id, deletedAt: tasksTable.deletedAt })
+    .from(tasksTable)
+    .where(eq(tasksTable.id, prerequisiteTaskId))
+    .limit(1);
+
+  if (!prerequisite || prerequisite.deletedAt) {
+    throw new Error("INVALID_TASK_DEPENDENCY");
+  }
+}
+
+async function setTaskDependency(taskId: number, dependsOnTaskId: number | null, createdByUserId: number | null) {
+  if (dependsOnTaskId === null) {
+    await db.delete(taskDependenciesTable).where(eq(taskDependenciesTable.dependentTaskId, taskId));
+    return;
+  }
+
+  await assertDependencyAllowed(taskId, dependsOnTaskId);
+  await db.delete(taskDependenciesTable).where(eq(taskDependenciesTable.dependentTaskId, taskId));
+  await db.insert(taskDependenciesTable).values({
+    prerequisiteTaskId: dependsOnTaskId,
+    dependentTaskId: taskId,
+    createdByUserId,
+  }).onConflictDoNothing();
+}
+
+async function syncDependenciesForTasks(taskIds: number[], dependsOnTaskId: number | null | undefined, createdByUserId: number | null) {
+  if (dependsOnTaskId === undefined) return;
+  for (const taskId of taskIds) {
+    await setTaskDependency(taskId, dependsOnTaskId, createdByUserId);
+  }
+}
+
+async function getTaskTelegramDetails(taskId: number) {
+  const [task] = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      dueDate: tasksTable.dueDate,
+      status: tasksTable.status,
+      memberId: tasksTable.memberId,
+      platformName: platformsTable.name,
+      reciterName: recitersTable.name,
+    })
+    .from(tasksTable)
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(eq(tasksTable.id, taskId))
+    .limit(1);
+  return task ?? null;
+}
+
+async function notifyDependentTasksReady(prerequisiteTaskId: number) {
+  const dependencies = await db
+    .select({
+      id: taskDependenciesTable.id,
+      dependentTaskId: taskDependenciesTable.dependentTaskId,
+    })
+    .from(taskDependenciesTable)
+    .where(eq(taskDependenciesTable.prerequisiteTaskId, prerequisiteTaskId));
+  if (dependencies.length === 0) return;
+
+  const prerequisite = await getTaskTelegramDetails(prerequisiteTaskId);
+  if (!prerequisite) return;
+
+  for (const dependency of dependencies) {
+    const dependent = await getTaskTelegramDetails(dependency.dependentTaskId);
+    if (!dependent || dependent.status === "completed") continue;
+
+    const assignedRows = await db
+      .select({ memberId: taskMembersTable.memberId })
+      .from(taskMembersTable)
+      .where(eq(taskMembersTable.taskId, dependency.dependentTaskId));
+    const memberIds = assignedRows.length > 0
+      ? assignedRows.map((row) => row.memberId)
+      : [dependent.memberId];
+
+    await notifyTelegramTaskDependencyReady({
+      dependencyId: dependency.id,
+      memberIds,
+      prerequisite,
+      dependent,
+    }).catch(() => {});
+  }
+}
+
 // Helper: build full task response
 async function buildTaskResponse(taskId: number) {
   const [fullTask] = await db
@@ -549,7 +695,14 @@ async function buildTaskResponse(taskId: number) {
   }
 
   const proofsMap = await fetchTaskProofsMap([taskId]);
-  return { ...fullTask, members: membersMap.get(taskId) ?? [fullTask.member], reciter, proofs: proofsMap.get(taskId) ?? [] };
+  const dependenciesMap = await fetchTaskDependenciesMap([taskId]);
+  return {
+    ...fullTask,
+    members: membersMap.get(taskId) ?? [fullTask.member],
+    reciter,
+    proofs: proofsMap.get(taskId) ?? [],
+    dependsOnTaskId: dependenciesMap.get(taskId) ?? null,
+  };
 }
 
 router.get("/tasks", async (req, res) => {
@@ -627,6 +780,7 @@ router.get("/tasks", async (req, res) => {
   const taskIds = tasks.map((t) => t.id);
   const membersMap = await fetchTaskMembersMap(taskIds);
   const proofsMap = await fetchTaskProofsMap(taskIds);
+  const dependenciesMap = await fetchTaskDependenciesMap(taskIds);
 
   // Fetch reciters for tasks
   const reciterIds = [...new Set(
@@ -656,6 +810,7 @@ router.get("/tasks", async (req, res) => {
       ? recitersMap.get(taskReciterMap.get(t.id)!) ?? null
       : null,
     proofs: proofsMap.get(t.id) ?? [],
+    dependsOnTaskId: dependenciesMap.get(t.id) ?? null,
   }));
 
   res.json(result);
@@ -668,6 +823,43 @@ router.post("/tasks", async (req, res) => {
     return;
   }
   const body = parsedBody.data;
+  const currentUser = (req as any).currentUser;
+  const isAdmin = currentUser?.role === "admin";
+  const isMemberSelfTask = !isAdmin;
+
+  if (isMemberSelfTask) {
+    if (!currentUser?.memberId) {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+
+    const requestedMemberIds = Array.isArray((req.body as any).memberIds)
+      ? (req.body as any).memberIds.map((id: unknown) => Number(id))
+      : [];
+    if (requestedMemberIds.some((memberId: number) => memberId !== currentUser.memberId)) {
+      res.status(403).json({ error: "Members can only create tasks for themselves" });
+      return;
+    }
+
+    const rawSeriesType = (req.body as any).seriesType;
+    const rawRecurrence = (req.body as any).recurrence ?? (req.body as any).recurrenceType;
+    if (
+      (rawSeriesType && rawSeriesType !== "temporary") ||
+      (rawRecurrence && rawRecurrence !== "none") ||
+      (req.body as any).endDate ||
+      (req.body as any).weeklyQuotaRequired ||
+      (req.body as any).recurrenceDays ||
+      (req.body as any).dependsOnTaskId
+    ) {
+      res.status(403).json({ error: "Members can only create one-off self tasks" });
+      return;
+    }
+
+    body.memberIds = [currentUser.memberId];
+    body.status = "pending";
+    body.recurrence = "none";
+  }
+
   let validatedMemberIds: number[];
   try {
     validatedMemberIds = await validateMemberIds(body.memberIds);
@@ -676,7 +868,6 @@ router.post("/tasks", async (req, res) => {
     return;
   }
 
-  const currentUser = (req as any).currentUser;
   if (!canCreateTask(currentUser, validatedMemberIds)) {
     res.status(403).json({ error: "Forbidden" });
     return;
@@ -684,6 +875,22 @@ router.post("/tasks", async (req, res) => {
 
   body.memberIds = validatedMemberIds;
   const primaryMemberId = body.memberIds[0];
+  const taskSource = isMemberSelfTask ? "member_created" : "admin_created";
+  let dependsOnTaskId: number | null | undefined;
+  try {
+    dependsOnTaskId = isAdmin ? parseOptionalTaskId((req.body as any).dependsOnTaskId) : undefined;
+  } catch {
+    res.status(400).json({ error: "Invalid task dependency" });
+    return;
+  }
+  if (dependsOnTaskId !== undefined && dependsOnTaskId !== null) {
+    try {
+      await assertPrerequisiteTaskExists(dependsOnTaskId);
+    } catch {
+      res.status(400).json({ error: "Invalid task dependency" });
+      return;
+    }
+  }
   let seriesType: SeriesType;
   let seriesRecurrenceType: SeriesRecurrenceType;
   try {
@@ -763,6 +970,12 @@ router.post("/tasks", async (req, res) => {
     });
 
     const firstTaskId = generatedIds[0] ?? null;
+    try {
+      await syncDependenciesForTasks(generatedIds, dependsOnTaskId, currentUser?.id ?? null);
+    } catch {
+      res.status(400).json({ error: "Invalid task dependency" });
+      return;
+    }
     await logActivity(req, "task_series_created", "task_series", series.id, body.title, {
       generatedTasks: generatedIds.length,
       recurrenceDays: weeklyRecurrenceDays,
@@ -801,9 +1014,11 @@ router.post("/tasks", async (req, res) => {
     }).returning();
 
     let firstTaskId: number | null = null;
+    const createdTaskIds: number[] = [];
     for (const date of dates) {
       const [t] = await db.insert(tasksTable).values({
         seriesId: series.id,
+        source: taskSource,
         title: body.title,
         description: body.description,
         platformId: body.platformId,
@@ -825,6 +1040,14 @@ router.post("/tasks", async (req, res) => {
       }).returning();
       await syncTaskMembers(t.id, body.memberIds);
       if (firstTaskId === null) firstTaskId = t.id;
+      createdTaskIds.push(t.id);
+    }
+
+    try {
+      await syncDependenciesForTasks(createdTaskIds, dependsOnTaskId, currentUser?.id ?? null);
+    } catch {
+      res.status(400).json({ error: "Invalid task dependency" });
+      return;
     }
 
     await logActivity(req, "task_series_created", "task_series", series.id, body.title, {
@@ -840,6 +1063,7 @@ router.post("/tasks", async (req, res) => {
 
   // Single task (no range expansion)
   const [task] = await db.insert(tasksTable).values({
+    source: taskSource,
     title: body.title,
     description: body.description,
     platformId: body.platformId,
@@ -861,6 +1085,12 @@ router.post("/tasks", async (req, res) => {
   }).returning();
 
   await syncTaskMembers(task.id, body.memberIds);
+  try {
+    await syncDependenciesForTasks([task.id], dependsOnTaskId, currentUser?.id ?? null);
+  } catch {
+    res.status(400).json({ error: "Invalid task dependency" });
+    return;
+  }
   await logActivity(req, "task_created", "task", task.id, task.title);
   await notifyTaskAssigned(task.id, task.title, body.memberIds).catch(() => {});
 
@@ -1049,6 +1279,28 @@ router.put("/tasks/:id", async (req, res) => {
     return;
   }
 
+  let dependsOnTaskId: number | null | undefined;
+  if ("dependsOnTaskId" in (req.body as any)) {
+    if (currentUser?.role !== "admin") {
+      res.status(403).json({ error: "Forbidden" });
+      return;
+    }
+    try {
+      dependsOnTaskId = parseOptionalTaskId((req.body as any).dependsOnTaskId);
+    } catch {
+      res.status(400).json({ error: "Invalid task dependency" });
+      return;
+    }
+    if (dependsOnTaskId !== null) {
+      try {
+        await assertDependencyAllowed(id, dependsOnTaskId);
+      } catch {
+        res.status(400).json({ error: "Invalid task dependency" });
+        return;
+      }
+    }
+  }
+
   if (body.memberIds !== undefined) {
     let validatedMemberIds: number[];
     try {
@@ -1208,6 +1460,13 @@ router.put("/tasks/:id", async (req, res) => {
     });
   }
 
+  try {
+    await syncDependenciesForTasks(updatedTaskIds, dependsOnTaskId, currentUser?.id ?? null);
+  } catch {
+    res.status(400).json({ error: "Invalid task dependency" });
+    return;
+  }
+
   // Log activity
   await logActivity(req, "task_updated", "task", id, currentTask.title, {
     updateScope,
@@ -1232,6 +1491,7 @@ router.put("/tasks/:id", async (req, res) => {
       submissionUrl: (updateData.submissionUrl as string | null | undefined) ?? currentTask.submissionUrl ?? null,
       completedAt,
     }).catch(() => {});
+    await notifyDependentTasksReady(id).catch(() => {});
   }
 
   // Notify assigned members on task update (if not completing)
@@ -1344,6 +1604,7 @@ router.post("/tasks/:id/proofs", async (req, res) => {
       submissionUrl: task.submissionUrl ?? url,
       completedAt,
     }).catch(() => {});
+    await notifyDependentTasksReady(id).catch(() => {});
   }
 
   await logActivity(req, "task_proof_created", "task", id, task.title, { url });

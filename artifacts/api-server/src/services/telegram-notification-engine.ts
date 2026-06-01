@@ -31,6 +31,7 @@ type NotificationType =
   | "telegram_daily_public_summary"
   | "telegram_daily_public_summary_manual"
   | "telegram_task_assigned"
+  | "telegram_task_dependency_ready"
   | "telegram_weekly_quota_reminder"
   | "telegram_password_reset"
   | "telegram_test";
@@ -539,7 +540,7 @@ function platformEmoji(platformName: string | null | undefined) {
   return "📌";
 }
 
-function taskDisplayParts(task: Pick<TaskRow, "title" | "platformName" | "reciterName">) {
+function taskDisplayParts(task: { title: string; platformName?: string | null; reciterName?: string | null }) {
   const platformName = task.platformName || "";
   const reciterName = task.reciterName || "";
   const platformNorm = normalizeText(platformName);
@@ -576,7 +577,7 @@ function taskLine(task: TaskRow) {
   return `• ${display.emoji} ${escapeHtml(display.title)}${platform}`;
 }
 
-function taskFieldLine(task: Pick<TaskRow, "title" | "platformName" | "reciterName">) {
+function taskFieldLine(task: { title: string; platformName?: string | null; reciterName?: string | null }) {
   const display = taskDisplayParts(task);
   const platform = display.platformName ? ` (${escapeHtml(display.platformName)})` : "";
   return `${display.emoji} ${escapeHtml(display.title)}${platform}`;
@@ -1045,6 +1046,47 @@ export async function notifyTelegramTaskAssigned(task: {
       recipientUserId: recipient.userId,
       recipientMemberId: recipient.memberId,
       taskId: task.id,
+    });
+    if (result.sent) sent += 1;
+  }
+  return { sent };
+}
+
+export async function notifyTelegramTaskDependencyReady(input: {
+  dependencyId: number;
+  memberIds: number[];
+  prerequisite: Pick<TaskRow, "id" | "title" | "dueDate" | "platformName" | "reciterName">;
+  dependent: Pick<TaskRow, "id" | "title" | "dueDate" | "platformName" | "reciterName">;
+}) {
+  const settings = await getTelegramSettings();
+  if (!settings.enabled) return { sent: 0 };
+
+  const recipients = await getMemberRecipients(input.memberIds);
+  if (recipients.length === 0) return { sent: 0 };
+
+  let sent = 0;
+  for (const recipient of recipients) {
+    if (!recipient.memberId) continue;
+    const text = [
+      "✅ <b>اكتملت المهمة السابقة</b>",
+      "",
+      "تم إكمال:",
+      taskFieldLine(input.prerequisite),
+      "",
+      "يمكنك الآن تنفيذ مهمتك:",
+      taskFieldLine(input.dependent),
+      `📅 التاريخ: ${escapeHtml(formatRiyadhDate(input.dependent.dueDate ?? null))}`,
+      `فتح المهمة: /tasks/${input.dependent.id}`,
+    ].join("\n");
+
+    const result = await sendLoggedTelegram({
+      type: "telegram_task_dependency_ready",
+      dedupeKey: `telegram:dependency_ready:${input.dependencyId}:member:${recipient.memberId}`,
+      chatId: recipient.chatId,
+      text,
+      recipientUserId: recipient.userId,
+      recipientMemberId: recipient.memberId,
+      taskId: input.dependent.id,
     });
     if (result.sent) sent += 1;
   }

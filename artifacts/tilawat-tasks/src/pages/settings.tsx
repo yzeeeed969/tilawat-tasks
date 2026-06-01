@@ -1720,11 +1720,31 @@ export default function Settings() {
         <p className="text-muted-foreground mt-2 text-lg">إدارة الفريق والمنصات والقراء والصلاحيات</p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {isAdmin && <PublicStatsSettingsSection />}
-        {isAdmin && <TelegramSettingsSection />}
-        {canManageAccounts && <UserManagementSection />}
-        {canManageReciters && <RecitersSection />}
-        {canManagePlatforms && <PlatformsSection />}
+        {isAdmin && (
+          <div id="public-stats" className="scroll-mt-24">
+            <PublicStatsSettingsSection />
+          </div>
+        )}
+        {isAdmin && (
+          <div id="telegram" className="scroll-mt-24">
+            <TelegramSettingsSection />
+          </div>
+        )}
+        {canManageAccounts && (
+          <div id="general" className="scroll-mt-24">
+            <UserManagementSection />
+          </div>
+        )}
+        {canManageReciters && (
+          <div id="reciters" className="scroll-mt-24">
+            <RecitersSection />
+          </div>
+        )}
+        {canManagePlatforms && (
+          <div id="platforms" className="scroll-mt-24">
+            <PlatformsSection />
+          </div>
+        )}
       </div>
     </div>
   );

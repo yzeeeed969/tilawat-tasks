@@ -125,6 +125,8 @@ export const TaskRecurrence = {
 export interface Task {
   id: number;
   seriesId?: number | null;
+  source?: "admin_created" | "member_created";
+  dependsOnTaskId?: number | null;
   title: string;
   description?: string;
   platformId: number;
@@ -186,6 +188,8 @@ export const TaskWithDetailsRecurrence = {
 export interface TaskWithDetails {
   id: number;
   seriesId?: number | null;
+  source?: "admin_created" | "member_created";
+  dependsOnTaskId?: number | null;
   title: string;
   description?: string;
   platform: Platform;
@@ -277,6 +281,8 @@ export interface CreateTaskBody {
   recurrenceDays?: string | null;
   weeklyQuotaRequired?: number | null;
   pageId?: number | null;
+  dependsOnTaskId?: number | null;
+  source?: "admin_created" | "member_created";
 }
 
 export type UpdateTaskBodyStatus =
@@ -340,6 +346,7 @@ export interface UpdateTaskBody {
   weeklyQuotaRequired?: number | null;
   submissionUrl?: string | null;
   pageId?: number | null;
+  dependsOnTaskId?: number | null;
   updateScope?: UpdateTaskBodyUpdateScope;
 }
 
