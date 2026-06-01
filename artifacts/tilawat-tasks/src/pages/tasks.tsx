@@ -132,6 +132,51 @@ function isPlaceholderApplicationReciter(name?: string | null) {
   return Boolean(name && /تطبيق/.test(name));
 }
 
+function toPositiveNumber(value: unknown): number | null {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+function toDateInputValue(value: unknown): string {
+  if (!value) return "";
+  const date = new Date(value as any);
+  return Number.isNaN(date.getTime()) ? "" : format(date, "yyyy-MM-dd");
+}
+
+function mergeById<T extends { id: number }>(items: Array<T | null | undefined>): T[] {
+  const map = new Map<number, T>();
+  for (const item of items) {
+    if (item && Number.isFinite(item.id) && item.id > 0) map.set(item.id, item);
+  }
+  return [...map.values()];
+}
+
+function taskAssignedMembers(task: TaskWithDetails | null | undefined) {
+  const fromMembers = Array.isArray((task as any)?.members) ? (task as any).members : [];
+  const fromPrimary = (task as any)?.member ? [(task as any).member] : [];
+  return mergeById<{ id: number; name: string; role: string }>([...fromMembers, ...fromPrimary]);
+}
+
+function taskAssignedMemberIds(task: TaskWithDetails | null | undefined) {
+  return taskAssignedMembers(task).map((member) => member.id);
+}
+
+function taskPlatformId(task: TaskWithDetails | null | undefined) {
+  return toPositiveNumber((task as any)?.platform?.id) ?? toPositiveNumber((task as any)?.platformId);
+}
+
+function taskReciterId(task: TaskWithDetails | null | undefined) {
+  return toPositiveNumber((task as any)?.reciter?.id) ?? toPositiveNumber((task as any)?.reciterId);
+}
+
+function taskPageId(task: TaskWithDetails | null | undefined) {
+  return toPositiveNumber((task as any)?.pageId);
+}
+
+function extractAppPrayerFromTitle(title?: string | null) {
+  return APP_PRAYER_OPTIONS.find((prayer) => Boolean(title?.includes(prayer))) ?? null;
+}
+
 async function ensureApplicationReciterPage(platformId: number, reciterId: number, memberIds: number[]) {
   const pagesRes = await fetch(`/api/platforms/${platformId}/pages`, { credentials: "include" });
   if (!pagesRes.ok) throw new Error("Failed to load platform pages");
@@ -513,6 +558,7 @@ function TaskFormFields({
   showStatus,
   allTasks,
   excludeTaskId,
+  currentTask,
   isMemberSelfTask = false,
   currentMemberName,
   showDependency = false,
@@ -523,6 +569,7 @@ function TaskFormFields({
   showStatus?: boolean;
   allTasks?: TaskWithDetails[];
   excludeTaskId?: number;
+  currentTask?: TaskWithDetails | null;
   isMemberSelfTask?: boolean;
   currentMemberName?: string | null;
   showDependency?: boolean;
@@ -533,18 +580,35 @@ function TaskFormFields({
   const pageId = watch("pageId");
   const memberIds = watch("memberIds") ?? [];
   const appPrayer = watch("appPrayer");
+  const dependsOnTaskId = watch("dependsOnTaskId");
   const seriesType = watch("seriesType") ?? "temporary";
   const recurrence = watch("recurrence") ?? "none";
   const recurrenceDays = watch("recurrenceDays") ?? "";
   const weeklyQuotaRequired = watch("weeklyQuotaRequired");
-  const selectedPlatform = platforms?.find((p) => p.id === platformId);
+  const platformOptions = useMemo(() => {
+    const currentPlatform = (currentTask as any)?.platform;
+    return mergeById<{ id: number; name: string }>([
+      ...(platforms ?? []),
+      currentPlatform?.id ? { id: currentPlatform.id, name: currentPlatform.name ?? `المنصة الحالية #${currentPlatform.id}` } : null,
+      platformId && !(platforms ?? []).some((p) => p.id === platformId)
+        ? { id: platformId, name: `المنصة الحالية #${platformId}` }
+        : null,
+    ]);
+  }, [platforms, currentTask, platformId]);
+  const selectedPlatform = platformOptions.find((p) => p.id === platformId);
   const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
   const applicationReciters = useMemo(
-    () => reciters?.filter((r) => !isPlaceholderApplicationReciter(r.name)) ?? [],
-    [reciters]
+    () => mergeById<Reciter>([
+      ...(reciters?.filter((r) => !isPlaceholderApplicationReciter(r.name)) ?? []),
+      (() => {
+        const currentReciter = (currentTask as any)?.reciter as Reciter | null | undefined;
+        return currentReciter && !isPlaceholderApplicationReciter(currentReciter.name) ? currentReciter : null;
+      })(),
+    ]),
+    [reciters, currentTask]
   );
   const dependencyOptions = useMemo(() => {
-    return (allTasks ?? [])
+    const options = (allTasks ?? [])
       .filter((task) => task.id !== excludeTaskId && !(task as any).deletedAt)
       .sort((a, b) => {
         const ad = new Date((b.dueDate ?? b.createdAt) as any).getTime();
@@ -552,7 +616,18 @@ function TaskFormFields({
         return ad - bd;
       })
       .slice(0, 300);
-  }, [allTasks, excludeTaskId]);
+    if (dependsOnTaskId && !options.some((task) => task.id === dependsOnTaskId)) {
+      return [
+        {
+          id: dependsOnTaskId,
+          title: `المهمة المرتبطة الحالية #${dependsOnTaskId}`,
+          createdAt: new Date(),
+        } as unknown as TaskWithDetails,
+        ...options,
+      ];
+    }
+    return options;
+  }, [allTasks, excludeTaskId, dependsOnTaskId]);
   const previousPlatformIdRef = useRef<number | undefined>(undefined);
 
   const { data: pages } = useListPlatformPages(platformId ?? 0, {
@@ -563,6 +638,26 @@ function TaskFormFields({
     () => pages?.find((pg) => pg.reciterId === reciterId),
     [pages, reciterId]
   );
+  const pageOptions = useMemo(() => {
+    const currentPageId = taskPageId(currentTask);
+    return mergeById<{ id: number; name: string; reciterId?: number | null }>([
+      ...(pages ?? []),
+      currentPageId
+        ? {
+            id: currentPageId,
+            name: `الصفحة الحالية #${currentPageId}`,
+            reciterId: taskReciterId(currentTask),
+          }
+        : null,
+      pageId && !(pages ?? []).some((pg) => pg.id === pageId)
+        ? {
+            id: pageId,
+            name: `الصفحة الحالية #${pageId}`,
+            reciterId: taskReciterId(currentTask),
+          }
+        : null,
+    ]);
+  }, [pages, currentTask, pageId]);
 
   const { data: pageMembers } = useQuery<number[]>({
     queryKey: ["page-members", pageId],
@@ -575,11 +670,20 @@ function TaskFormFields({
   });
 
   const filteredMembers = useMemo(() => {
-    if (isApplicationPlatform) return members;
-    if (!pageId || pageMembers === undefined) return members;
-    if (pageMembers.length === 0) return [];
-    return members?.filter((m) => pageMembers.includes(m.id));
-  }, [isApplicationPlatform, members, pageId, pageMembers]);
+    const baseMembers = (() => {
+      if (isApplicationPlatform) return members ?? [];
+      if (!pageId || pageMembers === undefined) return members ?? [];
+      if (pageMembers.length === 0) return [];
+      return (members ?? []).filter((m) => pageMembers.includes(m.id));
+    })();
+    const currentAssigned = taskAssignedMembers(currentTask).filter((member) => memberIds.includes(member.id));
+    const selectedFromAllMembers = (members ?? []).filter((member) => memberIds.includes(member.id));
+    return mergeById<{ id: number; name: string; role: string }>([
+      ...baseMembers,
+      ...currentAssigned,
+      ...selectedFromAllMembers,
+    ]);
+  }, [isApplicationPlatform, members, pageId, pageMembers, currentTask, memberIds]);
 
   useEffect(() => {
     if (previousPlatformIdRef.current === undefined) {
@@ -621,18 +725,26 @@ function TaskFormFields({
 
   // Auto-set reciterId from page when page changes
   useEffect(() => {
-    if (pageId && pages) {
-      const page = pages.find((pg) => pg.id === pageId);
+    if (pageId && pageOptions) {
+      const page = pageOptions.find((pg) => pg.id === pageId);
       if (page?.reciterId) {
         setValue("reciterId", page.reciterId);
       }
     }
-  }, [pageId, pages, setValue]);
+  }, [pageId, pageOptions, setValue]);
 
   useEffect(() => {
-    if (!isApplicationPlatform || !reciterId) return;
-    setValue("pageId", selectedApplicationPage?.id ?? null);
-  }, [isApplicationPlatform, reciterId, selectedApplicationPage?.id, setValue]);
+    if (!isApplicationPlatform || !reciterId || pages === undefined) return;
+    const currentPageId = taskPageId(currentTask);
+    const currentReciterId = taskReciterId(currentTask);
+    if (selectedApplicationPage?.id) {
+      setValue("pageId", selectedApplicationPage.id);
+    } else if (currentPageId && currentReciterId === reciterId) {
+      setValue("pageId", currentPageId);
+    } else {
+      setValue("pageId", null);
+    }
+  }, [isApplicationPlatform, reciterId, selectedApplicationPage?.id, pages, currentTask, setValue]);
 
   useEffect(() => {
     if (isMemberSelfTask) return;
@@ -641,9 +753,12 @@ function TaskFormFields({
   }, [isMemberSelfTask, isApplicationPlatform, pageId, pageMembers, memberIds.length, setValue]);
 
   useEffect(() => {
-    const platform = platforms?.find((p) => p.id === platformId);
-    const reciter = reciters?.find((r) => r.id === reciterId);
-    const page = pages?.find((pg) => pg.id === pageId);
+    const platform = platformOptions.find((p) => p.id === platformId);
+    const reciter =
+      reciters?.find((r) => r.id === reciterId) ??
+      applicationReciters.find((r) => r.id === reciterId) ??
+      ((currentTask as any)?.reciter?.id === reciterId ? ((currentTask as any).reciter as Reciter) : undefined);
+    const page = pageOptions.find((pg) => pg.id === pageId);
     if (isApplicationPlatform) {
       const parts = [appPrayer, reciter?.name, platform?.name].filter(Boolean) as string[];
       setValue("title", parts.join(" — ") || "مهمة جديدة");
@@ -654,7 +769,7 @@ function TaskFormFields({
     if (location) parts.push(location);
     if (reciter?.name) parts.push(reciter.name);
     setValue("title", parts.join(" — ") || "مهمة جديدة");
-  }, [platformId, reciterId, pageId, appPrayer, isApplicationPlatform, platforms, reciters, pages, setValue]);
+  }, [platformId, reciterId, pageId, appPrayer, isApplicationPlatform, platformOptions, reciters, applicationReciters, currentTask, pageOptions, setValue]);
 
   return (
     <>
@@ -670,7 +785,7 @@ function TaskFormFields({
                 </SelectTrigger>
               </FormControl>
               <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                {platforms?.map((p) => (
+                {platformOptions.map((p) => (
                   <SelectItem key={p.id} value={p.id.toString()}>
                     <div className="flex items-center gap-2">
                       <PlatformIcon name={p.name} />
@@ -753,7 +868,7 @@ function TaskFormFields({
             )}
           />
         </>
-      ) : pages && pages.length > 0 ? (
+      ) : pageOptions.length > 0 ? (
         <FormField
           name="pageId"
           render={({ field }) => (
@@ -775,7 +890,7 @@ function TaskFormFields({
                   <SelectItem value="none">
                     <span className="text-muted-foreground">بدون تحديد صفحة</span>
                   </SelectItem>
-                  {pages.map((pg) => (
+                  {pageOptions.map((pg) => (
                     <SelectItem key={pg.id} value={pg.id.toString()}>
                       {pg.name}
                     </SelectItem>
@@ -790,8 +905,10 @@ function TaskFormFields({
 
       {/* Display-only reciter from selected page */}
       {!isApplicationPlatform && (() => {
-        const page = pages?.find((pg) => pg.id === pageId);
-        const displayReciter = reciters?.find((r) => r.id === page?.reciterId);
+	        const page = pageOptions.find((pg) => pg.id === pageId);
+        const displayReciter =
+          reciters?.find((r) => r.id === page?.reciterId) ??
+          ((currentTask as any)?.reciter?.id === page?.reciterId ? ((currentTask as any).reciter as Reciter) : undefined);
         return displayReciter ? (
           <div className="flex items-center gap-2 p-2.5 rounded-md bg-sidebar-primary/5 border border-sidebar-primary/20 text-sm">
             <BookOpen className="h-4 w-4 text-sidebar-primary shrink-0" />
@@ -1777,26 +1894,35 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const openEditDialog = (task: TaskWithDetails) => {
     setEditingTask(task);
     setEditTaskScope((task as any).seriesId ? "series" : "single");
-    const allMembers = task.members && task.members.length > 0 ? task.members : [task.member];
+    const platformId = taskPlatformId(task);
+    const memberIds = taskAssignedMemberIds(task);
     const reciter = task.reciter as Reciter | null | undefined;
+    const reciterId = taskReciterId(task);
+    const pageId = taskPageId(task);
     const taskRecurrence = (task.recurrence ?? "none") as TaskFormValues["recurrence"];
     const weeklyQuotaRequired = Number((task as any).weeklyQuotaRequired ?? 0);
+    const startDate =
+      (task as any).weeklyQuotaPeriodStart ??
+      (task as any).startDate ??
+      task.dueDate ??
+      (task as any).createdAt ??
+      new Date();
+    const dueDate = task.dueDate ?? startDate;
     editForm.reset({
-      title: task.title,
+      title: task.title || "مهمة جديدة",
       description: task.description ?? "",
-      platformId: task.platform.id,
-      pageId: task.pageId ?? null,
-      memberIds: allMembers.map((m) => m.id),
-      reciterId: reciter?.id ?? null,
+      platformId: platformId ?? undefined,
+      pageId,
+      memberIds,
+      reciterId: reciter?.id ?? reciterId,
+      appPrayer: extractAppPrayerFromTitle(task.title),
       status: task.status as TaskFormValues["status"],
       priority: (task.priority ?? "normal") as TaskFormValues["priority"],
       progress: task.progress ?? 0,
       seriesType: weeklyQuotaRequired > 0 ? "weekly_quota" : taskRecurrence === "weekly" || taskRecurrence === "monthly" ? "operational" : "temporary",
-      startDate: (task as any).weeklyQuotaPeriodStart
-        ? format(new Date((task as any).weeklyQuotaPeriodStart), "yyyy-MM-dd")
-        : (task as any).startDate ? format(new Date((task as any).startDate), "yyyy-MM-dd") : "",
-      dueDate: task.dueDate ? format(new Date(task.dueDate), "yyyy-MM-dd") : "",
-      endDate: (task as any).endDate ? format(new Date((task as any).endDate), "yyyy-MM-dd") : "",
+      startDate: toDateInputValue(startDate),
+      dueDate: toDateInputValue(dueDate),
+      endDate: toDateInputValue((task as any).endDate),
       recurrence: taskRecurrence,
       recurrenceIntervalDays: (task as any).recurrenceIntervalDays ?? null,
       recurrenceDurationDays: (task as any).recurrenceDurationDays ?? null,
@@ -1949,10 +2075,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     const seriesType = data.seriesType ?? "temporary";
     const isWeeklyQuota = seriesType === "weekly_quota";
     const apiSeriesType = isWeeklyQuota ? "operational" : seriesType;
-    const recurrence = isWeeklyQuota ? "none" : apiSeriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
+    const recurrence = isWeeklyQuota ? "weekly" : apiSeriesType === "operational" ? (data.recurrence === "monthly" ? "monthly" : "weekly") : "none";
     const recurrenceDays = apiSeriesType === "operational" && recurrence === "weekly" && !isWeeklyQuota
       ? data.recurrenceDays ?? null
       : null;
+    const memberIdsForUpdate = data.memberIds?.length ? data.memberIds : taskAssignedMemberIds(editingTask);
     updateTask.mutate(
       {
         id: editingTask.id,
@@ -1960,7 +2087,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           title: data.title || "مهمة جديدة",
           description: data.description,
           platformId: data.platformId,
-          memberIds: data.memberIds,
+          memberIds: memberIdsForUpdate,
           reciterId: data.reciterId ?? null,
           status: data.status as TaskStatus | undefined,
           priority: data.priority ?? "normal",
@@ -2559,6 +2686,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   reciters={reciters}
                   showStatus
                   allTasks={tasks ?? []}
+                  currentTask={editingTask}
                   showDependency={isAdmin}
                   excludeTaskId={editingTask?.id}
                 />
