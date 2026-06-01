@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { Component, useState, useEffect, useMemo, useRef, type ErrorInfo, type ReactNode } from "react";
 import {
   useListTasks,
   getListTasksQueryKey,
@@ -137,10 +137,35 @@ function toPositiveNumber(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function safeSelectNumberValue(value: unknown, fallback = "none") {
+  const n = toPositiveNumber(value);
+  return n ? String(n) : fallback;
+}
+
+function parseSelectNumberValue(value: string) {
+  return value === "none" ? null : toPositiveNumber(value);
+}
+
 function toDateInputValue(value: unknown): string {
   if (!value) return "";
   const date = new Date(value as any);
   return Number.isNaN(date.getTime()) ? "" : format(date, "yyyy-MM-dd");
+}
+
+function normalizeTaskStatus(value: unknown): "pending" | "completed" {
+  return value === "completed" ? "completed" : "pending";
+}
+
+function normalizeTaskPriority(value: unknown): "urgent" | "normal" | "low" {
+  return value === "urgent" || value === "low" || value === "normal" ? value : "normal";
+}
+
+function normalizeTaskRecurrence(value: unknown): "none" | "daily" | "weekly" | "monthly" | "custom_days" {
+  return value === "daily" || value === "weekly" || value === "monthly" || value === "custom_days" ? value : "none";
+}
+
+function normalizeTaskSeriesType(value: unknown): "temporary" | "operational" | "weekly_quota" {
+  return value === "operational" || value === "weekly_quota" || value === "temporary" ? value : "temporary";
 }
 
 function mergeById<T extends { id: number }>(items: Array<T | null | undefined>): T[] {
@@ -175,6 +200,33 @@ function taskPageId(task: TaskWithDetails | null | undefined) {
 
 function extractAppPrayerFromTitle(title?: string | null) {
   return APP_PRAYER_OPTIONS.find((prayer) => Boolean(title?.includes(prayer))) ?? null;
+}
+
+function taskDialogDiagnostic(task: TaskWithDetails | null | undefined) {
+  if (!task) return null;
+  return {
+    id: (task as any).id,
+    title: (task as any).title,
+    status: (task as any).status,
+    recurrence: (task as any).recurrence,
+    seriesId: (task as any).seriesId,
+    source: (task as any).source,
+    platformId: taskPlatformId(task),
+    platformName: (task as any).platform?.name,
+    pageId: taskPageId(task),
+    reciterId: taskReciterId(task),
+    reciterName: (task as any).reciter?.name,
+    assignedMemberIds: taskAssignedMemberIds(task),
+    dueDate: (task as any).dueDate,
+    startDate: (task as any).startDate,
+    completedAt: (task as any).completedAt,
+    hasSubmissionUrl: Boolean((task as any).submissionUrl),
+    proofsCount: taskProofs(task).length,
+  };
+}
+
+function logTaskDialogOpen(dialogName: string, payload?: Record<string, unknown> | null) {
+  console.info("[tasks-dialog] open", { dialogName, ...(payload ?? {}) });
 }
 
 async function ensureApplicationReciterPage(platformId: number, reciterId: number, memberIds: number[]) {
@@ -283,6 +335,60 @@ type TaskProof = {
   note?: string | null;
   createdAt?: string | Date;
 };
+
+type TaskDialogErrorBoundaryProps = {
+  dialogName: string;
+  resetKey?: string | number | null;
+  onClose?: () => void;
+  children: ReactNode;
+};
+
+type TaskDialogErrorBoundaryState = {
+  error: Error | null;
+};
+
+class TaskDialogErrorBoundary extends Component<TaskDialogErrorBoundaryProps, TaskDialogErrorBoundaryState> {
+  state: TaskDialogErrorBoundaryState = { error: null };
+
+  static getDerivedStateFromError(error: Error): TaskDialogErrorBoundaryState {
+    return { error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("[tasks-dialog] render failed", {
+      dialogName: this.props.dialogName,
+      error,
+      errorInfo,
+    });
+  }
+
+  componentDidUpdate(previousProps: TaskDialogErrorBoundaryProps) {
+    if (previousProps.resetKey !== this.props.resetKey && this.state.error) {
+      this.setState({ error: null });
+    }
+  }
+
+  render() {
+    if (!this.state.error) return this.props.children;
+
+    return (
+      <div className="m-6 rounded-lg border border-red-200 bg-red-50 p-4 text-right" dir="rtl">
+        <p className="text-sm font-bold text-red-700">تعذر فتح هذه النافذة</p>
+        <p className="mt-1 text-sm leading-6 text-red-700/80">
+          حدث خطأ أثناء تجهيز بيانات النموذج. أغلق النافذة وحدّث الصفحة ثم حاول مرة أخرى.
+        </p>
+        <Button
+          type="button"
+          variant="outline"
+          className="mt-4 border-red-200 text-red-700 hover:bg-red-100"
+          onClick={this.props.onClose}
+        >
+          إغلاق النافذة
+        </Button>
+      </div>
+    );
+  }
+}
 
 const EDIT_SCOPE_MESSAGES: Record<EditTaskScope, string> = {
   single: "سيتم تعديل هذه المهمة فقط.",
@@ -778,13 +884,19 @@ function TaskFormFields({
         render={({ field }) => (
           <FormItem>
             <FormLabel>المنصة</FormLabel>
-            <Select onValueChange={(v) => field.onChange(parseInt(v))} value={field.value?.toString()}>
+            <Select
+              onValueChange={(v) => field.onChange(parseSelectNumberValue(v) ?? undefined)}
+              value={safeSelectNumberValue(field.value)}
+            >
               <FormControl>
                 <SelectTrigger>
                   <SelectValue placeholder="اختر المنصة" />
                 </SelectTrigger>
               </FormControl>
               <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                <SelectItem value="none" disabled>
+                  <span className="text-muted-foreground">اختر المنصة</span>
+                </SelectItem>
                 {platformOptions.map((p) => (
                   <SelectItem key={p.id} value={p.id.toString()}>
                     <div className="flex items-center gap-2">
@@ -811,8 +923,8 @@ function TaskFormFields({
                   القارئ داخل التطبيق
                 </FormLabel>
                 <Select
-                  onValueChange={(v) => field.onChange(v === "none" ? null : parseInt(v))}
-                  value={field.value != null ? field.value.toString() : "none"}
+                  onValueChange={(v) => field.onChange(parseSelectNumberValue(v))}
+                  value={safeSelectNumberValue(field.value)}
                 >
                   <FormControl>
                     <SelectTrigger>
@@ -878,8 +990,8 @@ function TaskFormFields({
                 الصفحة / القناة
               </FormLabel>
               <Select
-                onValueChange={(v) => field.onChange(v === "none" ? null : parseInt(v))}
-                value={field.value != null ? field.value.toString() : "none"}
+                onValueChange={(v) => field.onChange(parseSelectNumberValue(v))}
+                value={safeSelectNumberValue(field.value)}
               >
                 <FormControl>
                   <SelectTrigger>
@@ -975,8 +1087,8 @@ function TaskFormFields({
             <FormItem>
               <FormLabel>تعتمد على مهمة سابقة <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
               <Select
-                onValueChange={(value) => field.onChange(value === "none" ? null : Number(value))}
-                value={field.value ? String(field.value) : "none"}
+                onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
+                value={safeSelectNumberValue(field.value)}
               >
                 <FormControl>
                   <SelectTrigger>
@@ -1012,7 +1124,7 @@ function TaskFormFields({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>نوع المهمة</FormLabel>
-                <Select onValueChange={field.onChange} value={field.value ?? "temporary"}>
+                <Select onValueChange={field.onChange} value={normalizeTaskSeriesType(field.value)}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="اختر نوع المهمة" />
@@ -1228,7 +1340,7 @@ function TaskFormFields({
             render={({ field }) => (
               <FormItem>
                 <FormLabel>الحالة</FormLabel>
-                <Select onValueChange={field.onChange} value={field.value}>
+                <Select onValueChange={field.onChange} value={normalizeTaskStatus(field.value)}>
                   <FormControl>
                     <SelectTrigger>
                       <SelectValue placeholder="الحالة" />
@@ -1794,7 +1906,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
       setQuickReciterMembersLoading(true);
       try {
-        const pagesRes = await fetch(`/api/platforms/${quickReciterTask.platform.id}/pages`, { credentials: "include" });
+        const platformId = taskPlatformId(quickReciterTask);
+        if (!platformId) throw new Error("Missing platform id for quick reciter change");
+        const pagesRes = await fetch(`/api/platforms/${platformId}/pages`, { credentials: "include" });
         let linkedMemberIds: number[] = [];
         if (pagesRes.ok) {
           const pages = (await pagesRes.json()) as Array<{ id: number; reciterId?: number | null }>;
@@ -1892,49 +2006,64 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   }, [isAdmin, user?.memberId, createForm]);
 
   const openEditDialog = (task: TaskWithDetails) => {
-    setEditingTask(task);
-    setEditTaskScope((task as any).seriesId ? "series" : "single");
-    const platformId = taskPlatformId(task);
-    const memberIds = taskAssignedMemberIds(task);
-    const reciter = task.reciter as Reciter | null | undefined;
-    const reciterId = taskReciterId(task);
-    const pageId = taskPageId(task);
-    const taskRecurrence = (task.recurrence ?? "none") as TaskFormValues["recurrence"];
-    const weeklyQuotaRequired = Number((task as any).weeklyQuotaRequired ?? 0);
-    const startDate =
-      (task as any).weeklyQuotaPeriodStart ??
-      (task as any).startDate ??
-      task.dueDate ??
-      (task as any).createdAt ??
-      new Date();
-    const dueDate = task.dueDate ?? startDate;
-    editForm.reset({
-      title: task.title || "مهمة جديدة",
-      description: task.description ?? "",
-      platformId: platformId ?? undefined,
-      pageId,
-      memberIds,
-      reciterId: reciter?.id ?? reciterId,
-      appPrayer: extractAppPrayerFromTitle(task.title),
-      status: task.status as TaskFormValues["status"],
-      priority: (task.priority ?? "normal") as TaskFormValues["priority"],
-      progress: task.progress ?? 0,
-      seriesType: weeklyQuotaRequired > 0 ? "weekly_quota" : taskRecurrence === "weekly" || taskRecurrence === "monthly" ? "operational" : "temporary",
-      startDate: toDateInputValue(startDate),
-      dueDate: toDateInputValue(dueDate),
-      endDate: toDateInputValue((task as any).endDate),
-      recurrence: taskRecurrence,
-      recurrenceIntervalDays: (task as any).recurrenceIntervalDays ?? null,
-      recurrenceDurationDays: (task as any).recurrenceDurationDays ?? null,
-      recurrenceDays: (task as any).recurrenceDays ?? null,
-      weeklyQuotaRequired: weeklyQuotaRequired > 0 ? weeklyQuotaRequired : 3,
-      dependsOnTaskId: (task as any).dependsOnTaskId ?? null,
-    });
+    try {
+      logTaskDialogOpen("edit-task", taskDialogDiagnostic(task));
+      const platformId = taskPlatformId(task);
+      const memberIds = taskAssignedMemberIds(task);
+      const reciterId = taskReciterId(task);
+      const pageId = taskPageId(task);
+      const taskRecurrence = normalizeTaskRecurrence((task as any).recurrence);
+      const weeklyQuotaRequired = Number((task as any).weeklyQuotaRequired ?? 0);
+      const startDate =
+        (task as any).weeklyQuotaPeriodStart ??
+        (task as any).startDate ??
+        task.dueDate ??
+        (task as any).createdAt ??
+        new Date();
+      const dueDate = task.dueDate ?? startDate;
+      const defaultValues: TaskFormValues = {
+        title: task.title || "مهمة جديدة",
+        description: task.description ?? "",
+        platformId: platformId ?? (undefined as unknown as number),
+        pageId,
+        memberIds,
+        reciterId,
+        appPrayer: extractAppPrayerFromTitle(task.title),
+        status: normalizeTaskStatus((task as any).status),
+        priority: normalizeTaskPriority((task as any).priority),
+        progress: Number.isFinite(Number((task as any).progress)) ? Number((task as any).progress) : 0,
+        seriesType: weeklyQuotaRequired > 0 ? "weekly_quota" : taskRecurrence === "weekly" || taskRecurrence === "monthly" ? "operational" : "temporary",
+        startDate: toDateInputValue(startDate),
+        dueDate: toDateInputValue(dueDate),
+        endDate: toDateInputValue((task as any).endDate),
+        recurrence: taskRecurrence,
+        recurrenceIntervalDays: toPositiveNumber((task as any).recurrenceIntervalDays),
+        recurrenceDurationDays: toPositiveNumber((task as any).recurrenceDurationDays),
+        recurrenceDays: typeof (task as any).recurrenceDays === "string" ? (task as any).recurrenceDays : null,
+        weeklyQuotaRequired: weeklyQuotaRequired > 0 ? weeklyQuotaRequired : 3,
+        dependsOnTaskId: toPositiveNumber((task as any).dependsOnTaskId),
+      };
+      console.info("[tasks-dialog] edit defaults", defaultValues);
+      editForm.reset(defaultValues);
+      setEditTaskScope((task as any).seriesId ? "series" : "single");
+      setEditingTask(task);
+    } catch (error) {
+      console.error("[tasks-dialog] failed to prepare edit form", {
+        error,
+        task: taskDialogDiagnostic(task),
+      });
+      toast({
+        title: "تعذر فتح تعديل المهمة",
+        description: "حدث خطأ أثناء تجهيز بيانات المهمة. حدّث الصفحة ثم حاول مرة أخرى.",
+        variant: "destructive",
+      });
+    }
   };
 
   const openComments = (task: TaskWithDetails) => {
+    logTaskDialogOpen("comments", taskDialogDiagnostic(task));
     setCommentsTaskId(task.id);
-    setCommentsTaskTitle(task.title);
+    setCommentsTaskTitle(task.title || "مهمة");
   };
 
   const invalidateTasks = () => queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() });
@@ -2055,7 +2184,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       toast({ title: "تم إنشاء المهمة بنجاح" });
       setIsCreateOpen(false);
       createForm.reset(defaultFormValues);
-    } catch {
+    } catch (error) {
+      console.error("[tasks-dialog] create submit failed", { error, data });
       toast({ title: "حدث خطأ أثناء إنشاء المهمة", variant: "destructive" });
     } finally {
       setIsCreateSubmitting(false);
@@ -2150,7 +2280,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const handleDuplicate = (id: number) => {
     duplicateTask.mutate(
       { id },
-      { onSuccess: () => { invalidateTasks(); toast({ title: "تم نسخ المهمة بنجاح" }); } }
+      {
+        onSuccess: () => { invalidateTasks(); toast({ title: "تم نسخ المهمة بنجاح" }); },
+        onError: () => toast({ title: "تعذر نسخ المهمة", variant: "destructive" }),
+      }
     );
   };
 
@@ -2170,6 +2303,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const openUrlDialog = (task: TaskWithDetails) => {
+    logTaskDialogOpen("proof-url", taskDialogDiagnostic(task));
     const isQuota = isWeeklyQuotaTask(task);
     setUrlDialog({
       taskId: task.id,
@@ -2181,10 +2315,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const openProofsDialog = (task: TaskWithDetails) => {
+    logTaskDialogOpen("proofs-list", taskDialogDiagnostic(task));
     setProofsDialogTaskId(task.id);
   };
 
   const openProofEditDialog = (task: TaskWithDetails, proof: TaskProof) => {
+    logTaskDialogOpen("proof-edit", { ...taskDialogDiagnostic(task), proofId: proof.id });
     setProofsDialogTaskId(null);
     setUrlDialog({
       taskId: task.id,
@@ -2196,9 +2332,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const openQuickReciterDialog = (task: TaskWithDetails) => {
-    const taskMembers = task.members && task.members.length > 0 ? task.members : [task.member];
+    logTaskDialogOpen("quick-reciter", taskDialogDiagnostic(task));
+    const taskMembers = taskAssignedMembers(task);
+    const reciterId = taskReciterId(task);
     setQuickReciterTask(task);
-    setQuickReciterId(task.reciter?.id ? String(task.reciter.id) : "");
+    setQuickReciterId(reciterId ? String(reciterId) : "none");
     setQuickReciterMemberOptions(taskMembers);
     setQuickReciterMemberId(taskMembers[0] ? String(taskMembers[0].id) : "");
     setQuickReciterHasLinkedMembers(false);
@@ -2390,7 +2528,20 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
           {/* Create dialog */}
           {(isAdmin || user?.memberId) && (
-            <Dialog open={isCreateOpen} onOpenChange={setIsCreateOpen}>
+            <Dialog
+              open={isCreateOpen}
+              onOpenChange={(open) => {
+                if (open) {
+                  logTaskDialogOpen("create-task", {
+                    isAdmin,
+                    userId: user?.id,
+                    memberId: user?.memberId,
+                    defaultValues: createForm.getValues(),
+                  });
+                }
+                setIsCreateOpen(open);
+              }}
+            >
               <DialogTrigger asChild>
                 <Button className="bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold">
                   <Plus className="ml-2 h-4 w-4" />
@@ -2398,35 +2549,41 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 </Button>
               </DialogTrigger>
               <DialogContent className="sm:max-w-[480px] flex flex-col max-h-[90vh] p-0" dir="rtl">
-                <DialogHeader className="px-6 pt-6 pb-4 border-b border-border shrink-0">
-                  <DialogTitle className="text-xl font-bold">{isAdmin ? "إضافة مهمة جديدة" : "إضافة مهمة مقطوعة"}</DialogTitle>
-                </DialogHeader>
-                <div className="flex-1 overflow-y-auto px-6 py-4">
-                <Form {...createForm}>
-                  <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">
-                    <TaskFormFields
-                      platforms={platforms}
-                      members={members as { id: number; name: string; role: string }[]}
-                      reciters={reciters}
-                      allTasks={tasks ?? []}
-                      showDependency={isAdmin}
-                      isMemberSelfTask={!isAdmin}
-                      currentMemberName={currentMemberName}
-                    />
-                  </form>
-                </Form>
-                </div>
-                <div className="px-6 pb-6 pt-3 border-t border-border shrink-0">
-                  <Button
-                    type="button"
-                    onClick={createForm.handleSubmit(onCreateSubmit)}
-                    className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
-                    disabled={isCreateSubmitting || createTask.isPending}
-                  >
-                    {(isCreateSubmitting || createTask.isPending) && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
-                    حفظ المهمة
-                  </Button>
-                </div>
+                <TaskDialogErrorBoundary
+                  dialogName="إنشاء مهمة"
+                  resetKey={`${isCreateOpen}-${platforms?.length ?? 0}-${members?.length ?? 0}-${reciters?.length ?? 0}`}
+                  onClose={() => setIsCreateOpen(false)}
+                >
+                  <DialogHeader className="px-6 pt-6 pb-4 border-b border-border shrink-0">
+                    <DialogTitle className="text-xl font-bold">{isAdmin ? "إضافة مهمة جديدة" : "إضافة مهمة مقطوعة"}</DialogTitle>
+                  </DialogHeader>
+                  <div className="flex-1 overflow-y-auto px-6 py-4">
+                    <Form {...createForm}>
+                      <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">
+                        <TaskFormFields
+                          platforms={platforms}
+                          members={members as { id: number; name: string; role: string }[]}
+                          reciters={reciters}
+                          allTasks={tasks ?? []}
+                          showDependency={isAdmin}
+                          isMemberSelfTask={!isAdmin}
+                          currentMemberName={currentMemberName}
+                        />
+                      </form>
+                    </Form>
+                  </div>
+                  <div className="px-6 pb-6 pt-3 border-t border-border shrink-0">
+                    <Button
+                      type="button"
+                      onClick={createForm.handleSubmit(onCreateSubmit)}
+                      className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+                      disabled={isCreateSubmitting || createTask.isPending}
+                    >
+                      {(isCreateSubmitting || createTask.isPending) && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                      حفظ المهمة
+                    </Button>
+                  </div>
+                </TaskDialogErrorBoundary>
               </DialogContent>
             </Dialog>
           )}
@@ -2436,217 +2593,258 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       {/* Submission URL dialog — all roles */}
       <Dialog open={!!urlDialog} onOpenChange={(open) => { if (!open) { setUrlDialog(null); urlForm.reset({ url: "" }); } }}>
         <DialogContent className="sm:max-w-[440px]" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold flex items-center gap-2">
-              <Link2 className="h-5 w-5 text-sidebar-primary" />
-              {urlDialog?.mode === "proof-edit" ? "تعديل الشاهد" : "رابط الشاهد على العمل"}
-            </DialogTitle>
-          </DialogHeader>
-          <p className="text-sm text-muted-foreground">
-            {urlDialog?.mode === "proof-edit"
-              ? "عدّل رابط هذا الشاهد فقط. لن يتغير عدد الشواهد أو حالة المهمة."
-              : "أضف رابط المنشور أو المقطع كإثبات على إتمام المهمة — سيظهر للفريق كلّه."}
-          </p>
-          <form onSubmit={urlForm.handleSubmit(handleSubmissionUrl)} className="space-y-4 pt-2">
-            <div className="space-y-2">
-              <label className="text-sm font-medium">رابط المنشور</label>
-              <Input
-                {...urlForm.register("url")}
-                type="url"
-                placeholder="https://www.youtube.com/watch?v=..."
-                dir="ltr"
-                className="text-left"
-              />
-              {urlForm.formState.errors.url && (
-                <p className="text-xs text-red-500">{urlForm.formState.errors.url.message}</p>
-              )}
-            </div>
-            <div className="flex gap-2">
-              <Button
-                type="submit"
-                className="flex-1 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
-                disabled={updateTask.isPending || proofSaving}
-              >
-                {updateTask.isPending || proofSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
-                {urlDialog?.mode === "proof-edit" ? "حفظ التعديل" : "حفظ الرابط"}
-              </Button>
-              {urlDialog?.currentUrl && urlDialog?.mode === "task-url" && (
+          <TaskDialogErrorBoundary
+            dialogName="رابط الشاهد"
+            resetKey={`${urlDialog?.taskId ?? "closed"}-${urlDialog?.mode ?? ""}-${urlDialog?.proofId ?? ""}`}
+            onClose={() => {
+              setUrlDialog(null);
+              urlForm.reset({ url: "" });
+            }}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                <Link2 className="h-5 w-5 text-sidebar-primary" />
+                {urlDialog?.mode === "proof-edit" ? "تعديل الشاهد" : "رابط الشاهد على العمل"}
+              </DialogTitle>
+            </DialogHeader>
+            <p className="text-sm text-muted-foreground">
+              {urlDialog?.mode === "proof-edit"
+                ? "عدّل رابط هذا الشاهد فقط. لن يتغير عدد الشواهد أو حالة المهمة."
+                : "أضف رابط المنشور أو المقطع كإثبات على إتمام المهمة — سيظهر للفريق كلّه."}
+            </p>
+            <form onSubmit={urlForm.handleSubmit(handleSubmissionUrl)} className="space-y-4 pt-2">
+              <div className="space-y-2">
+                <label className="text-sm font-medium">رابط المنشور</label>
+                <Input
+                  {...urlForm.register("url")}
+                  type="url"
+                  placeholder="https://www.youtube.com/watch?v=..."
+                  dir="ltr"
+                  className="text-left"
+                />
+                {urlForm.formState.errors.url && (
+                  <p className="text-xs text-red-500">{urlForm.formState.errors.url.message}</p>
+                )}
+              </div>
+              <div className="flex gap-2">
                 <Button
-                  type="button"
-                  variant="outline"
-                  className="text-red-600 border-red-200 hover:bg-red-50"
-                  onClick={() => handleSubmissionUrl({ url: "" })}
+                  type="submit"
+                  className="flex-1 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
                   disabled={updateTask.isPending || proofSaving}
                 >
-                  حذف
+                  {updateTask.isPending || proofSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
+                  {urlDialog?.mode === "proof-edit" ? "حفظ التعديل" : "حفظ الرابط"}
                 </Button>
-              )}
-            </div>
-          </form>
+                {urlDialog?.currentUrl && urlDialog?.mode === "task-url" && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    className="text-red-600 border-red-200 hover:bg-red-50"
+                    onClick={() => handleSubmissionUrl({ url: "" })}
+                    disabled={updateTask.isPending || proofSaving}
+                  >
+                    حذف
+                  </Button>
+                )}
+              </div>
+            </form>
+          </TaskDialogErrorBoundary>
         </DialogContent>
       </Dialog>
 
       {/* Weekly quota proofs dialog */}
       <Dialog open={!!proofsDialogTask} onOpenChange={(open) => { if (!open) setProofsDialogTaskId(null); }}>
         <DialogContent className="sm:max-w-[560px]" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold flex items-center gap-2">
-              <ExternalLink className="h-5 w-5 text-sidebar-primary" />
-              شواهد المهمة
-            </DialogTitle>
-          </DialogHeader>
-          {proofsDialogTask && (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
-                <p className="text-sm font-semibold text-sidebar-foreground">{proofsDialogTask.title}</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  المطلوب {weeklyQuotaInfo(proofsDialogTask).required} شواهد. يمكنك فتح أي شاهد أو تعديل رابطه أو إضافة شواهد إضافية دون تغيير العدد المطلوب أو حالة المهمة.
-                </p>
-              </div>
-              <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
-                {taskProofs(proofsDialogTask).length === 0 ? (
-                  <p className="rounded-lg border border-dashed border-border bg-background p-4 text-center text-sm text-muted-foreground">
-                    لم تتم إضافة شواهد بعد.
+          <TaskDialogErrorBoundary
+            dialogName="شواهد المهمة"
+            resetKey={`${proofsDialogTaskId ?? "closed"}-${proofsDialogTask ? taskProofs(proofsDialogTask).length : 0}`}
+            onClose={() => setProofsDialogTaskId(null)}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                <ExternalLink className="h-5 w-5 text-sidebar-primary" />
+                شواهد المهمة
+              </DialogTitle>
+            </DialogHeader>
+            {proofsDialogTask && (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3">
+                  <p className="text-sm font-semibold text-sidebar-foreground">{proofsDialogTask.title}</p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    المطلوب {weeklyQuotaInfo(proofsDialogTask).required} شواهد. يمكنك فتح أي شاهد أو تعديل رابطه أو إضافة شواهد إضافية دون تغيير العدد المطلوب أو حالة المهمة.
                   </p>
-                ) : taskProofs(proofsDialogTask).map((proof, index) => (
-                  <div key={proof.id} className="rounded-lg border border-border bg-background p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <span className="text-sm font-semibold text-sidebar-foreground">
-                        شاهد {index + 1}
-                        {index + 1 > weeklyQuotaInfo(proofsDialogTask).required && (
-                          <span className="mr-2 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                            إضافي
-                          </span>
-                        )}
-                      </span>
-                      <div className="flex items-center gap-2">
-                        <a
-                          href={proof.url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100"
-                        >
-                          <ExternalLink className="h-3.5 w-3.5" />
-                          فتح
-                        </a>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-8 gap-1"
-                          onClick={() => openProofEditDialog(proofsDialogTask, proof)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                          تعديل
-                        </Button>
-                      </div>
-                    </div>
-                    <p dir="ltr" className="break-all text-left text-xs text-muted-foreground">
-                      {proof.url}
+                </div>
+                <div className="space-y-2 max-h-[50vh] overflow-y-auto pr-1">
+                  {taskProofs(proofsDialogTask).length === 0 ? (
+                    <p className="rounded-lg border border-dashed border-border bg-background p-4 text-center text-sm text-muted-foreground">
+                      لم تتم إضافة شواهد بعد.
                     </p>
-                  </div>
-                ))}
+                  ) : taskProofs(proofsDialogTask).map((proof, index) => (
+                    <div key={proof.id} className="rounded-lg border border-border bg-background p-3 space-y-2">
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="text-sm font-semibold text-sidebar-foreground">
+                          شاهد {index + 1}
+                          {index + 1 > weeklyQuotaInfo(proofsDialogTask).required && (
+                            <span className="mr-2 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                              إضافي
+                            </span>
+                          )}
+                        </span>
+                        <div className="flex items-center gap-2">
+                          <a
+                            href={proof.url}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-xs font-medium text-green-700 hover:bg-green-100"
+                          >
+                            <ExternalLink className="h-3.5 w-3.5" />
+                            فتح
+                          </a>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-8 gap-1"
+                            onClick={() => openProofEditDialog(proofsDialogTask, proof)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                            تعديل
+                          </Button>
+                        </div>
+                      </div>
+                      <p dir="ltr" className="break-all text-left text-xs text-muted-foreground">
+                        {proof.url}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full gap-2"
+                  onClick={() => {
+                    setProofsDialogTaskId(null);
+                    openUrlDialog(proofsDialogTask);
+                  }}
+                >
+                  <Link2 className="h-4 w-4" />
+                  {weeklyQuotaInfo(proofsDialogTask).completed >= weeklyQuotaInfo(proofsDialogTask).required
+                    ? "إضافة شاهد إضافي"
+                    : "إضافة شاهد جديد"}
+                </Button>
               </div>
-              <Button
-                type="button"
-                variant="outline"
-                className="w-full gap-2"
-                onClick={() => {
-                  setProofsDialogTaskId(null);
-                  openUrlDialog(proofsDialogTask);
-                }}
-              >
-                <Link2 className="h-4 w-4" />
-                {weeklyQuotaInfo(proofsDialogTask).completed >= weeklyQuotaInfo(proofsDialogTask).required
-                  ? "إضافة شاهد إضافي"
-                  : "إضافة شاهد جديد"}
-              </Button>
-            </div>
-          )}
+            )}
+          </TaskDialogErrorBoundary>
         </DialogContent>
       </Dialog>
 
       {/* Quick reciter change dialog */}
       <Dialog open={!!quickReciterTask} onOpenChange={(open) => { if (!open) closeQuickReciterDialog(); }}>
         <DialogContent className="sm:max-w-[520px]" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold flex items-center gap-2">
-              <MicVocal className="h-5 w-5 text-sidebar-primary" />
-              تغيير القارئ لهذه المهمة فقط
-            </DialogTitle>
-          </DialogHeader>
-          {quickReciterTask && (
-            <div className="space-y-4">
-              <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-sidebar-foreground">
-                سيتم تغيير القارئ والعضو المسؤول لهذه المهمة فقط، وستختفي من قائمة العضو السابق. لن تتغير السلسلة أو التاريخ أو الحالة أو الشواهد.
-              </div>
-              {quickReciterTask.status === "completed" && (
-                <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-700">
-                  هذه المهمة مكتملة. سيبقى الإكمال والشواهد كما هي.
+          <TaskDialogErrorBoundary
+            dialogName="تغيير القارئ"
+            resetKey={`${quickReciterTask?.id ?? "closed"}-${quickReciterId}-${quickReciterMemberOptions.length}`}
+            onClose={closeQuickReciterDialog}
+          >
+            <DialogHeader>
+              <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                <MicVocal className="h-5 w-5 text-sidebar-primary" />
+                تغيير القارئ لهذه المهمة فقط
+              </DialogTitle>
+            </DialogHeader>
+            {quickReciterTask && (
+              <div className="space-y-4">
+                <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-sidebar-foreground">
+                  سيتم تغيير القارئ والعضو المسؤول لهذه المهمة فقط، وستختفي من قائمة العضو السابق. لن تتغير السلسلة أو التاريخ أو الحالة أو الشواهد.
                 </div>
-              )}
-              <div className="space-y-2">
-                <label className="text-sm font-medium">القارئ الجديد</label>
-                <Select
-                  value={quickReciterId}
-                  onValueChange={(value) => {
-                    setQuickReciterId(value);
-                    if (quickReciterTask.reciter?.id !== Number(value)) {
-                      setQuickReciterMemberId("");
-                    }
-                  }}
+                {quickReciterTask.status === "completed" && (
+                  <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-700">
+                    هذه المهمة مكتملة. سيبقى الإكمال والشواهد كما هي.
+                  </div>
+                )}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium">القارئ الجديد</label>
+                  <Select
+                    value={quickReciterId || "none"}
+                    onValueChange={(value) => {
+                      if (value === "none") return;
+                      setQuickReciterId(value);
+                      if (taskReciterId(quickReciterTask) !== Number(value)) {
+                        setQuickReciterMemberId("");
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="اختر القارئ" />
+                    </SelectTrigger>
+                    <SelectContent dir="rtl">
+                      <SelectItem value="none" disabled>
+                        اختر القارئ
+                      </SelectItem>
+                      {(reciters ?? []).filter((reciter) => !isPlaceholderApplicationReciter(reciter.name)).map((reciter) => (
+                        <SelectItem key={reciter.id} value={String(reciter.id)}>
+                          {reciter.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between gap-2">
+                    <label className="text-sm font-medium">العضو المسؤول</label>
+                    {quickReciterMembersLoading && (
+                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        جار فحص الربط
+                      </span>
+                    )}
+                  </div>
+                  <Select
+                    value={quickReciterMemberId || "none"}
+                    onValueChange={(value) => {
+                      if (value === "none") return;
+                      setQuickReciterMemberId(value);
+                    }}
+                  >
+                    <SelectTrigger className="bg-background">
+                      <SelectValue placeholder="اختر العضو" />
+                    </SelectTrigger>
+                    <SelectContent dir="rtl">
+                      <SelectItem value="none" disabled>
+                        اختر العضو
+                      </SelectItem>
+                      {quickReciterMemberOptions.map((member) => (
+                        <SelectItem key={member.id} value={String(member.id)}>
+                          {member.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className={cn("text-xs", quickReciterHasLinkedMembers ? "text-green-700" : "text-amber-700")}>
+                    {quickReciterHasLinkedMembers
+                      ? "تم عرض العضو أو الأعضاء المرتبطين بهذا القارئ في هذه المنصة."
+                      : "لا يوجد ربط محدد لهذا القارئ، اختر العضو المسؤول يدويًا قبل التأكيد."}
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
+                  disabled={
+                    quickReciterSaving ||
+                    quickReciterMembersLoading ||
+                    !quickReciterMemberId ||
+                    quickReciterMemberId === "none" ||
+                    !quickReciterId ||
+                    quickReciterId === "none"
+                  }
+                  onClick={handleQuickReciterChange}
                 >
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="اختر القارئ" />
-                  </SelectTrigger>
-                  <SelectContent dir="rtl">
-                    {(reciters ?? []).filter((reciter) => !isPlaceholderApplicationReciter(reciter.name)).map((reciter) => (
-                      <SelectItem key={reciter.id} value={String(reciter.id)}>
-                        {reciter.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  {quickReciterSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
+                  تأكيد تغيير القارئ
+                </Button>
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between gap-2">
-                  <label className="text-sm font-medium">العضو المسؤول</label>
-                  {quickReciterMembersLoading && (
-                    <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                      <Loader2 className="h-3 w-3 animate-spin" />
-                      جار فحص الربط
-                    </span>
-                  )}
-                </div>
-                <Select value={quickReciterMemberId} onValueChange={setQuickReciterMemberId}>
-                  <SelectTrigger className="bg-background">
-                    <SelectValue placeholder="اختر العضو" />
-                  </SelectTrigger>
-                  <SelectContent dir="rtl">
-                    {quickReciterMemberOptions.map((member) => (
-                      <SelectItem key={member.id} value={String(member.id)}>
-                        {member.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <p className={cn("text-xs", quickReciterHasLinkedMembers ? "text-green-700" : "text-amber-700")}>
-                  {quickReciterHasLinkedMembers
-                    ? "تم عرض العضو أو الأعضاء المرتبطين بهذا القارئ في هذه المنصة."
-                    : "لا يوجد ربط محدد لهذا القارئ، اختر العضو المسؤول يدويًا قبل التأكيد."}
-                </p>
-              </div>
-              <Button
-                type="button"
-                className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
-                disabled={quickReciterSaving || quickReciterMembersLoading || !quickReciterMemberId}
-                onClick={handleQuickReciterChange}
-              >
-                {quickReciterSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
-                تأكيد تغيير القارئ
-              </Button>
-            </div>
-          )}
+            )}
+          </TaskDialogErrorBoundary>
         </DialogContent>
       </Dialog>
 
@@ -2654,56 +2852,62 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       {isAdmin && (
         <Dialog open={!!editingTask} onOpenChange={(open) => { if (!open) setEditingTask(null); }}>
           <DialogContent className="sm:max-w-[480px] flex flex-col max-h-[90vh] p-0" dir="rtl">
-            <DialogHeader className="px-6 pt-6 pb-4 border-b border-border shrink-0">
-              <DialogTitle className="text-xl font-bold">تعديل المهمة</DialogTitle>
-            </DialogHeader>
-            <div className="flex-1 overflow-y-auto px-6 py-4">
-            <Form {...editForm}>
-              <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4">
-                {(editingTask as any)?.seriesId && (
-                  <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
-                    <div className="flex items-center justify-between gap-3">
-                      <FormLabel className="text-sm font-semibold text-sidebar-foreground">نطاق التعديل</FormLabel>
-                      <Select value={editTaskScope} onValueChange={(value) => setEditTaskScope(value as EditTaskScope)}>
-                        <SelectTrigger className="h-10 bg-background">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent dir="rtl">
-                          <SelectItem value="single">تعديل هذه المهمة فقط</SelectItem>
-                          <SelectItem value="future">تعديل هذه المهمة وما بعدها</SelectItem>
-                          <SelectItem value="series">تعديل جميع مهام السلسلة</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
-                    <p className="text-sm leading-6 text-amber-800">
-                      {EDIT_SCOPE_MESSAGES[editTaskScope]} لن يتم تغيير حالة الإنجاز أو الشاهد لبقية الأيام.
-                    </p>
-                  </div>
-                )}
-                <TaskFormFields
-                  platforms={platforms}
-                  members={members as { id: number; name: string; role: string }[]}
-                  reciters={reciters}
-                  showStatus
-                  allTasks={tasks ?? []}
-                  currentTask={editingTask}
-                  showDependency={isAdmin}
-                  excludeTaskId={editingTask?.id}
-                />
-              </form>
-            </Form>
-            </div>
-            <div className="px-6 pb-6 pt-3 border-t border-border shrink-0">
-              <Button
-                type="button"
-                onClick={editForm.handleSubmit(onEditSubmit)}
-                className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
-                disabled={updateTask.isPending}
-              >
-                {updateTask.isPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
-                حفظ التعديلات
-              </Button>
-            </div>
+            <TaskDialogErrorBoundary
+              dialogName="تعديل المهمة"
+              resetKey={`${editingTask?.id ?? "closed"}-${(editingTask as any)?.updatedAt ?? ""}-${members?.length ?? 0}-${reciters?.length ?? 0}`}
+              onClose={() => setEditingTask(null)}
+            >
+              <DialogHeader className="px-6 pt-6 pb-4 border-b border-border shrink-0">
+                <DialogTitle className="text-xl font-bold">تعديل المهمة</DialogTitle>
+              </DialogHeader>
+              <div className="flex-1 overflow-y-auto px-6 py-4">
+                <Form {...editForm}>
+                  <form onSubmit={editForm.handleSubmit(onEditSubmit)} className="space-y-4">
+                    {(editingTask as any)?.seriesId && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-3">
+                          <FormLabel className="text-sm font-semibold text-sidebar-foreground">نطاق التعديل</FormLabel>
+                          <Select value={editTaskScope} onValueChange={(value) => setEditTaskScope(value as EditTaskScope)}>
+                            <SelectTrigger className="h-10 bg-background">
+                              <SelectValue />
+                            </SelectTrigger>
+                            <SelectContent dir="rtl">
+                              <SelectItem value="single">تعديل هذه المهمة فقط</SelectItem>
+                              <SelectItem value="future">تعديل هذه المهمة وما بعدها</SelectItem>
+                              <SelectItem value="series">تعديل جميع مهام السلسلة</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                        <p className="text-sm leading-6 text-amber-800">
+                          {EDIT_SCOPE_MESSAGES[editTaskScope]} لن يتم تغيير حالة الإنجاز أو الشاهد لبقية الأيام.
+                        </p>
+                      </div>
+                    )}
+                    <TaskFormFields
+                      platforms={platforms}
+                      members={members as { id: number; name: string; role: string }[]}
+                      reciters={reciters}
+                      showStatus
+                      allTasks={tasks ?? []}
+                      currentTask={editingTask}
+                      showDependency={isAdmin}
+                      excludeTaskId={editingTask?.id}
+                    />
+                  </form>
+                </Form>
+              </div>
+              <div className="px-6 pb-6 pt-3 border-t border-border shrink-0">
+                <Button
+                  type="button"
+                  onClick={editForm.handleSubmit(onEditSubmit)}
+                  className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+                  disabled={updateTask.isPending}
+                >
+                  {updateTask.isPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                  حفظ التعديلات
+                </Button>
+              </div>
+            </TaskDialogErrorBoundary>
           </DialogContent>
         </Dialog>
       )}
@@ -3648,14 +3852,23 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       ))}
 
       {/* Comments dialog */}
-      <CommentsDialog
-        taskId={commentsTaskId}
-        taskTitle={commentsTaskTitle}
+      <TaskDialogErrorBoundary
+        dialogName="تعليقات المهمة"
+        resetKey={`${commentsTaskId ?? "closed"}-${commentsTaskTitle}`}
         onClose={() => {
           setCommentsTaskId(null);
           setCommentsTaskTitle("");
         }}
-      />
+      >
+        <CommentsDialog
+          taskId={commentsTaskId}
+          taskTitle={commentsTaskTitle}
+          onClose={() => {
+            setCommentsTaskId(null);
+            setCommentsTaskTitle("");
+          }}
+        />
+      </TaskDialogErrorBoundary>
 
       {/* Bulk action bar */}
       {isAdmin && !isAdminMemberPreview && selectedTaskIds.size > 0 && (
