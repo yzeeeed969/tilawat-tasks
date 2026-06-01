@@ -73,6 +73,10 @@ function formatDate(date: string | Date) {
   return format(new Date(date), "d MMMM yyyy", { locale: ar });
 }
 
+function formatDateTime(date: string | Date) {
+  return format(new Date(date), "EEEE، d MMMM yyyy، h:mm a", { locale: ar });
+}
+
 function JoodLogoMark() {
   return (
     <div className="rounded-lg border border-amber-200/80 bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
@@ -246,7 +250,7 @@ export default function Achievements() {
             <p className="text-lg font-black text-[#0f3327]">إنجازات فريق تطبيق تلاوات الحرمين</p>
             <p className="mt-1 text-xs font-semibold text-[#6d8177]">
               {data?.lastUpdated
-                ? `آخر تحديث: ${format(new Date(data.lastUpdated), "EEEE، d MMMM yyyy، h:mm a", { locale: ar })}`
+                ? `آخر تحديث: ${formatDateTime(data.lastUpdated)}`
                 : "آخر تحديث: يتم تحميل البيانات"}
             </p>
           </div>
@@ -336,7 +340,7 @@ export default function Achievements() {
                 title="📺 مشاهدات يوتيوب الموثقة منذ رمضان 1447هـ"
                 value={data.youtubeViews.totalViews === null ? "غير متاح مؤقتًا" : `${formatNumber(data.youtubeViews.totalViews)} مشاهدة`}
                 icon={Eye}
-                hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${data.youtubeViews.updatedAt}` : "خاص بيوتيوب فقط"}
+                hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${formatDateTime(data.youtubeViews.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
                 tone="blue"
               />
             </section>

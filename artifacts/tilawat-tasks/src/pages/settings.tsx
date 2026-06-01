@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   useListPlatforms, getListPlatformsQueryKey,
   useListReciters, getListRecitersQueryKey,
@@ -27,7 +27,7 @@ import {
   Loader2, Plus, Trash2, Settings as SettingsIcon,
   Shield, MicVocal, UserPlus, CheckCircle, XCircle, Clock,
   ChevronDown, ChevronUp, Pencil, Save, X, Layers, Star, Users,
-  Bell, Send, Link2, RefreshCw,
+  Bell, Send, Link2, RefreshCw, BarChart3,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { PlatformIcon } from "@/lib/platform-icon";
@@ -120,6 +120,14 @@ interface TelegramLog {
   failureReason: string | null;
   sentAt: string | null;
   createdAt: string;
+}
+
+interface PublicSiteSettingsData {
+  id: number;
+  youtubeTotalViews: number | null;
+  youtubeViewsUpdatedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -243,6 +251,49 @@ async function sendTelegramPublicSummaryNow(date: string) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? "فشل إرسال ملخص منشورات اليوم");
   return body as { sent: number; publications: number; messages: number; date: string };
+}
+
+async function fetchPublicSiteSettings(): Promise<PublicSiteSettingsData> {
+  const res = await fetch("/api/public-site-settings", { credentials: "include" });
+  if (!res.ok) throw new Error("فشل تحميل الإحصائيات العامة");
+  return res.json();
+}
+
+async function patchPublicSiteSettings(updates: { youtubeTotalViews: number | null }) {
+  const res = await fetch("/api/public-site-settings", {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    credentials: "include",
+    body: JSON.stringify(updates),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(body.error ?? "فشل حفظ الإحصائيات العامة");
+  return body as PublicSiteSettingsData;
+}
+
+function formatRiyadhDateTime(value?: string | null) {
+  if (!value) return "لم يتم تحديثه بعد";
+  return new Intl.DateTimeFormat("ar-SA-u-ca-gregory", {
+    timeZone: "Asia/Riyadh",
+    weekday: "long",
+    year: "numeric",
+    month: "long",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(new Date(value));
+}
+
+function parseNonNegativeIntegerInput(value: string) {
+  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
+  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
+  const normalized = value
+    .replace(/[٠-٩]/g, (digit) => String(arabicDigits.indexOf(digit)))
+    .replace(/[۰-۹]/g, (digit) => String(persianDigits.indexOf(digit)))
+    .replace(/[,\s_]/g, "");
+  if (!normalized) return null;
+  const parsed = Number(normalized);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : Number.NaN;
 }
 
 // ── Permission checkbox ────────────────────────────────────────────────────────
@@ -1570,6 +1621,89 @@ function TelegramSettingsSection() {
   );
 }
 
+function PublicStatsSettingsSection() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [youtubeViewsInput, setYoutubeViewsInput] = useState("");
+
+  const { data, isLoading } = useQuery({
+    queryKey: ["public-site-settings"],
+    queryFn: fetchPublicSiteSettings,
+  });
+
+  useEffect(() => {
+    if (data) {
+      setYoutubeViewsInput(data.youtubeTotalViews === null ? "" : String(data.youtubeTotalViews));
+    }
+  }, [data?.youtubeTotalViews]);
+
+  const saveMutation = useMutation({
+    mutationFn: () => {
+      const youtubeTotalViews = parseNonNegativeIntegerInput(youtubeViewsInput);
+      if (Number.isNaN(youtubeTotalViews)) {
+        throw new Error("أدخل رقمًا صحيحًا لمشاهدات يوتيوب");
+      }
+      return patchPublicSiteSettings({ youtubeTotalViews });
+    },
+    onSuccess: () => {
+      toast({ title: "تم حفظ الإحصائيات العامة" });
+      queryClient.invalidateQueries({ queryKey: ["public-site-settings"] });
+      queryClient.invalidateQueries({ queryKey: ["public-achievements"] });
+    },
+    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
+  });
+
+  return (
+    <Card className="border-border/50 shadow-sm lg:col-span-2">
+      <CardHeader className="bg-sidebar/5 border-b border-border/50 pb-6">
+        <CardTitle className="flex items-center gap-2">
+          <BarChart3 className="h-5 w-5 text-sidebar-primary" />
+          إحصائيات عامة
+        </CardTitle>
+        <CardDescription className="text-base mt-2">
+          أرقام عامة تظهر في صفحة الإنجازات للزوار بدون أي بيانات تشغيلية داخلية
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="p-6 space-y-4">
+        {isLoading ? (
+          <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-sidebar-primary" /></div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 lg:items-end">
+              <div className="space-y-2">
+                <label className="text-sm font-semibold">مشاهدات يوتيوب الموثقة منذ رمضان 1447هـ</label>
+                <Input
+                  value={youtubeViewsInput}
+                  onChange={(event) => setYoutubeViewsInput(event.target.value)}
+                  inputMode="numeric"
+                  dir="ltr"
+                  placeholder="مثال: 3341630"
+                  className="text-lg font-semibold"
+                />
+                <p className="text-xs text-muted-foreground">
+                  عند الحفظ يضع النظام وقت آخر تحديث تلقائيًا، ويظهر هذا الوقت في صفحة الإنجازات العامة.
+                </p>
+              </div>
+              <Button
+                onClick={() => saveMutation.mutate()}
+                disabled={saveMutation.isPending}
+                className="min-w-36"
+              >
+                {saveMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Save className="h-4 w-4 ml-2" />}
+                حفظ الرقم
+              </Button>
+            </div>
+
+            <div className="rounded-lg border border-border/60 bg-muted/10 px-4 py-3 text-sm text-muted-foreground">
+              آخر تحديث: <span className="font-semibold text-foreground">{formatRiyadhDateTime(data?.youtubeViewsUpdatedAt)}</span>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 // ── Main Settings page ────────────────────────────────────────────────────────
 export default function Settings() {
   const isAdmin = useIsAdmin();
@@ -1586,6 +1720,7 @@ export default function Settings() {
         <p className="text-muted-foreground mt-2 text-lg">إدارة الفريق والمنصات والقراء والصلاحيات</p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+        {isAdmin && <PublicStatsSettingsSection />}
         {isAdmin && <TelegramSettingsSection />}
         {canManageAccounts && <UserManagementSection />}
         {canManageReciters && <RecitersSection />}
