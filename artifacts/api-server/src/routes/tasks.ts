@@ -615,11 +615,10 @@ async function setTaskDependency(taskId: number, dependsOnTaskId: number | null,
   }).onConflictDoNothing();
 }
 
-async function syncDependenciesForTasks(taskIds: number[], dependsOnTaskId: number | null | undefined, createdByUserId: number | null) {
+async function syncDependencyForTask(taskId: number | null | undefined, dependsOnTaskId: number | null | undefined, createdByUserId: number | null) {
   if (dependsOnTaskId === undefined) return;
-  for (const taskId of taskIds) {
-    await setTaskDependency(taskId, dependsOnTaskId, createdByUserId);
-  }
+  if (!taskId) return;
+  await setTaskDependency(taskId, dependsOnTaskId, createdByUserId);
 }
 
 async function getTaskTelegramDetails(taskId: number) {
@@ -971,7 +970,7 @@ router.post("/tasks", async (req, res) => {
 
     const firstTaskId = generatedIds[0] ?? null;
     try {
-      await syncDependenciesForTasks(generatedIds, dependsOnTaskId, currentUser?.id ?? null);
+      await syncDependencyForTask(firstTaskId, dependsOnTaskId, currentUser?.id ?? null);
     } catch {
       res.status(400).json({ error: "Invalid task dependency" });
       return;
@@ -1044,7 +1043,7 @@ router.post("/tasks", async (req, res) => {
     }
 
     try {
-      await syncDependenciesForTasks(createdTaskIds, dependsOnTaskId, currentUser?.id ?? null);
+      await syncDependencyForTask(firstTaskId, dependsOnTaskId, currentUser?.id ?? null);
     } catch {
       res.status(400).json({ error: "Invalid task dependency" });
       return;
@@ -1086,7 +1085,7 @@ router.post("/tasks", async (req, res) => {
 
   await syncTaskMembers(task.id, body.memberIds);
   try {
-    await syncDependenciesForTasks([task.id], dependsOnTaskId, currentUser?.id ?? null);
+    await syncDependencyForTask(task.id, dependsOnTaskId, currentUser?.id ?? null);
   } catch {
     res.status(400).json({ error: "Invalid task dependency" });
     return;
@@ -1461,7 +1460,7 @@ router.put("/tasks/:id", async (req, res) => {
   }
 
   try {
-    await syncDependenciesForTasks(updatedTaskIds, dependsOnTaskId, currentUser?.id ?? null);
+    await syncDependencyForTask(id, dependsOnTaskId, currentUser?.id ?? null);
   } catch {
     res.status(400).json({ error: "Invalid task dependency" });
     return;
