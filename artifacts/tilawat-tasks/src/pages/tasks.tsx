@@ -323,6 +323,7 @@ type TaskFormValues = z.infer<typeof taskSchema>;
 type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
 type EditTaskScope = "single" | "future" | "series";
 const TASK_FORM_STABILITY_MODE = false;
+const USE_SAFE_PHASE_ONE_TASK_FORM = true;
 const ENABLE_MEMBER_CREATED_TASKS = false;
 const ENABLE_TASK_DEPENDENCIES = false;
 type UrlDialogState = {
@@ -673,7 +674,12 @@ function BasicTaskFormFields({
   const { watch, setValue } = useFormContext<TaskFormValues>();
   const platformId = watch("platformId");
   const reciterId = watch("reciterId");
+  const appPrayer = watch("appPrayer");
   const memberIds = watch("memberIds") ?? [];
+  const seriesType = watch("seriesType") ?? "temporary";
+  const recurrence = watch("recurrence") ?? "none";
+  const recurrenceDays = watch("recurrenceDays") ?? "";
+  const weeklyQuotaRequired = watch("weeklyQuotaRequired");
 
   const platformOptions = useMemo(() => {
     const currentPlatform = (currentTask as any)?.platform;
@@ -704,21 +710,42 @@ function BasicTaskFormFields({
     ]);
   }, [members, currentTask]);
 
+  const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
+  const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+
   useEffect(() => {
-    setValue("seriesType", "temporary", { shouldDirty: false });
-    setValue("recurrence", "none", { shouldDirty: false });
-    setValue("pageId", null, { shouldDirty: false });
-    setValue("endDate", "", { shouldDirty: false });
     setValue("dependsOnTaskId", null, { shouldDirty: false });
-    setValue("weeklyQuotaRequired", null, { shouldDirty: false });
-    setValue("recurrenceDays", null, { shouldDirty: false });
-    setValue("appPrayer", null, { shouldDirty: false });
   }, [setValue]);
+
+  useEffect(() => {
+    if (seriesType === "temporary" && recurrence !== "none") {
+      setValue("recurrence", "none", { shouldDirty: false });
+    }
+    if (seriesType === "operational" && recurrence !== "weekly" && recurrence !== "monthly") {
+      setValue("recurrence", "weekly", { shouldDirty: false });
+    }
+    if (seriesType === "weekly_quota") {
+      if (recurrence !== "weekly") setValue("recurrence", "weekly", { shouldDirty: false });
+      if (!weeklyQuotaRequired) setValue("weeklyQuotaRequired", 3, { shouldDirty: false });
+    }
+    if ((seriesType !== "operational" || recurrence !== "weekly") && recurrenceDays) {
+      setValue("recurrenceDays", null, { shouldDirty: false });
+    }
+  }, [seriesType, recurrence, recurrenceDays, weeklyQuotaRequired, setValue]);
+
+  useEffect(() => {
+    const reciter = reciterOptions.find((item) => item.id === reciterId);
+    const parts = isApplicationPlatform
+      ? [appPrayer, reciter?.name, selectedPlatform?.name]
+      : [reciter?.name, selectedPlatform?.name];
+    const nextTitle = parts.filter(Boolean).join(" — ") || "مهمة جديدة";
+    setValue("title", nextTitle, { shouldDirty: false });
+  }, [isApplicationPlatform, appPrayer, reciterId, reciterOptions, selectedPlatform?.name, setValue]);
 
   return (
     <>
-      <div className="rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs leading-6 text-amber-800">
-        وضع الاستقرار مفعل مؤقتًا: يظهر النموذج الأساسي فقط حتى نضمن أن إنشاء وتعديل المهام يعملان بدون تعطل.
+      <div className="rounded-md border border-green-200 bg-green-50/70 px-3 py-2 text-xs leading-6 text-green-800">
+        نموذج آمن للمرحلة الأولى: يدعم المهام العادية ونطاق التاريخ والتكرار الأسبوعي/الشهري والهدف الأسبوعي، مع إبقاء الميزات المؤجلة مغلقة.
       </div>
 
       <FormField
@@ -782,6 +809,39 @@ function BasicTaskFormFields({
         )}
       />
 
+      {isApplicationPlatform && (
+        <FormField
+          name="appPrayer"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="flex items-center gap-2">
+                <CalendarClock className="h-3.5 w-3.5 text-sidebar-primary" />
+                الصلاة
+              </FormLabel>
+              <Select
+                onValueChange={(value) => field.onChange(value === "none" ? null : value)}
+                value={field.value ?? "none"}
+              >
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختر الصلاة" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                  <SelectItem value="none">اختر الصلاة</SelectItem>
+                  {APP_PRAYER_OPTIONS.map((prayer) => (
+                    <SelectItem key={prayer} value={prayer}>
+                      {prayer}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
       <FormField
         name="memberIds"
         render={({ field }) => (
@@ -805,29 +865,180 @@ function BasicTaskFormFields({
         )}
       />
 
-      <FormField
-        name="startDate"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel className="flex items-center gap-1">
-              تاريخ المهمة <span className="text-[10px] text-red-500 font-normal">مطلوب</span>
-            </FormLabel>
-            <FormControl>
-              <DatePickerInput
-                value={field.value ?? ""}
-                onChange={field.onChange}
-                placeholder="اختر تاريخاً"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+      <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-muted/20">
+        <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+          <CalendarDays className="h-3.5 w-3.5" />
+          تاريخ المهمة
+        </p>
 
-      <div className="rounded-md border border-input bg-muted/20 px-3 py-2">
-        <p className="text-xs text-muted-foreground">نوع المهمة</p>
-        <p className="text-sm font-semibold text-sidebar-foreground">مهمة عادية ليوم واحد</p>
+        <FormField
+          name="seriesType"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>نوع المهمة</FormLabel>
+              <Select onValueChange={field.onChange} value={normalizeTaskSeriesType(field.value)}>
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختر نوع المهمة" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent dir="rtl">
+                  <SelectItem value="temporary">مهمة مؤقتة</SelectItem>
+                  <SelectItem value="operational">مهمة تشغيلية متكررة</SelectItem>
+                  <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {seriesType === "operational" && (
+          <FormField
+            name="recurrence"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>نوع التكرار</FormLabel>
+                <Select onValueChange={field.onChange} value={field.value === "monthly" ? "monthly" : "weekly"}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="اختر التكرار" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent dir="rtl">
+                    <SelectItem value="weekly">أسبوعي - كل أسبوع</SelectItem>
+                    <SelectItem value="monthly">شهري - كل شهر</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        {seriesType === "operational" && recurrence === "weekly" && (
+          <FormField
+            name="recurrenceDays"
+            render={({ field }) => {
+              const selectedDays = new Set((field.value ?? "").split(",").filter(Boolean));
+              const toggleDay = (day: string) => {
+                const next = new Set(selectedDays);
+                if (next.has(day)) {
+                  next.delete(day);
+                } else {
+                  next.add(day);
+                }
+                const value = [...next].sort((a, b) => Number(a) - Number(b)).join(",");
+                field.onChange(value || null);
+              };
+
+              return (
+                <FormItem>
+                  <FormLabel>أيام التكرار الأسبوعي <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {WEEKDAY_OPTIONS.map((day) => {
+                      const checked = selectedDays.has(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => toggleDay(day.value)}
+                          className={cn(
+                            "h-10 rounded-md border text-sm font-semibold transition-colors flex items-center justify-center gap-1.5",
+                            checked
+                              ? "bg-sidebar-primary text-sidebar-primary-foreground border-sidebar-primary"
+                              : "bg-background text-foreground border-input hover:bg-muted"
+                          )}
+                        >
+                          {checked && <Check className="h-3.5 w-3.5" />}
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              );
+            }}
+          />
+        )}
+
+        {seriesType === "weekly_quota" && (
+          <FormField
+            name="weeklyQuotaRequired"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>عدد مرات الإنجاز في الأسبوع</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={field.value ?? 3}
+                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : null)}
+                    placeholder="مثال: 3"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        <div className={cn("grid gap-3", seriesType === "temporary" ? "grid-cols-2" : "grid-cols-1")}>
+          <FormField
+            name="startDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="flex items-center gap-1">
+                  البداية <span className="text-[10px] text-red-500 font-normal">مطلوب</span>
+                </FormLabel>
+                <FormControl>
+                  <DatePickerInput
+                    value={field.value ?? ""}
+                    onChange={field.onChange}
+                    placeholder="اختر تاريخاً"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {seriesType === "temporary" && (
+            <FormField
+              name="endDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="flex items-center gap-1">
+                    النهاية <span className="text-[10px] text-muted-foreground font-normal">(اختياري)</span>
+                  </FormLabel>
+                  <FormControl>
+                    <DatePickerInput
+                      value={field.value ?? ""}
+                      onChange={field.onChange}
+                      placeholder="اختر تاريخاً"
+                      optional
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+        </div>
+
+        <p className="text-[10px] text-sidebar-primary bg-sidebar-primary/5 border border-sidebar-primary/20 rounded px-2.5 py-1.5">
+          {seriesType === "operational"
+            ? recurrence === "monthly"
+              ? "ينشئ النظام مهاماً مستقلة شهرياً ضمن نافذة 60 يوماً قادمة."
+              : "ينشئ النظام مهاماً مستقلة أسبوعياً ضمن نافذة 60 يوماً قادمة."
+            : seriesType === "weekly_quota"
+              ? "ينشئ النظام مهمة واحدة لكل أسبوع، ويضيف العضو الشواهد حتى يصل إلى العدد المطلوب."
+              : "إذا تركت النهاية فارغة تُنشأ مهمة ليوم واحد. وإذا اخترت نهاية، ينشئ النظام مهمة مستقلة لكل يوم."}
+        </p>
       </div>
+
     </>
   );
 }
@@ -2846,7 +3057,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   <div className="flex-1 overflow-y-auto px-6 py-4">
                     <Form {...createForm}>
                       <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">
-                        {TASK_FORM_STABILITY_MODE ? (
+                        {TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM ? (
                           <BasicTaskFormFields
                             platforms={platforms}
                             members={members as { id: number; name: string; role: string }[]}
@@ -3177,7 +3388,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         </p>
                       </div>
                     )}
-                    {TASK_FORM_STABILITY_MODE ? (
+                    {TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM ? (
                       <BasicTaskFormFields
                         platforms={platforms}
                         members={members as { id: number; name: string; role: string }[]}
