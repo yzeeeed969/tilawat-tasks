@@ -241,11 +241,61 @@ function taskDependencyOptionLabel(task: TaskWithDetails | null | undefined) {
     : id
       ? `مهمة #${id}`
       : "مهمة غير معروفة";
+  const platform = (task as any)?.platform?.name;
+  const reciter = (task as any)?.reciter?.name;
+  const members = taskAssignedMembers(task).map((member) => member.name).filter(Boolean).join("، ");
+  const status = (task as any)?.status === "completed" ? "مكتملة" : "قيد التنفيذ";
   const dueDate = (task as any)?.dueDate ? new Date((task as any).dueDate) : null;
   const dateLabel = dueDate && !Number.isNaN(dueDate.getTime())
     ? format(dueDate, "d MMMM yyyy", { locale: ar })
     : "";
-  return dateLabel ? `${title} — ${dateLabel}` : title;
+  return [title, platform, reciter, dateLabel, members, status].filter(Boolean).join(" — ");
+}
+
+function buildTaskDependencySelectOptions(
+  allTasks: TaskWithDetails[] | undefined,
+  excludeTaskId: number | undefined,
+  dependsOnTaskId: number | null | undefined
+) {
+  const seen = new Set<number>();
+  const options = (allTasks ?? [])
+    .map((task) => {
+      const id = toPositiveNumber((task as any)?.id);
+      return id ? { id, task } : null;
+    })
+    .filter((entry): entry is { id: number; task: TaskWithDetails } => {
+      if (!entry) return false;
+      if (excludeTaskId && entry.id === excludeTaskId) return false;
+      if ((entry.task as any)?.deletedAt) return false;
+      if (seen.has(entry.id)) return false;
+      seen.add(entry.id);
+      return true;
+    })
+    .sort((a, b) => {
+      const aTime = new Date(((a.task as any)?.dueDate ?? (a.task as any)?.createdAt) as any).getTime();
+      const bTime = new Date(((b.task as any)?.dueDate ?? (b.task as any)?.createdAt) as any).getTime();
+      const safeA = Number.isFinite(aTime) ? aTime : 0;
+      const safeB = Number.isFinite(bTime) ? bTime : 0;
+      return safeB - safeA;
+    })
+    .slice(0, 500)
+    .map(({ id, task }) => ({
+      id,
+      label: taskDependencyOptionLabel(task),
+    }));
+
+  const currentDependencyId = toPositiveNumber(dependsOnTaskId);
+  if (currentDependencyId && !options.some((option) => option.id === currentDependencyId)) {
+    return [
+      {
+        id: currentDependencyId,
+        label: `المهمة المرتبطة الحالية #${currentDependencyId}`,
+      },
+      ...options,
+    ];
+  }
+
+  return options;
 }
 
 async function ensureApplicationReciterPage(platformId: number, reciterId: number, memberIds: number[]) {
@@ -740,37 +790,10 @@ function BasicTaskFormFields({
   const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
   const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
 
-  const dependencyOptions = useMemo(() => {
-    const options = (allTasks ?? [])
-      .filter((task) => {
-        const taskId = toPositiveNumber((task as any)?.id);
-        if (!taskId) return false;
-        if (excludeTaskId && taskId === excludeTaskId) return false;
-        if ((task as any)?.deletedAt) return false;
-        return true;
-      })
-      .sort((a, b) => {
-        const aTime = new Date(((a as any)?.dueDate ?? (a as any)?.createdAt) as any).getTime();
-        const bTime = new Date(((b as any)?.dueDate ?? (b as any)?.createdAt) as any).getTime();
-        const safeA = Number.isFinite(aTime) ? aTime : 0;
-        const safeB = Number.isFinite(bTime) ? bTime : 0;
-        return safeB - safeA;
-      })
-      .slice(0, 300);
-
-    if (dependsOnTaskId && !options.some((task) => task.id === dependsOnTaskId)) {
-      return [
-        {
-          id: dependsOnTaskId,
-          title: `المهمة المرتبطة الحالية #${dependsOnTaskId}`,
-          createdAt: new Date(),
-        } as unknown as TaskWithDetails,
-        ...options,
-      ];
-    }
-
-    return options;
-  }, [allTasks, excludeTaskId, dependsOnTaskId]);
+  const dependencyOptions = useMemo(
+    () => buildTaskDependencySelectOptions(allTasks, excludeTaskId, dependsOnTaskId),
+    [allTasks, excludeTaskId, dependsOnTaskId]
+  );
 
   useEffect(() => {
     if (!showDependency) {
@@ -1142,9 +1165,9 @@ function BasicTaskFormFields({
                     </FormControl>
                     <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
                       <SelectItem value="none">بدون مهمة مرتبطة</SelectItem>
-                      {dependencyOptions.map((task) => (
-                        <SelectItem key={task.id} value={String(task.id)}>
-                          {taskDependencyOptionLabel(task)}
+                      {dependencyOptions.map((option) => (
+                        <SelectItem key={option.id} value={String(option.id)}>
+                          {option.label}
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -1221,27 +1244,10 @@ function TaskFormFields({
     ]),
     [reciters, currentTask]
   );
-  const dependencyOptions = useMemo(() => {
-    const options = (allTasks ?? [])
-      .filter((task) => task.id !== excludeTaskId && !(task as any).deletedAt)
-      .sort((a, b) => {
-        const ad = new Date((b.dueDate ?? b.createdAt) as any).getTime();
-        const bd = new Date((a.dueDate ?? a.createdAt) as any).getTime();
-        return ad - bd;
-      })
-      .slice(0, 300);
-    if (dependsOnTaskId && !options.some((task) => task.id === dependsOnTaskId)) {
-      return [
-        {
-          id: dependsOnTaskId,
-          title: `المهمة المرتبطة الحالية #${dependsOnTaskId}`,
-          createdAt: new Date(),
-        } as unknown as TaskWithDetails,
-        ...options,
-      ];
-    }
-    return options;
-  }, [allTasks, excludeTaskId, dependsOnTaskId]);
+  const dependencyOptions = useMemo(
+    () => buildTaskDependencySelectOptions(allTasks, excludeTaskId, dependsOnTaskId),
+    [allTasks, excludeTaskId, dependsOnTaskId]
+  );
   const previousPlatformIdRef = useRef<number | undefined>(undefined);
 
   const { data: pages } = useListPlatformPages(platformId ?? 0, {
@@ -1610,9 +1616,9 @@ function TaskFormFields({
                 </FormControl>
                 <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
                   <SelectItem value="none">بدون اعتماد</SelectItem>
-                  {dependencyOptions.map((task) => (
-                    <SelectItem key={task.id} value={String(task.id)}>
-                      {task.title || `مهمة #${task.id}`}
+                  {dependencyOptions.map((option) => (
+                    <SelectItem key={option.id} value={String(option.id)}>
+                      {option.label}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -2243,6 +2249,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const { data: rawTasks, isLoading: tasksLoading } = useListTasks(queryParams, {
     query: { queryKey: getListTasksQueryKey(queryParams) },
+  });
+  const dependencyTaskQueryParams = {};
+  const { data: dependencyCandidateTasks } = useListTasks(dependencyTaskQueryParams, {
+    query: {
+      queryKey: getListTasksQueryKey(dependencyTaskQueryParams),
+      enabled: isAdmin && ENABLE_TASK_DEPENDENCIES,
+    },
   });
 
   useEffect(() => {
@@ -3183,7 +3196,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             platforms={platforms}
                             members={members as { id: number; name: string; role: string }[]}
                             reciters={reciters}
-                            allTasks={tasks ?? []}
+                            allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                             showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                           />
                         ) : (
@@ -3191,7 +3204,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             platforms={platforms}
                             members={members as { id: number; name: string; role: string }[]}
                             reciters={reciters}
-                            allTasks={tasks ?? []}
+                            allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                             showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                             isMemberSelfTask={ENABLE_MEMBER_CREATED_TASKS && !isAdmin}
                             currentMemberName={currentMemberName}
@@ -3517,7 +3530,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         members={members as { id: number; name: string; role: string }[]}
                         reciters={reciters}
                         currentTask={editingTask}
-                        allTasks={tasks ?? []}
+                        allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                         excludeTaskId={editingTask?.id}
                         showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                       />
@@ -3527,7 +3540,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         members={members as { id: number; name: string; role: string }[]}
                         reciters={reciters}
                         showStatus
-                        allTasks={tasks ?? []}
+                        allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                         currentTask={editingTask}
                         showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                         excludeTaskId={editingTask?.id}
