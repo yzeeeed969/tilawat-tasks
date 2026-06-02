@@ -1183,6 +1183,456 @@ function BasicTaskFormFields({
         </Collapsible>
       )}
 
+  </>
+  );
+}
+
+function EditTaskFormFields({
+  platforms,
+  members,
+  reciters,
+  allTasks,
+  excludeTaskId,
+  currentTask,
+  showDependency = false,
+}: {
+  platforms: { id: number; name: string }[] | undefined;
+  members: { id: number; name: string; role: string }[] | undefined;
+  reciters: Reciter[] | undefined;
+  allTasks?: TaskWithDetails[];
+  excludeTaskId?: number;
+  currentTask?: TaskWithDetails | null;
+  showDependency?: boolean;
+}) {
+  const { watch } = useFormContext<TaskFormValues>();
+  const [dependencyOpen, setDependencyOpen] = useState(false);
+
+  const platformId = toPositiveNumber(watch("platformId"));
+  const reciterId = toPositiveNumber(watch("reciterId"));
+  const memberIds = Array.isArray(watch("memberIds"))
+    ? (watch("memberIds") ?? []).filter((id) => Boolean(toPositiveNumber(id)))
+    : [];
+  const dependsOnTaskId = toPositiveNumber(watch("dependsOnTaskId"));
+  const seriesType = normalizeTaskSeriesType(watch("seriesType"));
+  const recurrence = normalizeTaskRecurrence(watch("recurrence"));
+  const recurrenceDays = typeof watch("recurrenceDays") === "string" ? watch("recurrenceDays") ?? "" : "";
+  const weeklyQuotaRequired = toPositiveNumber(watch("weeklyQuotaRequired")) ?? 3;
+
+  const platformOptions = useMemo(() => {
+    const currentPlatform = (currentTask as any)?.platform;
+    return mergeById<{ id: number; name: string }>([
+      ...(platforms ?? []),
+      currentPlatform?.id ? { id: currentPlatform.id, name: currentPlatform.name ?? `المنصة الحالية #${currentPlatform.id}` } : null,
+      platformId && !(platforms ?? []).some((platform) => platform.id === platformId)
+        ? { id: platformId, name: `المنصة الحالية #${platformId}` }
+        : null,
+    ]);
+  }, [platforms, currentTask, platformId]);
+
+  const reciterOptions = useMemo(() => {
+    const currentReciter = (currentTask as any)?.reciter as Reciter | null | undefined;
+    return mergeById<Reciter>([
+      ...(reciters ?? []),
+      currentReciter?.id ? currentReciter : null,
+      reciterId && !(reciters ?? []).some((reciter) => reciter.id === reciterId)
+        ? ({ id: reciterId, name: `القارئ الحالي #${reciterId}` } as Reciter)
+        : null,
+    ]);
+  }, [reciters, currentTask, reciterId]);
+
+  const memberOptions = useMemo(() => {
+    return mergeById<{ id: number; name: string; role: string }>([
+      ...(members ?? []),
+      ...taskAssignedMembers(currentTask),
+    ]);
+  }, [members, currentTask]);
+
+  const dependencyOptions = useMemo(
+    () => buildTaskDependencySelectOptions(allTasks, excludeTaskId, dependsOnTaskId),
+    [allTasks, excludeTaskId, dependsOnTaskId]
+  );
+
+  const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
+  const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+
+  const editWarnings = [
+    !platformId ? "هذه المهمة لا تحتوي منصة محفوظة؛ اختر منصة قبل الحفظ." : null,
+    memberIds.length === 0 ? "هذه المهمة لا تحتوي مسؤولًا محفوظًا؛ اختر مسؤولًا قبل الحفظ." : null,
+  ].filter(Boolean);
+
+  return (
+    <>
+      {editWarnings.length > 0 && (
+        <div className="rounded-md border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs leading-6 text-amber-800">
+          {editWarnings.map((warning) => (
+            <p key={warning}>{warning}</p>
+          ))}
+        </div>
+      )}
+
+      <FormField
+        name="platformId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>المنصة</FormLabel>
+            <Select
+              onValueChange={(value) => field.onChange(parseSelectNumberValue(value) ?? undefined)}
+              value={safeSelectNumberValue(field.value)}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="اختر المنصة" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                <SelectItem value="none" disabled>
+                  اختر المنصة
+                </SelectItem>
+                {platformOptions.map((platform) => (
+                  <SelectItem key={platform.id} value={String(platform.id)}>
+                    <span className="flex items-center gap-2">
+                      <PlatformIcon name={platform.name} />
+                      <span>{platform.name || `المنصة #${platform.id}`}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        name="reciterId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>القارئ</FormLabel>
+            <Select
+              onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
+              value={safeSelectNumberValue(field.value)}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="اختر القارئ" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                <SelectItem value="none">بدون قارئ</SelectItem>
+                {reciterOptions.map((reciter) => (
+                  <SelectItem key={reciter.id} value={String(reciter.id)}>
+                    {reciter.name || `القارئ #${reciter.id}`}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      {isApplicationPlatform && (
+        <FormField
+          name="appPrayer"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel className="flex items-center gap-2">
+                <CalendarClock className="h-3.5 w-3.5 text-sidebar-primary" />
+                الصلاة
+              </FormLabel>
+              <Select
+                onValueChange={(value) => field.onChange(value === "none" ? null : value)}
+                value={field.value ?? "none"}
+              >
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختر الصلاة" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                  <SelectItem value="none">اختر الصلاة</SelectItem>
+                  {APP_PRAYER_OPTIONS.map((prayer) => (
+                    <SelectItem key={prayer} value={prayer}>
+                      {prayer}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+      )}
+
+      <FormField
+        name="memberIds"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="flex items-center gap-2">
+              <Users className="h-3.5 w-3.5" />
+              العضو / المسؤول
+              {memberIds.length > 0 && (
+                <span className="text-xs text-sidebar-primary font-semibold">
+                  ({memberIds.length} مختار)
+                </span>
+              )}
+            </FormLabel>
+            <MemberMultiSelect
+              members={memberOptions}
+              value={memberIds}
+              onChange={field.onChange}
+            />
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        name="description"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>ملاحظة <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
+            <FormControl>
+              <Textarea
+                value={field.value ?? ""}
+                onChange={field.onChange}
+                placeholder="أي تفاصيل أو توجيهات إضافية..."
+                rows={3}
+                className="resize-none"
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-muted/20">
+        <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+          <CalendarDays className="h-3.5 w-3.5" />
+          تاريخ المهمة
+        </p>
+
+        <FormField
+          name="seriesType"
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>نوع المهمة</FormLabel>
+              <Select onValueChange={field.onChange} value={seriesType}>
+                <FormControl>
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختر نوع المهمة" />
+                  </SelectTrigger>
+                </FormControl>
+                <SelectContent dir="rtl">
+                  <SelectItem value="temporary">مهمة مؤقتة</SelectItem>
+                  <SelectItem value="operational">مهمة تشغيلية متكررة</SelectItem>
+                  <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>
+                </SelectContent>
+              </Select>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
+        {seriesType === "operational" && (
+          <FormField
+            name="recurrence"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>نوع التكرار</FormLabel>
+                <Select onValueChange={field.onChange} value={recurrence === "monthly" ? "monthly" : "weekly"}>
+                  <FormControl>
+                    <SelectTrigger>
+                      <SelectValue placeholder="اختر التكرار" />
+                    </SelectTrigger>
+                  </FormControl>
+                  <SelectContent dir="rtl">
+                    <SelectItem value="weekly">أسبوعي - كل أسبوع</SelectItem>
+                    <SelectItem value="monthly">شهري - كل شهر</SelectItem>
+                  </SelectContent>
+                </Select>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        {seriesType === "operational" && recurrence === "weekly" && (
+          <FormField
+            name="recurrenceDays"
+            render={({ field }) => {
+              const selectedDays = new Set(recurrenceDays.split(",").filter(Boolean));
+              const toggleDay = (day: string) => {
+                const next = new Set(selectedDays);
+                if (next.has(day)) {
+                  next.delete(day);
+                } else {
+                  next.add(day);
+                }
+                const value = [...next].sort((a, b) => Number(a) - Number(b)).join(",");
+                field.onChange(value || null);
+              };
+
+              return (
+                <FormItem>
+                  <FormLabel>أيام التكرار الأسبوعي <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    {WEEKDAY_OPTIONS.map((day) => {
+                      const checked = selectedDays.has(day.value);
+                      return (
+                        <button
+                          key={day.value}
+                          type="button"
+                          onClick={() => toggleDay(day.value)}
+                          className={cn(
+                            "h-10 rounded-md border text-sm font-semibold transition-colors flex items-center justify-center gap-1.5",
+                            checked
+                              ? "bg-sidebar-primary text-sidebar-primary-foreground border-sidebar-primary"
+                              : "bg-background text-foreground border-input hover:bg-muted"
+                          )}
+                        >
+                          {checked && <Check className="h-3.5 w-3.5" />}
+                          {day.label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  <FormMessage />
+                </FormItem>
+              );
+            }}
+          />
+        )}
+
+        {seriesType === "weekly_quota" && (
+          <FormField
+            name="weeklyQuotaRequired"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel>عدد مرات الإنجاز في الأسبوع</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={50}
+                    value={weeklyQuotaRequired}
+                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : null)}
+                    placeholder="مثال: 3"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+        )}
+
+        <div className={cn("grid gap-3", seriesType === "temporary" ? "grid-cols-2" : "grid-cols-1")}>
+          <FormField
+            name="startDate"
+            render={({ field }) => (
+              <FormItem>
+                <FormLabel className="flex items-center gap-1">
+                  البداية <span className="text-[10px] text-red-500 font-normal">مطلوب</span>
+                </FormLabel>
+                <FormControl>
+                  <DatePickerInput
+                    value={typeof field.value === "string" ? field.value : ""}
+                    onChange={field.onChange}
+                    placeholder="اختر تاريخاً"
+                  />
+                </FormControl>
+                <FormMessage />
+              </FormItem>
+            )}
+          />
+
+          {seriesType === "temporary" && (
+            <FormField
+              name="endDate"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel className="flex items-center gap-1">
+                    النهاية <span className="text-[10px] text-muted-foreground font-normal">(اختياري)</span>
+                  </FormLabel>
+                  <FormControl>
+                    <DatePickerInput
+                      value={typeof field.value === "string" ? field.value : ""}
+                      onChange={field.onChange}
+                      placeholder="اختر تاريخاً"
+                      optional
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          )}
+        </div>
+
+        <p className="text-[10px] text-sidebar-primary bg-sidebar-primary/5 border border-sidebar-primary/20 rounded px-2.5 py-1.5">
+          هذا مسار تعديل آمن: يحافظ على بيانات المهمة الحالية، ويتعامل مع الحقول الناقصة دون إغلاق النافذة.
+        </p>
+      </div>
+
+      {showDependency && (
+        <Collapsible
+          open={dependencyOpen}
+          onOpenChange={setDependencyOpen}
+          className="rounded-lg border border-border/60 bg-muted/10"
+        >
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-3 py-3 text-right transition-colors hover:bg-muted/30"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
+                <Link2 className="h-4 w-4 text-sidebar-primary" />
+                المهام المرتبطة
+              </span>
+              {dependencyOpen ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 px-3 pb-3">
+            <FormField
+              name="dependsOnTaskId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    تعتمد على مهمة سابقة
+                    <span className="mr-1 text-xs font-normal text-muted-foreground">(اختياري)</span>
+                  </FormLabel>
+                  <Select
+                    value={safeSelectNumberValue(field.value)}
+                    onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="بدون مهمة مرتبطة" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                      <SelectItem value="none">بدون مهمة مرتبطة</SelectItem>
+                      {dependencyOptions.map((option) => (
+                        <SelectItem key={option.id} value={String(option.id)}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] leading-5 text-muted-foreground">
+                    عند اكتمال المهمة السابقة يصل تنبيه Telegram لمسؤول هذه المهمة. لا يتم قفل المهمة ولا تغيير حالتها.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CollapsibleContent>
+        </Collapsible>
+      )}
     </>
   );
 }
@@ -3525,7 +3975,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                       </div>
                     )}
                     {TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM ? (
-                      <BasicTaskFormFields
+                      <EditTaskFormFields
                         platforms={platforms}
                         members={members as { id: number; name: string; role: string }[]}
                         reciters={reciters}
