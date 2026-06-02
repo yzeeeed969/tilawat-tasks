@@ -322,7 +322,9 @@ const submissionUrlSchema = z.object({
 type TaskFormValues = z.infer<typeof taskSchema>;
 type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
 type EditTaskScope = "single" | "future" | "series";
-const TASK_FORM_STABILITY_MODE = true;
+const TASK_FORM_STABILITY_MODE = false;
+const ENABLE_MEMBER_CREATED_TASKS = false;
+const ENABLE_TASK_DEPENDENCIES = false;
 type UrlDialogState = {
   taskId: number;
   currentUrl: string;
@@ -2293,7 +2295,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const onCreateSubmit = async (data: TaskFormValues) => {
-    const isMemberSelfTask = !isAdmin;
+    const isMemberSelfTask = ENABLE_MEMBER_CREATED_TASKS && !isAdmin;
     if (isMemberSelfTask && !user?.memberId) {
       toast({ title: "لا يوجد عضو مرتبط بحسابك لإنشاء مهمة مقطوعة", variant: "destructive" });
       return;
@@ -2414,7 +2416,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           pageId,
           expandDailyInstances: !isMemberSelfTask && apiSeriesType === "temporary",
           recurrencePattern: recurrence,
-          dependsOnTaskId: isAdmin ? data.dependsOnTaskId ?? null : null,
+          dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : null,
           source: isMemberSelfTask ? "member_created" : "admin_created",
         } as any,
       });
@@ -2514,7 +2516,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           weeklyQuotaRequired: isWeeklyQuota ? Number(data.weeklyQuotaRequired ?? 3) : null,
           pageId: data.pageId ?? null,
           updateScope: effectiveEditScope,
-          dependsOnTaskId: isAdmin ? data.dependsOnTaskId ?? null : undefined,
+          dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : undefined,
         } as any,
       },
       {
@@ -2809,7 +2811,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           </button>
 
           {/* Create dialog */}
-          {((TASK_FORM_STABILITY_MODE ? isAdmin : isAdmin || user?.memberId)) && (
+          {((TASK_FORM_STABILITY_MODE ? isAdmin : isAdmin || (ENABLE_MEMBER_CREATED_TASKS && user?.memberId))) && (
             <Dialog
               open={isCreateOpen}
               onOpenChange={(open) => {
@@ -2856,8 +2858,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             members={members as { id: number; name: string; role: string }[]}
                             reciters={reciters}
                             allTasks={tasks ?? []}
-                            showDependency={isAdmin}
-                            isMemberSelfTask={!isAdmin}
+                            showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
+                            isMemberSelfTask={ENABLE_MEMBER_CREATED_TASKS && !isAdmin}
                             currentMemberName={currentMemberName}
                           />
                         )}
@@ -3190,7 +3192,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         showStatus
                         allTasks={tasks ?? []}
                         currentTask={editingTask}
-                        showDependency={isAdmin}
+                        showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                         excludeTaskId={editingTask?.id}
                       />
                     )}
