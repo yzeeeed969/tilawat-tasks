@@ -3957,7 +3957,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     {!TASK_FORM_STABILITY_MODE && (editingTask as any)?.seriesId && (
                       <div className="rounded-lg border border-amber-200 bg-amber-50/60 p-3 space-y-2">
                         <div className="flex items-center justify-between gap-3">
-                          <FormLabel className="text-sm font-semibold text-sidebar-foreground">نطاق التعديل</FormLabel>
+                          <span className="text-sm font-semibold text-sidebar-foreground">نطاق التعديل</span>
                           <Select value={editTaskScope} onValueChange={(value) => setEditTaskScope(value as EditTaskScope)}>
                             <SelectTrigger className="h-10 bg-background">
                               <SelectValue />
