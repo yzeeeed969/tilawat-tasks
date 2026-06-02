@@ -9,13 +9,13 @@ import {
 import { Smartphone } from "lucide-react";
 
 interface PlatformIconProps {
-  name: string;
-  icon?: string;
+  name?: string | null;
+  icon?: string | null;
   className?: string;
 }
 
 export function PlatformIcon({ name, icon, className = "h-4 w-4" }: PlatformIconProps) {
-  const key = (icon ?? name).toLowerCase();
+  const key = String(icon ?? name ?? "").toLowerCase();
 
   if (key.includes("youtube") || key.includes("يوتيوب")) {
     return <FaYoutube className={`text-red-600 ${className}`} />;
@@ -54,8 +54,8 @@ export function PlatformIcon({ name, icon, className = "h-4 w-4" }: PlatformIcon
   return <Smartphone className={`${colorClass} ${className}`} />;
 }
 
-export function getPlatformEmoji(name: string, icon?: string): string {
-  const key = (icon ?? name).toLowerCase();
+export function getPlatformEmoji(name?: string | null, icon?: string | null): string {
+  const key = String(icon ?? name ?? "").toLowerCase();
   if (key.includes("youtube") || key.includes("يوتيوب")) return "🎬";
   if (key.includes("facebook") || key.includes("فيسبوك")) return "📘";
   if (key.includes("instagram") || key.includes("إنستغرام") || key.includes("انستغرام")) return "📸";

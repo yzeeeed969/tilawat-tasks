@@ -680,7 +680,7 @@ function TaskFormFields({
   currentMemberName?: string | null;
   showDependency?: boolean;
 }) {
-  const { watch, setValue } = useFormContext<TaskFormValues>();
+  const { watch, setValue, getValues } = useFormContext<TaskFormValues>();
   const platformId = watch("platformId");
   const reciterId = watch("reciterId");
   const pageId = watch("pageId");
@@ -766,13 +766,14 @@ function TaskFormFields({
   }, [pages, currentTask, pageId]);
 
   const { data: pageMembers } = useQuery<number[]>({
-    queryKey: ["page-members", pageId],
+    queryKey: ["page-members", platformId, pageId],
     queryFn: async () => {
-      if (!pageId) return [];
-      const r = await fetch(`/api/platforms/0/pages/${pageId}/members`, { credentials: "include" });
+      if (!platformId || !pageId) return [];
+      const r = await fetch(`/api/platforms/${platformId}/pages/${pageId}/members`, { credentials: "include" });
+      if (!r.ok) return [];
       return r.json();
     },
-    enabled: !!pageId,
+    enabled: !!platformId && !!pageId,
   });
 
   const filteredMembers = useMemo(() => {
@@ -865,17 +866,21 @@ function TaskFormFields({
       applicationReciters.find((r) => r.id === reciterId) ??
       ((currentTask as any)?.reciter?.id === reciterId ? ((currentTask as any).reciter as Reciter) : undefined);
     const page = pageOptions.find((pg) => pg.id === pageId);
+    let nextTitle = "مهمة جديدة";
     if (isApplicationPlatform) {
       const parts = [appPrayer, reciter?.name, platform?.name].filter(Boolean) as string[];
-      setValue("title", parts.join(" — ") || "مهمة جديدة");
-      return;
+      nextTitle = parts.join(" — ") || "مهمة جديدة";
+    } else {
+      const location = page?.name || platform?.name || "";
+      const parts: string[] = [];
+      if (location) parts.push(location);
+      if (reciter?.name) parts.push(reciter.name);
+      nextTitle = parts.join(" — ") || "مهمة جديدة";
     }
-    const location = page?.name || platform?.name || "";
-    const parts: string[] = [];
-    if (location) parts.push(location);
-    if (reciter?.name) parts.push(reciter.name);
-    setValue("title", parts.join(" — ") || "مهمة جديدة");
-  }, [platformId, reciterId, pageId, appPrayer, isApplicationPlatform, platformOptions, reciters, applicationReciters, currentTask, pageOptions, setValue]);
+    if (getValues("title") !== nextTitle) {
+      setValue("title", nextTitle, { shouldDirty: false });
+    }
+  }, [platformId, reciterId, pageId, appPrayer, isApplicationPlatform, platformOptions, reciters, applicationReciters, currentTask, pageOptions, setValue, getValues]);
 
   return (
     <>
@@ -899,10 +904,10 @@ function TaskFormFields({
                 </SelectItem>
                 {platformOptions.map((p) => (
                   <SelectItem key={p.id} value={p.id.toString()}>
-                    <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-2">
                       <PlatformIcon name={p.name} />
-                      <span>{p.name}</span>
-                    </div>
+                      <span>{p.name || `المنصة #${p.id}`}</span>
+                    </span>
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1099,7 +1104,7 @@ function TaskFormFields({
                   <SelectItem value="none">بدون اعتماد</SelectItem>
                   {dependencyOptions.map((task) => (
                     <SelectItem key={task.id} value={String(task.id)}>
-                      {task.title}
+                      {task.title || `مهمة #${task.id}`}
                     </SelectItem>
                   ))}
                 </SelectContent>
@@ -1155,16 +1160,16 @@ function TaskFormFields({
                   </FormControl>
                   <SelectContent dir="rtl">
                     <SelectItem value="weekly">
-                      <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-2">
                         <Repeat2 className="h-3.5 w-3.5 text-blue-500" />
                         أسبوعي - كل أسبوع في نفس اليوم
-                      </div>
+                      </span>
                     </SelectItem>
                     <SelectItem value="monthly">
-                      <div className="flex items-center gap-2">
+                      <span className="flex items-center gap-2">
                         <Repeat2 className="h-3.5 w-3.5 text-purple-500" />
                         شهري - كل شهر في نفس التاريخ
-                      </div>
+                      </span>
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -1311,22 +1316,22 @@ function TaskFormFields({
                 </FormControl>
                 <SelectContent dir="rtl">
                   <SelectItem value="urgent">
-                    <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-2">
                       <Flame className="h-3.5 w-3.5 text-red-500" />
                       عاجل
-                    </div>
+                    </span>
                   </SelectItem>
                   <SelectItem value="normal">
-                    <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-2">
                       <Minus className="h-3.5 w-3.5 text-blue-500" />
                       عادي
-                    </div>
+                    </span>
                   </SelectItem>
                   <SelectItem value="low">
-                    <div className="flex items-center gap-2">
+                    <span className="flex items-center gap-2">
                       <ArrowDown className="h-3.5 w-3.5 text-gray-400" />
                       منخفض
-                    </div>
+                    </span>
                   </SelectItem>
                 </SelectContent>
               </Select>
