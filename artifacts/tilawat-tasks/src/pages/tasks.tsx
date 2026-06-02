@@ -67,6 +67,11 @@ import {
   FormLabel,
   FormMessage,
 } from "@/components/ui/form";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFormContext } from "react-hook-form";
@@ -229,6 +234,20 @@ function logTaskDialogOpen(dialogName: string, payload?: Record<string, unknown>
   console.info("[tasks-dialog] open", { dialogName, ...(payload ?? {}) });
 }
 
+function taskDependencyOptionLabel(task: TaskWithDetails | null | undefined) {
+  const id = toPositiveNumber((task as any)?.id);
+  const title = typeof (task as any)?.title === "string" && (task as any).title.trim()
+    ? (task as any).title.trim()
+    : id
+      ? `مهمة #${id}`
+      : "مهمة غير معروفة";
+  const dueDate = (task as any)?.dueDate ? new Date((task as any).dueDate) : null;
+  const dateLabel = dueDate && !Number.isNaN(dueDate.getTime())
+    ? format(dueDate, "d MMMM yyyy", { locale: ar })
+    : "";
+  return dateLabel ? `${title} — ${dateLabel}` : title;
+}
+
 async function ensureApplicationReciterPage(platformId: number, reciterId: number, memberIds: number[]) {
   const pagesRes = await fetch(`/api/platforms/${platformId}/pages`, { credentials: "include" });
   if (!pagesRes.ok) throw new Error("Failed to load platform pages");
@@ -325,7 +344,7 @@ type EditTaskScope = "single" | "future" | "series";
 const TASK_FORM_STABILITY_MODE = false;
 const USE_SAFE_PHASE_ONE_TASK_FORM = true;
 const ENABLE_MEMBER_CREATED_TASKS = false;
-const ENABLE_TASK_DEPENDENCIES = false;
+const ENABLE_TASK_DEPENDENCIES = true;
 type UrlDialogState = {
   taskId: number;
   currentUrl: string;
@@ -664,18 +683,26 @@ function BasicTaskFormFields({
   platforms,
   members,
   reciters,
+  allTasks,
+  excludeTaskId,
   currentTask,
+  showDependency = false,
 }: {
   platforms: { id: number; name: string }[] | undefined;
   members: { id: number; name: string; role: string }[] | undefined;
   reciters: Reciter[] | undefined;
+  allTasks?: TaskWithDetails[];
+  excludeTaskId?: number;
   currentTask?: TaskWithDetails | null;
+  showDependency?: boolean;
 }) {
   const { watch, setValue } = useFormContext<TaskFormValues>();
+  const [dependencyOpen, setDependencyOpen] = useState(false);
   const platformId = watch("platformId");
   const reciterId = watch("reciterId");
   const appPrayer = watch("appPrayer");
   const memberIds = watch("memberIds") ?? [];
+  const dependsOnTaskId = watch("dependsOnTaskId");
   const seriesType = watch("seriesType") ?? "temporary";
   const recurrence = watch("recurrence") ?? "none";
   const recurrenceDays = watch("recurrenceDays") ?? "";
@@ -713,9 +740,43 @@ function BasicTaskFormFields({
   const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
   const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
 
+  const dependencyOptions = useMemo(() => {
+    const options = (allTasks ?? [])
+      .filter((task) => {
+        const taskId = toPositiveNumber((task as any)?.id);
+        if (!taskId) return false;
+        if (excludeTaskId && taskId === excludeTaskId) return false;
+        if ((task as any)?.deletedAt) return false;
+        return true;
+      })
+      .sort((a, b) => {
+        const aTime = new Date(((a as any)?.dueDate ?? (a as any)?.createdAt) as any).getTime();
+        const bTime = new Date(((b as any)?.dueDate ?? (b as any)?.createdAt) as any).getTime();
+        const safeA = Number.isFinite(aTime) ? aTime : 0;
+        const safeB = Number.isFinite(bTime) ? bTime : 0;
+        return safeB - safeA;
+      })
+      .slice(0, 300);
+
+    if (dependsOnTaskId && !options.some((task) => task.id === dependsOnTaskId)) {
+      return [
+        {
+          id: dependsOnTaskId,
+          title: `المهمة المرتبطة الحالية #${dependsOnTaskId}`,
+          createdAt: new Date(),
+        } as unknown as TaskWithDetails,
+        ...options,
+      ];
+    }
+
+    return options;
+  }, [allTasks, excludeTaskId, dependsOnTaskId]);
+
   useEffect(() => {
-    setValue("dependsOnTaskId", null, { shouldDirty: false });
-  }, [setValue]);
+    if (!showDependency) {
+      setValue("dependsOnTaskId", null, { shouldDirty: false });
+    }
+  }, [showDependency, setValue]);
 
   useEffect(() => {
     if (seriesType === "temporary" && recurrence !== "none") {
@@ -1038,6 +1099,66 @@ function BasicTaskFormFields({
               : "إذا تركت النهاية فارغة تُنشأ مهمة ليوم واحد. وإذا اخترت نهاية، ينشئ النظام مهمة مستقلة لكل يوم."}
         </p>
       </div>
+
+      {showDependency && (
+        <Collapsible
+          open={dependencyOpen}
+          onOpenChange={setDependencyOpen}
+          className="rounded-lg border border-border/60 bg-muted/10"
+        >
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between gap-3 px-3 py-3 text-right transition-colors hover:bg-muted/30"
+            >
+              <span className="flex items-center gap-2 text-sm font-semibold text-sidebar-foreground">
+                <Link2 className="h-4 w-4 text-sidebar-primary" />
+                المهام المرتبطة
+              </span>
+              {dependencyOpen ? (
+                <ChevronDown className="h-4 w-4 text-muted-foreground" />
+              ) : (
+                <ChevronRight className="h-4 w-4 text-muted-foreground" />
+              )}
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="space-y-3 px-3 pb-3">
+            <FormField
+              name="dependsOnTaskId"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>
+                    تعتمد على مهمة سابقة
+                    <span className="mr-1 text-xs font-normal text-muted-foreground">(اختياري)</span>
+                  </FormLabel>
+                  <Select
+                    value={safeSelectNumberValue(field.value)}
+                    onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
+                  >
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue placeholder="بدون مهمة مرتبطة" />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                      <SelectItem value="none">بدون مهمة مرتبطة</SelectItem>
+                      {dependencyOptions.map((task) => (
+                        <SelectItem key={task.id} value={String(task.id)}>
+                          {taskDependencyOptionLabel(task)}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  <p className="text-[10px] leading-5 text-muted-foreground">
+                    عند اكتمال المهمة السابقة يصل تنبيه Telegram لمسؤول هذه المهمة. لا يتم قفل المهمة ولا تغيير حالتها.
+                  </p>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+          </CollapsibleContent>
+        </Collapsible>
+      )}
 
     </>
   );
@@ -3062,6 +3183,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             platforms={platforms}
                             members={members as { id: number; name: string; role: string }[]}
                             reciters={reciters}
+                            allTasks={tasks ?? []}
+                            showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                           />
                         ) : (
                           <TaskFormFields
@@ -3394,6 +3517,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         members={members as { id: number; name: string; role: string }[]}
                         reciters={reciters}
                         currentTask={editingTask}
+                        allTasks={tasks ?? []}
+                        excludeTaskId={editingTask?.id}
+                        showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                       />
                     ) : (
                       <TaskFormFields

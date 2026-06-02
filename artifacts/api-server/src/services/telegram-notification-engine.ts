@@ -18,6 +18,7 @@ import {
 import { ensureTelegramSchema } from "./telegram-schema";
 import { ensureTaskQuotaSchema } from "./task-quota-schema";
 import { sendTelegramMessage } from "./telegram";
+import { getTaskUrl } from "../lib/public-url";
 
 const RIYADH_OFFSET_HOURS = 3;
 const LINK_TOKEN_BYTES = 18;
@@ -1076,7 +1077,7 @@ export async function notifyTelegramTaskDependencyReady(input: {
       "يمكنك الآن تنفيذ مهمتك:",
       taskFieldLine(input.dependent),
       `📅 التاريخ: ${escapeHtml(formatRiyadhDate(input.dependent.dueDate ?? null))}`,
-      `فتح المهمة: /tasks/${input.dependent.id}`,
+      `فتح المهمة: ${escapeHtml(getTaskUrl(input.dependent.id))}`,
     ].join("\n");
 
     const result = await sendLoggedTelegram({
