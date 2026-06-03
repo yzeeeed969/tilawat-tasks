@@ -8,9 +8,7 @@ const router = Router();
 const PROJECT_START_DATE = new Date(Date.UTC(2026, 4, 24, 0, 0, 0, 0));
 
 const periodOptions = {
-  "7d": { days: 7, label: "آخر 7 أيام" },
   "30d": { days: 30, label: "آخر 30 يومًا" },
-  "90d": { days: 90, label: "آخر 90 يومًا" },
   all: { days: null, label: "الكل" },
 } as const;
 
@@ -84,10 +82,10 @@ async function getYoutubeViewsStats(): Promise<YoutubeViewsStats> {
 }
 
 function resolvePeriod(raw: unknown, now = new Date()) {
-  const requested = typeof raw === "string" ? raw : "30d";
-  const period: PeriodKey = requested === "7d" || requested === "30d" || requested === "90d" || requested === "all"
+  const requested = typeof raw === "string" ? raw : "all";
+  const period: PeriodKey = requested === "30d" || requested === "all"
     ? requested
-    : "30d";
+    : "all";
   const option = periodOptions[period];
   const start = option.days === null
     ? PROJECT_START_DATE
@@ -123,7 +121,7 @@ router.patch("/public-site-settings", requireAdmin, async (req, res) => {
 router.get("/public/achievements", async (req, res) => {
   const now = new Date();
   const period = resolvePeriod(req.query.period, now);
-  const includeBaselines = period.key === "all";
+  const includeBaselinesInPeriodTotals = period.key === "all";
   const youtubeViews = await getYoutubeViewsStats();
   await ensurePlatformsBaselineColumn();
   const platforms = await db.select().from(platformsTable).orderBy(platformsTable.id);
@@ -161,7 +159,7 @@ router.get("/public/achievements", async (req, res) => {
   const baselinePostsTotal = [...baselinePostsByPlatform.values()].reduce((sum, value) => sum + value, 0);
   const last30Start = new Date(now);
   last30Start.setDate(last30Start.getDate() - 30);
-  const platformCounts = new Map<number, { publications: number; completedTasks: number }>();
+  const cumulativePlatformCounts = new Map<number, { publications: number; completedTasks: number }>();
   const monthlyMap = new Map<string, { key: string; monthStart: Date; publications: number; completedTasks: number }>();
 
   let totalPublications = 0;
@@ -174,6 +172,11 @@ router.get("/public/achievements", async (req, res) => {
     const count = publicationCount(task, proofCounts.get(task.id) ?? 0);
     totalPublications += count;
 
+    const cumulativePlatform = cumulativePlatformCounts.get(task.platformId) ?? { publications: 0, completedTasks: 0 };
+    cumulativePlatform.publications += count;
+    cumulativePlatform.completedTasks += 1;
+    cumulativePlatformCounts.set(task.platformId, cumulativePlatform);
+
     if (activityDate >= last30Start && activityDate <= now) {
       last30Publications += count;
     }
@@ -181,10 +184,6 @@ router.get("/public/achievements", async (req, res) => {
     if (activityDate >= period.start && activityDate <= period.end) {
       periodPublications += count;
       periodCompletedTasks += 1;
-      const current = platformCounts.get(task.platformId) ?? { publications: 0, completedTasks: 0 };
-      current.publications += count;
-      current.completedTasks += 1;
-      platformCounts.set(task.platformId, current);
 
       const key = monthKey(activityDate);
       const currentMonth = monthlyMap.get(key) ?? {
@@ -199,15 +198,13 @@ router.get("/public/achievements", async (req, res) => {
     }
   }
 
-  const platformIdsForAchievements = includeBaselines
-    ? new Set([...platforms.map((platform) => platform.id), ...platformCounts.keys()])
-    : new Set(platformCounts.keys());
+  const platformIdsForAchievements = new Set([...platforms.map((platform) => platform.id), ...cumulativePlatformCounts.keys()]);
 
   const achievementsByPlatform = [...platformIdsForAchievements]
     .map((platformId) => {
-      const counts = platformCounts.get(platformId) ?? { publications: 0, completedTasks: 0 };
+      const counts = cumulativePlatformCounts.get(platformId) ?? { publications: 0, completedTasks: 0 };
       const platform = platformMap.get(platformId);
-      const baselinePublications = includeBaselines ? (baselinePostsByPlatform.get(platformId) ?? 0) : 0;
+      const baselinePublications = baselinePostsByPlatform.get(platformId) ?? 0;
       return {
         platformId,
         name: platform?.name ?? "منصة غير معروفة",
@@ -219,10 +216,9 @@ router.get("/public/achievements", async (req, res) => {
         completedTasks: counts.completedTasks,
       };
     })
-    .filter((row) => row.publications > 0 || row.completedTasks > 0 || includeBaselines)
     .sort((a, b) => b.publications - a.publications);
 
-  const displayedTotalPublications = periodPublications + (includeBaselines ? baselinePostsTotal : 0);
+  const displayedTotalPublications = periodPublications + (includeBaselinesInPeriodTotals ? baselinePostsTotal : 0);
 
   const monthlyGrowth = [...monthlyMap.values()]
     .filter((row) => row.publications > 0 || row.completedTasks > 0)

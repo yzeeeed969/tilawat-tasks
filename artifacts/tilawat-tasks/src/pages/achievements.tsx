@@ -2,13 +2,13 @@ import { useState, type ElementType } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ar } from "date-fns/locale";
-import { BarChart3, CalendarDays, Clock, Eye, Globe2, LineChart, TrendingUp } from "lucide-react";
+import { BarChart3, CheckCircle2, Clock, Eye, Globe2, LineChart, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
 import { PlatformIcon } from "@/lib/platform-icon";
 
-type PeriodKey = "7d" | "30d" | "90d" | "all";
+type PeriodKey = "30d" | "all";
 
 type PublicAchievements = {
   period: {
@@ -55,10 +55,8 @@ type PublicAchievements = {
 };
 
 const periodOptions: Array<{ value: PeriodKey; label: string }> = [
-  { value: "7d", label: "آخر 7 أيام" },
-  { value: "30d", label: "آخر 30 يومًا" },
-  { value: "90d", label: "آخر 90 يومًا" },
   { value: "all", label: "الكل" },
+  { value: "30d", label: "آخر 30 يومًا" },
 ];
 
 async function fetchPublicAchievements(period: PeriodKey): Promise<PublicAchievements> {
@@ -73,10 +71,6 @@ function formatNumber(value: number) {
 
 function formatAverage(value: number) {
   return new Intl.NumberFormat("ar-SA", { maximumFractionDigits: 1 }).format(value);
-}
-
-function formatDate(date: string | Date) {
-  return format(new Date(date), "d MMMM yyyy", { locale: ar });
 }
 
 function formatDateTime(date: string | Date) {
@@ -227,7 +221,7 @@ function MonthlyGrowthChart({
 }
 
 export default function Achievements() {
-  const [period, setPeriod] = useState<PeriodKey>("30d");
+  const [period, setPeriod] = useState<PeriodKey>("all");
   const { data, isLoading, isError } = useQuery({
     queryKey: ["public-achievements", period],
     queryFn: () => fetchPublicAchievements(period),
@@ -235,7 +229,7 @@ export default function Achievements() {
   });
 
   const maxPlatform = Math.max(...(data?.achievementsByPlatform.map((row) => row.publications) ?? [0]), 1);
-  const selectedPeriodLabel = periodOptions.find((option) => option.value === period)?.label ?? "آخر 30 يومًا";
+  const selectedPeriodLabel = periodOptions.find((option) => option.value === period)?.label ?? "الكل";
   const isAllPeriod = period === "all";
 
   return (
@@ -289,7 +283,7 @@ export default function Achievements() {
               ))}
             </select>
             <p className="mt-3 text-xs leading-6 text-[#74877d]">
-              تتغير البطاقات والمنصات والرسم البياني حسب الفترة المختارة دون عرض أي بيانات تشغيلية داخلية.
+              تؤثر الفترة على إحصائيات الفترة فقط، بينما تبقى الأرقام التراكمية ثابتة.
             </p>
           </div>
         </div>
@@ -298,7 +292,7 @@ export default function Achievements() {
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:py-10">
         {isLoading ? (
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-            {[...Array(6)].map((_, index) => <Skeleton key={index} className="h-32 rounded-lg bg-white/70" />)}
+            {[...Array(5)].map((_, index) => <Skeleton key={index} className="h-32 rounded-lg bg-white/70" />)}
           </div>
         ) : isError || !data ? (
           <Card className="border-red-200 bg-red-50/80">
@@ -308,61 +302,45 @@ export default function Achievements() {
           </Card>
         ) : (
           <>
-            <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-              <StatCard
-                className="col-span-2 xl:col-span-1"
-                title="مشاهدات قنوات YouTube التابعة لتطبيق تلاوات الحرمين"
-                value={data.youtubeViews.totalViews === null ? "غير متاح مؤقتًا" : `${formatNumber(data.youtubeViews.totalViews)} مشاهدة`}
-                icon={Eye}
-                hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${formatDateTime(data.youtubeViews.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
-                tone="blue"
-              />
-              <StatCard
-                title="إجمالي المنشورات"
-                value={formatNumber(data.totalPublications)}
-                icon={LineChart}
-                hint={isAllPeriod ? "تراكمي: تأسيسي + إنجازات النظام" : selectedPeriodLabel}
-              />
-              <StatCard
-                title="آخر 30 يومًا"
-                value={formatNumber(data.last30Publications)}
-                icon={Clock}
-                hint="مواد منشورة حديثًا"
-                tone="blue"
-              />
-              <StatCard
-                title="المنصات النشطة"
-                value={formatNumber(data.activePlatforms)}
-                icon={Globe2}
-                hint="حسب الفترة المختارة"
-              />
-              <StatCard
-                title="متوسط الإنجاز اليومي"
-                value={formatAverage(data.dailyAverage)}
-                icon={TrendingUp}
-                hint={isAllPeriod ? "متوسط تراكمي تقريبي" : "منشور يوميًا تقريبًا"}
-                tone="gold"
-              />
-              <StatCard
-                title="بداية احتساب النظام"
-                value={formatDate(data.projectStartDate)}
-                icon={CalendarDays}
-                hint="الكل يجمع الأرقام التأسيسية مع إنجازات النظام"
-                tone="gold"
-              />
-            </section>
-
             <section id="platforms">
-              <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
+              <SectionTitle
+                icon={Globe2}
+                title="الإحصائيات التراكمية"
+                hint="أرقام عامة ثابتة لا تتغير عند تغيير الفترة."
+              />
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+                <StatCard
+                  className="col-span-2 xl:col-span-1"
+                  title="مشاهدات قنوات YouTube التابعة لتطبيق تلاوات الحرمين"
+                  value={data.youtubeViews.totalViews === null ? "غير متاح مؤقتًا" : `${formatNumber(data.youtubeViews.totalViews)} مشاهدة`}
+                  icon={Eye}
+                  hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${formatDateTime(data.youtubeViews.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
+                  tone="blue"
+                />
+                <StatCard
+                  title="إجمالي المنشورات التراكمي"
+                  value={formatNumber(data.allTime.totalPublications)}
+                  icon={LineChart}
+                  hint="الأرقام التأسيسية + إنجازات النظام"
+                />
+                <StatCard
+                  title="المنصات النشطة"
+                  value={formatNumber(data.activePlatforms)}
+                  icon={Globe2}
+                  hint="حسب الأرقام التراكمية"
+                />
+              </div>
+
+              <Card className="mt-8 border-[#eadfcd] bg-white/88 shadow-sm">
                 <CardContent className="p-6">
                   <SectionTitle
                     icon={BarChart3}
                     title="الإنجازات حسب المنصات"
-                    hint={isAllPeriod ? "الأرقام التراكمية لكل منصة" : `إحصاء مجمع حسب ${selectedPeriodLabel}`}
+                    hint="أرقام تراكمية ثابتة: الرقم التأسيسي لكل منصة + إنجازات نظام المهام."
                   />
                   {data.achievementsByPlatform.length === 0 ? (
                     <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
-                      لا توجد إنجازات في هذه الفترة.
+                      لا توجد منصات للعرض حاليًا.
                     </p>
                   ) : (
                     <div className="space-y-4">
@@ -381,9 +359,9 @@ export default function Achievements() {
                           </div>
                           <Progress value={(platform.publications / maxPlatform) * 100} className="mt-3 h-2 bg-[#eee4d2]" />
                           <p className="mt-2 text-xs font-semibold text-[#778b80]">
-                            {isAllPeriod && platform.baselinePublications > 0
+                            {platform.baselinePublications > 0
                               ? `يشمل ${formatNumber(platform.baselinePublications)} رقمًا تأسيسيًا و${formatNumber(platform.systemPublications)} من نظام المهام`
-                              : `${formatNumber(platform.completedTasks)} مهمة مكتملة`}
+                              : `${formatNumber(platform.systemPublications)} من نظام المهام`}
                           </p>
                         </div>
                       ))}
@@ -394,12 +372,41 @@ export default function Achievements() {
             </section>
 
             <section>
+              <SectionTitle
+                icon={Clock}
+                title="إحصائيات الفترة"
+                hint={`تتغير حسب اختيار الفترة الحالية: ${selectedPeriodLabel}.`}
+              />
+              <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+                <StatCard
+                  title="إجمالي منشورات الفترة"
+                  value={formatNumber(data.totalPublications)}
+                  icon={LineChart}
+                  hint={isAllPeriod ? "الكل: تأسيسي + إنجازات النظام" : selectedPeriodLabel}
+                />
+                <StatCard
+                  title="المهام المكتملة في الفترة"
+                  value={formatNumber(data.completedTasks)}
+                  icon={CheckCircle2}
+                  hint="من نظام إدارة المهام"
+                />
+                <StatCard
+                  title="متوسط الإنجاز اليومي"
+                  value={formatAverage(data.dailyAverage)}
+                  icon={TrendingUp}
+                  hint={isAllPeriod ? "متوسط تراكمي تقريبي" : "منشور يوميًا تقريبًا"}
+                  tone="gold"
+                />
+              </div>
+            </section>
+
+            <section>
               <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
                 <CardContent className="p-6">
                   <SectionTitle
                     icon={LineChart}
                     title="النمو الشهري"
-                    hint="يبدأ من أول شهر توجد فيه بيانات فعلية فقط"
+                    hint="يرتبط بالفترة المختارة ويبدأ من أول شهر توجد فيه بيانات فعلية."
                   />
                   <MonthlyGrowthChart rows={data.monthlyGrowth} />
                 </CardContent>
