@@ -72,6 +72,11 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFormContext } from "react-hook-form";
@@ -234,29 +239,75 @@ function logTaskDialogOpen(dialogName: string, payload?: Record<string, unknown>
   console.info("[tasks-dialog] open", { dialogName, ...(payload ?? {}) });
 }
 
-function taskDependencyOptionLabel(task: TaskWithDetails | null | undefined) {
+type TaskDependencyOption = {
+  id: number;
+  label: string;
+  title: string;
+  platformName: string;
+  reciterName: string;
+  responsibleNames: string;
+  statusLabel: string;
+  dateLabel: string;
+  dateKey: string;
+  searchText: string;
+};
+
+function taskDependencyTitle(task: TaskWithDetails | null | undefined) {
   const id = toPositiveNumber((task as any)?.id);
-  const title = typeof (task as any)?.title === "string" && (task as any).title.trim()
+  return typeof (task as any)?.title === "string" && (task as any).title.trim()
     ? (task as any).title.trim()
     : id
       ? `مهمة #${id}`
       : "مهمة غير معروفة";
-  const platform = (task as any)?.platform?.name;
-  const reciter = (task as any)?.reciter?.name;
-  const members = taskAssignedMembers(task).map((member) => member.name).filter(Boolean).join("، ");
-  const status = (task as any)?.status === "completed" ? "مكتملة" : "قيد التنفيذ";
+}
+
+function taskDependencyDateInfo(task: TaskWithDetails | null | undefined) {
   const dueDate = (task as any)?.dueDate ? new Date((task as any).dueDate) : null;
-  const dateLabel = dueDate && !Number.isNaN(dueDate.getTime())
-    ? format(dueDate, "d MMMM yyyy", { locale: ar })
-    : "";
-  return [title, platform, reciter, dateLabel, members, status].filter(Boolean).join(" — ");
+  if (!dueDate || Number.isNaN(dueDate.getTime())) {
+    return { dateLabel: "بدون تاريخ", dateKey: "" };
+  }
+  return {
+    dateLabel: format(dueDate, "EEEE d MMMM yyyy", { locale: ar }),
+    dateKey: format(dueDate, "yyyy-MM-dd"),
+  };
+}
+
+function taskDependencyStatusLabel(task: TaskWithDetails | null | undefined) {
+  return (task as any)?.status === "completed" ? "مكتملة" : "قيد الانتظار";
+}
+
+function buildTaskDependencyOption(task: TaskWithDetails): TaskDependencyOption {
+  const title = taskDependencyTitle(task);
+  const platformName = ((task as any)?.platform?.name ?? "").trim();
+  const reciterName = ((task as any)?.reciter?.name ?? "").trim();
+  const responsibleNames = taskAssignedMembers(task).map((member) => member.name).filter(Boolean).join("، ");
+  const statusLabel = taskDependencyStatusLabel(task);
+  const { dateLabel, dateKey } = taskDependencyDateInfo(task);
+  const label = [title, platformName, reciterName, dateLabel, responsibleNames, statusLabel]
+    .filter(Boolean)
+    .join(" — ");
+
+  return {
+    id: toPositiveNumber((task as any).id) ?? 0,
+    label,
+    title,
+    platformName,
+    reciterName,
+    responsibleNames,
+    statusLabel,
+    dateLabel,
+    dateKey,
+    searchText: [title, platformName, reciterName, responsibleNames, statusLabel, dateLabel]
+      .join(" ")
+      .toLowerCase(),
+  };
 }
 
 function buildTaskDependencySelectOptions(
   allTasks: TaskWithDetails[] | undefined,
   excludeTaskId: number | undefined,
   dependsOnTaskId: number | null | undefined
-) {
+): TaskDependencyOption[] {
   const seen = new Set<number>();
   const options = (allTasks ?? [])
     .map((task) => {
@@ -278,11 +329,8 @@ function buildTaskDependencySelectOptions(
       const safeB = Number.isFinite(bTime) ? bTime : 0;
       return safeB - safeA;
     })
-    .slice(0, 500)
-    .map(({ id, task }) => ({
-      id,
-      label: taskDependencyOptionLabel(task),
-    }));
+    .map(({ task }) => buildTaskDependencyOption(task))
+    .filter((option) => option.id > 0);
 
   const currentDependencyId = toPositiveNumber(dependsOnTaskId);
   if (currentDependencyId && !options.some((option) => option.id === currentDependencyId)) {
@@ -290,12 +338,217 @@ function buildTaskDependencySelectOptions(
       {
         id: currentDependencyId,
         label: `المهمة المرتبطة الحالية #${currentDependencyId}`,
+        title: `المهمة المرتبطة الحالية #${currentDependencyId}`,
+        platformName: "",
+        reciterName: "",
+        responsibleNames: "",
+        statusLabel: "غير متاحة",
+        dateLabel: "غير ظاهرة في القائمة الحالية",
+        dateKey: "",
+        searchText: `المهمة المرتبطة الحالية #${currentDependencyId}`.toLowerCase(),
       },
       ...options,
     ];
   }
 
   return options;
+}
+
+function uniqueTextOptions(values: string[]) {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) =>
+    a.localeCompare(b, "ar")
+  );
+}
+
+function DependencyTaskPicker({
+  value,
+  onChange,
+  options,
+}: {
+  value: number | null | undefined;
+  onChange: (value: number | null) => void;
+  options: TaskDependencyOption[];
+}) {
+  const [open, setOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [platformFilter, setPlatformFilter] = useState("all");
+  const [reciterFilter, setReciterFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("");
+
+  const selectedId = toPositiveNumber(value);
+  const selectedOption = selectedId ? options.find((option) => option.id === selectedId) : null;
+
+  const platformFilterOptions = useMemo(
+    () => uniqueTextOptions(options.map((option) => option.platformName)),
+    [options]
+  );
+  const reciterFilterOptions = useMemo(
+    () => uniqueTextOptions(options.map((option) => option.reciterName)),
+    [options]
+  );
+
+  const filteredOptions = useMemo(() => {
+    const query = searchQuery.trim().toLowerCase();
+    return options.filter((option) => {
+      if (query && !option.searchText.includes(query)) return false;
+      if (platformFilter !== "all" && option.platformName !== platformFilter) return false;
+      if (reciterFilter !== "all" && option.reciterName !== reciterFilter) return false;
+      if (dateFilter && option.dateKey !== dateFilter) return false;
+      return true;
+    });
+  }, [dateFilter, options, platformFilter, reciterFilter, searchQuery]);
+
+  const resetFilters = () => {
+    setSearchQuery("");
+    setPlatformFilter("all");
+    setReciterFilter("all");
+    setDateFilter("");
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          variant="outline"
+          className="min-h-[44px] w-full justify-between gap-3 whitespace-normal text-right"
+        >
+          <span className="min-w-0 flex-1 truncate">
+            {selectedOption ? selectedOption.title : "بدون مهمة مرتبطة"}
+          </span>
+          <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="start"
+        sideOffset={6}
+        className="z-[120] w-[min(92vw,620px)] p-3"
+        dir="rtl"
+      >
+        <div className="space-y-3">
+          <button
+            type="button"
+            onClick={() => {
+              onChange(null);
+              setOpen(false);
+            }}
+            className={cn(
+              "flex w-full items-center justify-between rounded-md border px-3 py-2 text-sm font-semibold transition-colors",
+              !selectedId
+                ? "border-sidebar-primary bg-sidebar-primary text-sidebar-primary-foreground"
+                : "border-border bg-muted/20 hover:bg-muted"
+            )}
+          >
+            <span>بدون مهمة مرتبطة</span>
+            {!selectedId && <Check className="h-4 w-4" />}
+          </button>
+
+          <div className="relative">
+            <Search className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="ابحث عن مهمة..."
+              className="pr-9"
+            />
+          </div>
+
+          <div className="grid gap-2 sm:grid-cols-3">
+            <select
+              value={platformFilter}
+              onChange={(event) => setPlatformFilter(event.target.value)}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm"
+            >
+              <option value="all">كل المنصات</option>
+              {platformFilterOptions.map((platform) => (
+                <option key={platform} value={platform}>
+                  {platform}
+                </option>
+              ))}
+            </select>
+
+            <select
+              value={reciterFilter}
+              onChange={(event) => setReciterFilter(event.target.value)}
+              className="h-10 rounded-md border border-input bg-background px-3 text-sm text-foreground shadow-sm"
+            >
+              <option value="all">كل القراء</option>
+              {reciterFilterOptions.map((reciter) => (
+                <option key={reciter} value={reciter}>
+                  {reciter}
+                </option>
+              ))}
+            </select>
+
+            <Input
+              type="date"
+              value={dateFilter}
+              onChange={(event) => setDateFilter(event.target.value)}
+              aria-label="فلترة بتاريخ المهمة"
+            />
+          </div>
+
+          {(searchQuery || platformFilter !== "all" || reciterFilter !== "all" || dateFilter) && (
+            <Button type="button" variant="ghost" size="sm" className="w-full" onClick={resetFilters}>
+              مسح بحث وفلاتر المهام المرتبطة
+            </Button>
+          )}
+
+          <div className="max-h-[340px] space-y-2 overflow-y-auto pr-1">
+            {filteredOptions.length === 0 ? (
+              <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
+                لا توجد مهام مطابقة للبحث أو الفلاتر الحالية.
+              </div>
+            ) : (
+              filteredOptions.map((option) => {
+                const selected = selectedId === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    onClick={() => {
+                      onChange(option.id);
+                      setOpen(false);
+                    }}
+                    className={cn(
+                      "w-full rounded-md border px-3 py-2 text-right transition-colors",
+                      selected
+                        ? "border-sidebar-primary bg-sidebar-primary/10"
+                        : "border-border bg-background hover:bg-muted/60"
+                    )}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <p className="break-words text-sm font-semibold leading-6 text-foreground">
+                          {option.title}
+                        </p>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {option.platformName || "بدون منصة"}
+                          {option.reciterName ? ` — ${option.reciterName}` : ""}
+                        </p>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          {option.dateLabel}
+                        </p>
+                        <p className="text-xs leading-5 text-muted-foreground">
+                          المسؤول: {option.responsibleNames || "غير محدد"}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-col items-end gap-2">
+                        {selected && <Check className="h-4 w-4 text-sidebar-primary" />}
+                        <Badge variant={option.statusLabel === "مكتملة" ? "default" : "secondary"}>
+                          {option.statusLabel}
+                        </Badge>
+                      </div>
+                    </div>
+                  </button>
+                );
+              })
+            )}
+          </div>
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
 }
 
 async function ensureApplicationReciterPage(platformId: number, reciterId: number, memberIds: number[]) {
@@ -1154,24 +1407,13 @@ function BasicTaskFormFields({
                     تعتمد على مهمة سابقة
                     <span className="mr-1 text-xs font-normal text-muted-foreground">(اختياري)</span>
                   </FormLabel>
-                  <Select
-                    value={safeSelectNumberValue(field.value)}
-                    onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="بدون مهمة مرتبطة" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                      <SelectItem value="none">بدون مهمة مرتبطة</SelectItem>
-                      {dependencyOptions.map((option) => (
-                        <SelectItem key={option.id} value={String(option.id)}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <DependencyTaskPicker
+                      value={field.value}
+                      onChange={field.onChange}
+                      options={dependencyOptions}
+                    />
+                  </FormControl>
                   <p className="text-[10px] leading-5 text-muted-foreground">
                     عند اكتمال المهمة السابقة يصل تنبيه Telegram لمسؤول هذه المهمة. لا يتم قفل المهمة ولا تغيير حالتها.
                   </p>
@@ -1605,24 +1847,13 @@ function EditTaskFormFields({
                     تعتمد على مهمة سابقة
                     <span className="mr-1 text-xs font-normal text-muted-foreground">(اختياري)</span>
                   </FormLabel>
-                  <Select
-                    value={safeSelectNumberValue(field.value)}
-                    onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
-                  >
-                    <FormControl>
-                      <SelectTrigger>
-                        <SelectValue placeholder="بدون مهمة مرتبطة" />
-                      </SelectTrigger>
-                    </FormControl>
-                    <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                      <SelectItem value="none">بدون مهمة مرتبطة</SelectItem>
-                      {dependencyOptions.map((option) => (
-                        <SelectItem key={option.id} value={String(option.id)}>
-                          {option.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  <FormControl>
+                    <DependencyTaskPicker
+                      value={field.value}
+                      onChange={field.onChange}
+                      options={dependencyOptions}
+                    />
+                  </FormControl>
                   <p className="text-[10px] leading-5 text-muted-foreground">
                     عند اكتمال المهمة السابقة يصل تنبيه Telegram لمسؤول هذه المهمة. لا يتم قفل المهمة ولا تغيير حالتها.
                   </p>
@@ -2055,24 +2286,13 @@ function TaskFormFields({
           render={({ field }) => (
             <FormItem>
               <FormLabel>تعتمد على مهمة سابقة <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
-              <Select
-                onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
-                value={safeSelectNumberValue(field.value)}
-              >
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder="بدون اعتماد" />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                  <SelectItem value="none">بدون اعتماد</SelectItem>
-                  {dependencyOptions.map((option) => (
-                    <SelectItem key={option.id} value={String(option.id)}>
-                      {option.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+              <FormControl>
+                <DependencyTaskPicker
+                  value={field.value}
+                  onChange={field.onChange}
+                  options={dependencyOptions}
+                />
+              </FormControl>
               <p className="text-[10px] text-muted-foreground">
                 عند اكتمال المهمة السابقة يصل تنبيه Telegram لمسؤول هذه المهمة.
               </p>
