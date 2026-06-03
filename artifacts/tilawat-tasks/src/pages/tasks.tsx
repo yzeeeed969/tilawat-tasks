@@ -411,6 +411,7 @@ function DependencyTaskPicker({
         <Button
           type="button"
           variant="outline"
+          aria-label="اختيار المهمة السابقة المرتبطة"
           className="min-h-[44px] w-full justify-between gap-3 whitespace-normal text-right"
         >
           <span className="min-w-0 flex-1 truncate">
