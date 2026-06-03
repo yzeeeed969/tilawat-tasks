@@ -894,12 +894,16 @@ components:
           type: string
         isMain:
           type: boolean
+        baselinePostsCount:
+          type: integer
+          minimum: 0
       required:
         - id
         - name
         - icon
         - color
         - isMain
+        - baselinePostsCount
 
     CreatePlatformBody:
       type: object
@@ -912,6 +916,9 @@ components:
           type: string
         isMain:
           type: boolean
+        baselinePostsCount:
+          type: integer
+          minimum: 0
       required:
         - name
         - icon

@@ -1,6 +1,6 @@
 import { useState, type ElementType } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { differenceInCalendarDays, format } from "date-fns";
+import { format } from "date-fns";
 import { ar } from "date-fns/locale";
 import { BarChart3, CalendarDays, Clock, Eye, Globe2, LineChart, TrendingUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,10 +25,14 @@ type PublicAchievements = {
   projectStartDate: string;
   allTime: {
     totalPublications: number;
+    systemPublications: number;
+    baselinePublications: number;
     completedTasks: number;
   };
   youtubeViews: {
     totalViews: number | null;
+    manualViews: number | null;
+    baselineViews: number;
     updatedAt: string | null;
     fetchedAt: string;
   };
@@ -38,6 +42,8 @@ type PublicAchievements = {
     icon: string;
     color: string;
     publications: number;
+    systemPublications: number;
+    baselinePublications: number;
     completedTasks: number;
   }>;
   monthlyGrowth: Array<{
@@ -52,7 +58,7 @@ const periodOptions: Array<{ value: PeriodKey; label: string }> = [
   { value: "7d", label: "آخر 7 أيام" },
   { value: "30d", label: "آخر 30 يومًا" },
   { value: "90d", label: "آخر 90 يومًا" },
-  { value: "all", label: "منذ البداية" },
+  { value: "all", label: "الكل" },
 ];
 
 async function fetchPublicAchievements(period: PeriodKey): Promise<PublicAchievements> {
@@ -95,12 +101,14 @@ function StatCard({
   icon: Icon,
   hint,
   tone = "green",
+  className = "",
 }: {
   title: string;
   value: string;
   icon: ElementType;
   hint: string;
   tone?: "green" | "gold" | "blue";
+  className?: string;
 }) {
   const toneClass = {
     green: "bg-emerald-50 text-emerald-700 border-emerald-100",
@@ -109,16 +117,16 @@ function StatCard({
   }[tone];
 
   return (
-    <Card className="border-[#eadfcd] bg-white/88 shadow-sm backdrop-blur">
-      <CardContent className="p-5">
-        <div className="flex items-start justify-between gap-4">
+    <Card className={`border-[#eadfcd] bg-white/88 shadow-sm backdrop-blur ${className}`}>
+      <CardContent className="p-3 sm:p-5">
+        <div className="flex items-start justify-between gap-3 sm:gap-4">
           <div className="min-w-0">
-            <p className="text-sm font-semibold text-[#5f796d]">{title}</p>
-            <p className="mt-2 text-3xl font-black text-[#103c2d]">{value}</p>
+            <p className="text-xs font-semibold leading-5 text-[#5f796d] sm:text-sm">{title}</p>
+            <p className="mt-2 break-words text-2xl font-black leading-tight text-[#103c2d] sm:text-3xl">{value}</p>
             <p className="mt-1 text-xs text-[#7c8f85]">{hint}</p>
           </div>
-          <div className={`rounded-lg border p-3 ${toneClass}`}>
-            <Icon className="h-5 w-5" />
+          <div className={`rounded-lg border p-2 sm:p-3 ${toneClass}`}>
+            <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
           </div>
         </div>
       </CardContent>
@@ -228,9 +236,7 @@ export default function Achievements() {
 
   const maxPlatform = Math.max(...(data?.achievementsByPlatform.map((row) => row.publications) ?? [0]), 1);
   const selectedPeriodLabel = periodOptions.find((option) => option.value === period)?.label ?? "آخر 30 يومًا";
-  const projectDays = data
-    ? Math.max(1, differenceInCalendarDays(new Date(data.lastUpdated), new Date(data.projectStartDate)) + 1)
-    : 0;
+  const isAllPeriod = period === "all";
 
   return (
     <main dir="rtl" className="min-h-screen bg-[#f6f1e8] text-[#103c2d]">
@@ -291,7 +297,7 @@ export default function Achievements() {
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:py-10">
         {isLoading ? (
-          <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
             {[...Array(6)].map((_, index) => <Skeleton key={index} className="h-32 rounded-lg bg-white/70" />)}
           </div>
         ) : isError || !data ? (
@@ -302,12 +308,20 @@ export default function Achievements() {
           </Card>
         ) : (
           <>
-            <section className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+            <section className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+              <StatCard
+                className="col-span-2 xl:col-span-1"
+                title="مشاهدات قنوات YouTube التابعة لتطبيق تلاوات الحرمين"
+                value={data.youtubeViews.totalViews === null ? "غير متاح مؤقتًا" : `${formatNumber(data.youtubeViews.totalViews)} مشاهدة`}
+                icon={Eye}
+                hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${formatDateTime(data.youtubeViews.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
+                tone="blue"
+              />
               <StatCard
                 title="إجمالي المنشورات"
                 value={formatNumber(data.totalPublications)}
                 icon={LineChart}
-                hint={selectedPeriodLabel}
+                hint={isAllPeriod ? "تراكمي: تأسيسي + إنجازات النظام" : selectedPeriodLabel}
               />
               <StatCard
                 title="آخر 30 يومًا"
@@ -326,22 +340,15 @@ export default function Achievements() {
                 title="متوسط الإنجاز اليومي"
                 value={formatAverage(data.dailyAverage)}
                 icon={TrendingUp}
-                hint="منشور يوميًا تقريبًا"
+                hint={isAllPeriod ? "متوسط تراكمي تقريبي" : "منشور يوميًا تقريبًا"}
                 tone="gold"
               />
               <StatCard
-                title="منذ بداية المشروع"
-                value={`${formatNumber(projectDays)} يوم`}
+                title="بداية احتساب النظام"
+                value={formatDate(data.projectStartDate)}
                 icon={CalendarDays}
-                hint={`من ${formatDate(data.projectStartDate)}`}
+                hint="الكل يجمع الأرقام التأسيسية مع إنجازات النظام"
                 tone="gold"
-              />
-              <StatCard
-                title="📺 مشاهدات يوتيوب الموثقة منذ رمضان 1447هـ"
-                value={data.youtubeViews.totalViews === null ? "غير متاح مؤقتًا" : `${formatNumber(data.youtubeViews.totalViews)} مشاهدة`}
-                icon={Eye}
-                hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${formatDateTime(data.youtubeViews.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
-                tone="blue"
               />
             </section>
 
@@ -351,7 +358,7 @@ export default function Achievements() {
                   <SectionTitle
                     icon={BarChart3}
                     title="الإنجازات حسب المنصات"
-                    hint={`إحصاء مجمع حسب ${selectedPeriodLabel}`}
+                    hint={isAllPeriod ? "الأرقام التراكمية لكل منصة" : `إحصاء مجمع حسب ${selectedPeriodLabel}`}
                   />
                   {data.achievementsByPlatform.length === 0 ? (
                     <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
@@ -374,7 +381,9 @@ export default function Achievements() {
                           </div>
                           <Progress value={(platform.publications / maxPlatform) * 100} className="mt-3 h-2 bg-[#eee4d2]" />
                           <p className="mt-2 text-xs font-semibold text-[#778b80]">
-                            {formatNumber(platform.completedTasks)} مهمة مكتملة
+                            {isAllPeriod && platform.baselinePublications > 0
+                              ? `يشمل ${formatNumber(platform.baselinePublications)} رقمًا تأسيسيًا و${formatNumber(platform.systemPublications)} من نظام المهام`
+                              : `${formatNumber(platform.completedTasks)} مهمة مكتملة`}
                           </p>
                         </div>
                       ))}

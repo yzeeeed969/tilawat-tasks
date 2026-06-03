@@ -11,6 +11,7 @@ async function runPublicSiteSettingsSchemaEnsure() {
     CREATE TABLE IF NOT EXISTS public_site_settings (
       id integer PRIMARY KEY DEFAULT 1 CHECK (id = 1),
       youtube_total_views bigint,
+      youtube_baseline_views bigint DEFAULT 0,
       youtube_views_updated_at timestamp,
       created_at timestamp NOT NULL DEFAULT now(),
       updated_at timestamp NOT NULL DEFAULT now()
@@ -18,6 +19,7 @@ async function runPublicSiteSettingsSchemaEnsure() {
   `);
 
   await db.execute(sql`ALTER TABLE public_site_settings ADD COLUMN IF NOT EXISTS youtube_total_views bigint`);
+  await db.execute(sql`ALTER TABLE public_site_settings ADD COLUMN IF NOT EXISTS youtube_baseline_views bigint DEFAULT 0`);
   await db.execute(sql`ALTER TABLE public_site_settings ADD COLUMN IF NOT EXISTS youtube_views_updated_at timestamp`);
   await db.execute(sql`ALTER TABLE public_site_settings ADD COLUMN IF NOT EXISTS created_at timestamp NOT NULL DEFAULT now()`);
   await db.execute(sql`ALTER TABLE public_site_settings ADD COLUMN IF NOT EXISTS updated_at timestamp NOT NULL DEFAULT now()`);
@@ -55,26 +57,38 @@ export async function getPublicSiteSettings() {
   return settings;
 }
 
-export async function updatePublicSiteSettings(input: { youtubeTotalViews?: unknown }) {
-  await ensureSettingsRow();
-
-  const rawViews = input.youtubeTotalViews;
-  const youtubeTotalViews = rawViews === null || rawViews === ""
+function parseNullableNonNegativeInteger(value: unknown, label: string) {
+  const parsed = value === null || value === ""
     ? null
-    : Number(rawViews);
+    : Number(value);
 
   if (
-    youtubeTotalViews !== null &&
-    (!Number.isSafeInteger(youtubeTotalViews) || youtubeTotalViews < 0)
+    parsed !== null &&
+    (!Number.isSafeInteger(parsed) || parsed < 0)
   ) {
-    throw new Error("رقم مشاهدات يوتيوب يجب أن يكون رقمًا صحيحًا موجبًا");
+    throw new Error(`${label} يجب أن يكون رقمًا صحيحًا موجبًا`);
   }
+
+  return parsed;
+}
+
+export async function updatePublicSiteSettings(input: { youtubeTotalViews?: unknown; youtubeBaselineViews?: unknown }) {
+  await ensureSettingsRow();
+  const current = await getPublicSiteSettings();
+
+  const youtubeTotalViews = input.youtubeTotalViews === undefined
+    ? current.youtubeTotalViews
+    : parseNullableNonNegativeInteger(input.youtubeTotalViews, "رقم مشاهدات يوتيوب");
+  const youtubeBaselineViews = input.youtubeBaselineViews === undefined
+    ? current.youtubeBaselineViews ?? 0
+    : parseNullableNonNegativeInteger(input.youtubeBaselineViews, "الرقم التأسيسي لمشاهدات يوتيوب") ?? 0;
 
   const now = new Date();
   const [settings] = await db
     .update(publicSiteSettingsTable)
     .set({
       youtubeTotalViews,
+      youtubeBaselineViews,
       youtubeViewsUpdatedAt: now,
       updatedAt: now,
     })

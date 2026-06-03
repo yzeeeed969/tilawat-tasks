@@ -39,6 +39,7 @@ const platformSchema = z.object({
   name: z.string().min(2, { message: "الاسم مطلوب" }),
   icon: z.string().min(1, { message: "الأيقونة مطلوبة" }),
   color: z.string().min(3, { message: "اللون مطلوب" }),
+  baselinePostsCount: z.coerce.number().int().min(0, { message: "أدخل رقمًا صحيحًا موجبًا" }).default(0),
 });
 
 const reciterSchema = z.object({
@@ -125,6 +126,7 @@ interface TelegramLog {
 interface PublicSiteSettingsData {
   id: number;
   youtubeTotalViews: number | null;
+  youtubeBaselineViews: number | null;
   youtubeViewsUpdatedAt: string | null;
   createdAt: string;
   updatedAt: string;
@@ -259,7 +261,7 @@ async function fetchPublicSiteSettings(): Promise<PublicSiteSettingsData> {
   return res.json();
 }
 
-async function patchPublicSiteSettings(updates: { youtubeTotalViews: number | null }) {
+async function patchPublicSiteSettings(updates: { youtubeTotalViews: number | null; youtubeBaselineViews: number }) {
   const res = await fetch("/api/public-site-settings", {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -903,7 +905,7 @@ export function RecitersSection() {
 
 // ── Platform Item (with pages management) ────────────────────────────────────
 function PlatformItem({ p, reciters, selected, onToggleSelect }: {
-  p: { id: number; name: string; icon: string; color: string; isMain: boolean };
+  p: { id: number; name: string; icon: string; color: string; isMain: boolean; baselinePostsCount?: number | null };
   reciters: { id: number; name: string; mosque: string }[] | undefined;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -917,6 +919,7 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
 
   const [editMode, setEditMode] = useState(false);
   const [editName, setEditName] = useState(p.name);
+  const [editBaselinePostsCount, setEditBaselinePostsCount] = useState(String(p.baselinePostsCount ?? 0));
   const [pagesOpen, setPagesOpen] = useState(false);
   const [newPageUrl, setNewPageUrl] = useState("");
   const [newPageReciterId, setNewPageReciterId] = useState<number | null>(null);
@@ -965,14 +968,19 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
   };
 
   const saveEdit = () => {
-    updatePlatform.mutate({ id: p.id, data: { name: editName.trim(), icon: p.icon, color: p.color } }, {
+    const baselinePostsCount = parseNonNegativeIntegerInput(editBaselinePostsCount);
+    if (Number.isNaN(baselinePostsCount)) {
+      toast({ title: "أدخل رقمًا صحيحًا للرقم التأسيسي للمنشورات", variant: "destructive" });
+      return;
+    }
+    updatePlatform.mutate({ id: p.id, data: { name: editName.trim(), icon: p.icon, color: p.color, baselinePostsCount: baselinePostsCount ?? 0 } }, {
       onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListPlatformsQueryKey() }); toast({ title: "تم التحديث" }); setEditMode(false); },
       onError: () => toast({ title: "حدث خطأ", variant: "destructive" }),
     });
   };
 
   const toggleMain = () => {
-    updatePlatform.mutate({ id: p.id, data: { name: p.name, icon: p.icon, color: p.color, isMain: !p.isMain } }, {
+    updatePlatform.mutate({ id: p.id, data: { name: p.name, icon: p.icon, color: p.color, isMain: !p.isMain, baselinePostsCount: p.baselinePostsCount ?? 0 } }, {
       onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListPlatformsQueryKey() }); },
     });
   };
@@ -1032,15 +1040,29 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
   return (
     <li className="border border-border rounded-md overflow-hidden">
       {editMode ? (
-        <div className="flex items-center gap-2 p-2.5 bg-sidebar-primary/5">
-          <PlatformIcon name={p.name} className="h-5 w-5 shrink-0 opacity-50" />
-          <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="اسم المنصة" className="h-8 text-sm flex-1" autoFocus />
-          <Button size="sm" className="h-8 bg-sidebar-primary text-sidebar-primary-foreground px-3" onClick={saveEdit} disabled={updatePlatform.isPending || !editName.trim()}>
-            {updatePlatform.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-          </Button>
-          <Button size="sm" variant="outline" className="h-8 px-3" onClick={() => { setEditMode(false); setEditName(p.name); }}>
-            <X className="h-3 w-3" />
-          </Button>
+        <div className="space-y-2 p-2.5 bg-sidebar-primary/5">
+          <div className="flex items-center gap-2">
+            <PlatformIcon name={p.name} className="h-5 w-5 shrink-0 opacity-50" />
+            <Input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="اسم المنصة" className="h-8 text-sm flex-1" autoFocus />
+            <Button size="sm" className="h-8 bg-sidebar-primary text-sidebar-primary-foreground px-3" onClick={saveEdit} disabled={updatePlatform.isPending || !editName.trim()}>
+              {updatePlatform.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+            </Button>
+            <Button size="sm" variant="outline" className="h-8 px-3" onClick={() => { setEditMode(false); setEditName(p.name); setEditBaselinePostsCount(String(p.baselinePostsCount ?? 0)); }}>
+              <X className="h-3 w-3" />
+            </Button>
+          </div>
+          <div className="space-y-1">
+            <label className="text-xs font-semibold text-muted-foreground">الرقم التأسيسي للمنشورات</label>
+            <Input
+              value={editBaselinePostsCount}
+              onChange={(event) => setEditBaselinePostsCount(event.target.value)}
+              inputMode="numeric"
+              dir="ltr"
+              min={0}
+              className="h-8 text-sm"
+              placeholder="0"
+            />
+          </div>
         </div>
       ) : (
         <div className={`flex items-center justify-between p-3 transition-colors ${selected ? "bg-sidebar-primary/5" : "bg-background hover:bg-muted/10"}`}>
@@ -1051,6 +1073,9 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
             <PlatformIcon name={p.name} className="h-5 w-5" />
             <span className="font-bold">{p.name}</span>
             {p.isMain && <span className="text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">رئيسية</span>}
+            <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full px-2 py-0.5">
+              تأسيسي: {(p.baselinePostsCount ?? 0).toLocaleString("ar-SA")}
+            </span>
           </div>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${p.isMain ? "text-amber-500 hover:bg-amber-50" : "text-muted-foreground hover:text-amber-500 hover:bg-amber-50"}`}
@@ -1062,7 +1087,7 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
               <Layers className="h-3.5 w-3.5" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-blue-600 hover:bg-blue-50"
-              onClick={() => { setEditMode(true); setEditName(p.name); }}>
+              onClick={() => { setEditMode(true); setEditName(p.name); setEditBaselinePostsCount(String(p.baselinePostsCount ?? 0)); }}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
@@ -1234,7 +1259,7 @@ export function PlatformsSection() {
 
   const form = useForm<z.infer<typeof platformSchema>>({
     resolver: zodResolver(platformSchema),
-    defaultValues: { name: "", icon: "FaYoutube", color: "#ff0000" },
+    defaultValues: { name: "", icon: "FaYoutube", color: "#ff0000", baselinePostsCount: 0 },
   });
 
   const onSubmit = (data: z.infer<typeof platformSchema>) => {
@@ -1264,6 +1289,25 @@ export function PlatformsSection() {
             <h3 className="font-semibold mb-2">إضافة منصة جديدة</h3>
             <FormField control={form.control} name="name" render={({ field }) => (
               <FormItem><FormLabel>اسم المنصة</FormLabel><FormControl><Input placeholder="مثال: يوتيوب" {...field} /></FormControl><FormMessage /></FormItem>
+            )} />
+            <FormField control={form.control} name="baselinePostsCount" render={({ field }) => (
+              <FormItem>
+                <FormLabel>الرقم التأسيسي للمنشورات</FormLabel>
+                <FormControl>
+                  <Input
+                    type="number"
+                    min={0}
+                    inputMode="numeric"
+                    dir="ltr"
+                    placeholder="0"
+                    {...field}
+                  />
+                </FormControl>
+                <p className="text-xs text-muted-foreground">
+                  يمثل منشورات هذه المنصة قبل بدء احتساب نظام المهام. اتركه 0 إذا لم يوجد رقم تأسيسي.
+                </p>
+                <FormMessage />
+              </FormItem>
             )} />
             <Button type="submit" className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground" disabled={createPlatform.isPending}>
               {createPlatform.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Plus className="ml-2 h-4 w-4" />}إضافة منصة
@@ -1625,6 +1669,7 @@ function PublicStatsSettingsSection() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [youtubeViewsInput, setYoutubeViewsInput] = useState("");
+  const [youtubeBaselineViewsInput, setYoutubeBaselineViewsInput] = useState("0");
 
   const { data, isLoading } = useQuery({
     queryKey: ["public-site-settings"],
@@ -1634,16 +1679,21 @@ function PublicStatsSettingsSection() {
   useEffect(() => {
     if (data) {
       setYoutubeViewsInput(data.youtubeTotalViews === null ? "" : String(data.youtubeTotalViews));
+      setYoutubeBaselineViewsInput(String(data.youtubeBaselineViews ?? 0));
     }
-  }, [data?.youtubeTotalViews]);
+  }, [data?.youtubeTotalViews, data?.youtubeBaselineViews]);
 
   const saveMutation = useMutation({
     mutationFn: () => {
       const youtubeTotalViews = parseNonNegativeIntegerInput(youtubeViewsInput);
+      const youtubeBaselineViews = parseNonNegativeIntegerInput(youtubeBaselineViewsInput);
       if (Number.isNaN(youtubeTotalViews)) {
         throw new Error("أدخل رقمًا صحيحًا لمشاهدات يوتيوب");
       }
-      return patchPublicSiteSettings({ youtubeTotalViews });
+      if (Number.isNaN(youtubeBaselineViews)) {
+        throw new Error("أدخل رقمًا صحيحًا للرقم التأسيسي لمشاهدات يوتيوب");
+      }
+      return patchPublicSiteSettings({ youtubeTotalViews, youtubeBaselineViews: youtubeBaselineViews ?? 0 });
     },
     onSuccess: () => {
       toast({ title: "تم حفظ الإحصائيات العامة" });
@@ -1670,19 +1720,35 @@ function PublicStatsSettingsSection() {
         ) : (
           <>
             <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 lg:items-end">
-              <div className="space-y-2">
-                <label className="text-sm font-semibold">مشاهدات يوتيوب الموثقة منذ رمضان 1447هـ</label>
-                <Input
-                  value={youtubeViewsInput}
-                  onChange={(event) => setYoutubeViewsInput(event.target.value)}
-                  inputMode="numeric"
-                  dir="ltr"
-                  placeholder="مثال: 3341630"
-                  className="text-lg font-semibold"
-                />
-                <p className="text-xs text-muted-foreground">
-                  عند الحفظ يضع النظام وقت آخر تحديث تلقائيًا، ويظهر هذا الوقت في صفحة الإنجازات العامة.
-                </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">الرقم التأسيسي لمشاهدات YouTube</label>
+                  <Input
+                    value={youtubeBaselineViewsInput}
+                    onChange={(event) => setYoutubeBaselineViewsInput(event.target.value)}
+                    inputMode="numeric"
+                    dir="ltr"
+                    placeholder="مثال: 50000000"
+                    className="text-lg font-semibold"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    رقم تراكمي سابق يضاف إلى الرقم اليدوي الحالي، ولا يوضع داخل الكود.
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <label className="text-sm font-semibold">الرقم اليدوي الحالي لمشاهدات YouTube</label>
+                  <Input
+                    value={youtubeViewsInput}
+                    onChange={(event) => setYoutubeViewsInput(event.target.value)}
+                    inputMode="numeric"
+                    dir="ltr"
+                    placeholder="مثال: 3341630"
+                    className="text-lg font-semibold"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    عند الحفظ يضع النظام وقت آخر تحديث تلقائيًا، ويظهر هذا الوقت في صفحة الإنجازات العامة.
+                  </p>
+                </div>
               </div>
               <Button
                 onClick={() => saveMutation.mutate()}
@@ -1690,7 +1756,7 @@ function PublicStatsSettingsSection() {
                 className="min-w-36"
               >
                 {saveMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Save className="h-4 w-4 ml-2" />}
-                حفظ الرقم
+                حفظ الأرقام
               </Button>
             </div>
 

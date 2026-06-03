@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, platformsTable, taskProofsTable, tasksTable } from "@workspace/db";
-import { and, eq, inArray, isNull } from "drizzle-orm";
+import { and, eq, inArray, isNull, sql } from "drizzle-orm";
 import { requireAdmin } from "../middlewares/auth";
 import { getPublicSiteSettings, updatePublicSiteSettings } from "../services/public-site-settings";
 
@@ -11,13 +11,15 @@ const periodOptions = {
   "7d": { days: 7, label: "آخر 7 أيام" },
   "30d": { days: 30, label: "آخر 30 يومًا" },
   "90d": { days: 90, label: "آخر 90 يومًا" },
-  all: { days: null, label: "منذ البداية" },
+  all: { days: null, label: "الكل" },
 } as const;
 
 type PeriodKey = keyof typeof periodOptions;
 
 type YoutubeViewsStats = {
   totalViews: number | null;
+  manualViews: number | null;
+  baselineViews: number;
   updatedAt: string | null;
   fetchedAt: string;
 };
@@ -31,6 +33,24 @@ type PublicTask = {
   createdAt: Date;
   submissionUrl: string | null;
 };
+
+let platformsSchemaEnsured = false;
+let platformsSchemaEnsurePromise: Promise<void> | null = null;
+
+async function ensurePlatformsBaselineColumn() {
+  if (platformsSchemaEnsured) return;
+  if (!platformsSchemaEnsurePromise) {
+    platformsSchemaEnsurePromise = db
+      .execute(sql`ALTER TABLE platforms ADD COLUMN IF NOT EXISTS baseline_posts_count integer NOT NULL DEFAULT 0`)
+      .then(() => {
+        platformsSchemaEnsured = true;
+      })
+      .finally(() => {
+        platformsSchemaEnsurePromise = null;
+      });
+  }
+  await platformsSchemaEnsurePromise;
+}
 
 function taskActivityDate(task: PublicTask) {
   return task.completedAt ?? task.dueDate ?? task.createdAt;
@@ -52,8 +72,12 @@ function monthStart(date: Date) {
 
 async function getYoutubeViewsStats(): Promise<YoutubeViewsStats> {
   const settings = await getPublicSiteSettings();
+  const manualViews = settings?.youtubeTotalViews ?? null;
+  const baselineViews = settings?.youtubeBaselineViews ?? 0;
   return {
-    totalViews: settings?.youtubeTotalViews ?? null,
+    totalViews: manualViews === null ? baselineViews : baselineViews + manualViews,
+    manualViews,
+    baselineViews,
     updatedAt: settings?.youtubeViewsUpdatedAt?.toISOString() ?? null,
     fetchedAt: new Date().toISOString(),
   };
@@ -86,6 +110,7 @@ router.patch("/public-site-settings", requireAdmin, async (req, res) => {
   try {
     const settings = await updatePublicSiteSettings({
       youtubeTotalViews: req.body?.youtubeTotalViews,
+      youtubeBaselineViews: req.body?.youtubeBaselineViews,
     });
     res.json(settings);
   } catch (error) {
@@ -98,7 +123,9 @@ router.patch("/public-site-settings", requireAdmin, async (req, res) => {
 router.get("/public/achievements", async (req, res) => {
   const now = new Date();
   const period = resolvePeriod(req.query.period, now);
+  const includeBaselines = period.key === "all";
   const youtubeViews = await getYoutubeViewsStats();
+  await ensurePlatformsBaselineColumn();
   const platforms = await db.select().from(platformsTable).orderBy(platformsTable.id);
   const completedTasks = await db
     .select({
@@ -130,6 +157,8 @@ router.get("/public/achievements", async (req, res) => {
   }
 
   const platformMap = new Map(platforms.map((platform) => [platform.id, platform]));
+  const baselinePostsByPlatform = new Map(platforms.map((platform) => [platform.id, platform.baselinePostsCount ?? 0]));
+  const baselinePostsTotal = [...baselinePostsByPlatform.values()].reduce((sum, value) => sum + value, 0);
   const last30Start = new Date(now);
   last30Start.setDate(last30Start.getDate() - 30);
   const platformCounts = new Map<number, { publications: number; completedTasks: number }>();
@@ -170,19 +199,30 @@ router.get("/public/achievements", async (req, res) => {
     }
   }
 
-  const achievementsByPlatform = [...platformCounts.entries()]
-    .map(([platformId, counts]) => {
+  const platformIdsForAchievements = includeBaselines
+    ? new Set([...platforms.map((platform) => platform.id), ...platformCounts.keys()])
+    : new Set(platformCounts.keys());
+
+  const achievementsByPlatform = [...platformIdsForAchievements]
+    .map((platformId) => {
+      const counts = platformCounts.get(platformId) ?? { publications: 0, completedTasks: 0 };
       const platform = platformMap.get(platformId);
+      const baselinePublications = includeBaselines ? (baselinePostsByPlatform.get(platformId) ?? 0) : 0;
       return {
         platformId,
         name: platform?.name ?? "منصة غير معروفة",
         icon: platform?.icon ?? "",
         color: platform?.color ?? "",
-        publications: counts.publications,
+        publications: counts.publications + baselinePublications,
+        systemPublications: counts.publications,
+        baselinePublications,
         completedTasks: counts.completedTasks,
       };
     })
+    .filter((row) => row.publications > 0 || row.completedTasks > 0 || includeBaselines)
     .sort((a, b) => b.publications - a.publications);
+
+  const displayedTotalPublications = periodPublications + (includeBaselines ? baselinePostsTotal : 0);
 
   const monthlyGrowth = [...monthlyMap.values()]
     .filter((row) => row.publications > 0 || row.completedTasks > 0)
@@ -195,14 +235,16 @@ router.get("/public/achievements", async (req, res) => {
       start: period.start.toISOString(),
       end: period.end.toISOString(),
     },
-    totalPublications: periodPublications,
+    totalPublications: displayedTotalPublications,
     completedTasks: periodCompletedTasks,
     last30Publications,
-    activePlatforms: achievementsByPlatform.length,
-    dailyAverage: period.averageDays > 0 ? periodPublications / period.averageDays : 0,
+    activePlatforms: achievementsByPlatform.filter((row) => row.publications > 0).length,
+    dailyAverage: period.averageDays > 0 ? displayedTotalPublications / period.averageDays : 0,
     projectStartDate: PROJECT_START_DATE.toISOString(),
     allTime: {
-      totalPublications,
+      totalPublications: totalPublications + baselinePostsTotal,
+      systemPublications: totalPublications,
+      baselinePublications: baselinePostsTotal,
       completedTasks: completedTasks.length,
     },
     youtubeViews,

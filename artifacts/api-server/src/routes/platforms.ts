@@ -1,37 +1,93 @@
 import { Router } from "express";
 import { db, platformsTable, platformPagesTable, recitersTable, pageMembersTable } from "@workspace/db";
-import { eq, inArray } from "drizzle-orm";
+import { eq, inArray, sql } from "drizzle-orm";
 import { CreatePlatformBody, DeletePlatformParams, UpdatePlatformParams, UpdatePlatformBody, CreatePlatformPageBody, CreatePlatformPageParams } from "@workspace/api-zod";
 
 const router = Router();
+let platformsSchemaEnsured = false;
+let platformsSchemaEnsurePromise: Promise<void> | null = null;
+
+async function ensurePlatformsSchema() {
+  if (platformsSchemaEnsured) return;
+  if (!platformsSchemaEnsurePromise) {
+    platformsSchemaEnsurePromise = db
+      .execute(sql`ALTER TABLE platforms ADD COLUMN IF NOT EXISTS baseline_posts_count integer NOT NULL DEFAULT 0`)
+      .then(() => {
+        platformsSchemaEnsured = true;
+      })
+      .finally(() => {
+        platformsSchemaEnsurePromise = null;
+      });
+  }
+  await platformsSchemaEnsurePromise;
+}
+
+function normalizeBaselinePostsCount(value: unknown) {
+  if (value === undefined || value === null || value === "") return 0;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 0) {
+    throw new Error("الرقم التأسيسي للمنشورات يجب أن يكون رقمًا صحيحًا موجبًا");
+  }
+  return parsed;
+}
 
 router.get("/platforms", async (req, res) => {
+  await ensurePlatformsSchema();
   const platforms = await db.select().from(platformsTable).orderBy(platformsTable.id);
   res.json(platforms);
 });
 
 router.post("/platforms", async (req, res) => {
-  const body = CreatePlatformBody.parse(req.body);
-  const [platform] = await db.insert(platformsTable).values(body).returning();
-  res.status(201).json(platform);
+  try {
+    await ensurePlatformsSchema();
+    const body = CreatePlatformBody.parse(req.body);
+    const [platform] = await db.insert(platformsTable).values({
+      ...body,
+      baselinePostsCount: normalizeBaselinePostsCount((body as { baselinePostsCount?: unknown }).baselinePostsCount),
+    }).returning();
+    res.status(201).json(platform);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "فشل إنشاء المنصة" });
+  }
 });
 
 router.put("/platforms/:id", async (req, res) => {
-  const { id } = UpdatePlatformParams.parse({ id: Number(req.params.id) });
-  const body = UpdatePlatformBody.parse(req.body);
-  const [platform] = await db
-    .update(platformsTable)
-    .set({ name: body.name, icon: body.icon, color: body.color, isMain: (body as { isMain?: boolean }).isMain })
-    .where(eq(platformsTable.id, id))
-    .returning();
-  if (!platform) {
-    res.status(404).json({ error: "Platform not found" });
-    return;
+  try {
+    await ensurePlatformsSchema();
+    const { id } = UpdatePlatformParams.parse({ id: Number(req.params.id) });
+    const body = UpdatePlatformBody.parse(req.body);
+    const updateData: {
+      name: string;
+      icon: string;
+      color: string;
+      isMain?: boolean;
+      baselinePostsCount?: number;
+    } = {
+      name: body.name,
+      icon: body.icon,
+      color: body.color,
+      isMain: (body as { isMain?: boolean }).isMain,
+    };
+    if (Object.prototype.hasOwnProperty.call(body, "baselinePostsCount")) {
+      updateData.baselinePostsCount = normalizeBaselinePostsCount((body as { baselinePostsCount?: unknown }).baselinePostsCount);
+    }
+    const [platform] = await db
+      .update(platformsTable)
+      .set(updateData)
+      .where(eq(platformsTable.id, id))
+      .returning();
+    if (!platform) {
+      res.status(404).json({ error: "Platform not found" });
+      return;
+    }
+    res.json(platform);
+  } catch (error) {
+    res.status(400).json({ error: error instanceof Error ? error.message : "فشل تحديث المنصة" });
   }
-  res.json(platform);
 });
 
 router.delete("/platforms/:id", async (req, res) => {
+  await ensurePlatformsSchema();
   const { id } = DeletePlatformParams.parse({ id: Number(req.params.id) });
   await db.delete(platformsTable).where(eq(platformsTable.id, id));
   res.status(204).end();

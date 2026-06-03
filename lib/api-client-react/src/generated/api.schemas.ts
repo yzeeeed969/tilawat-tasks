@@ -41,6 +41,7 @@ export interface Platform {
   icon: string;
   color: string;
   isMain: boolean;
+  baselinePostsCount: number;
 }
 
 export interface CreatePlatformBody {
@@ -48,6 +49,7 @@ export interface CreatePlatformBody {
   icon: string;
   color: string;
   isMain?: boolean;
+  baselinePostsCount?: number;
 }
 
 export interface PlatformPage {
