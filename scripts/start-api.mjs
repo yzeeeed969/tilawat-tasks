@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const entrypoint = path.join(rootDir, "artifacts/api-server/dist/index.mjs");
 
+// Railway starts the compiled API server from this entrypoint.
 process.env.PORT ||= "3001";
 process.env.BASE_PATH ||= "/";
 
