@@ -418,7 +418,6 @@ function PlatformDistributionDonut({
     return {
       ...row,
       color: chartPalette[index % chartPalette.length],
-      percentage: value,
       start,
       end,
     };
@@ -426,21 +425,18 @@ function PlatformDistributionDonut({
   const gradient = segments.map((segment) => `${segment.color} ${segment.start}% ${segment.end}%`).join(", ");
 
   return (
-    <div className="grid gap-6 lg:grid-cols-[280px_1fr] lg:items-center">
-      <div className="mx-auto flex h-64 w-64 items-center justify-center rounded-full border border-[#eadfcd] shadow-inner" style={{ background: `conic-gradient(${gradient})` }}>
-        <div className="flex h-36 w-36 flex-col items-center justify-center rounded-full border border-[#eadfcd] bg-[#fffdf8] text-center shadow-sm">
-          <span className="text-xs font-bold text-[#6f8378]">إجمالي المنصات</span>
-          <span className="mt-1 text-2xl font-black text-[#103c2d]">{formatNumber(total)}</span>
+    <div className="grid gap-3 sm:grid-cols-[170px_1fr] sm:items-center">
+      <div className="mx-auto flex h-40 w-40 items-center justify-center rounded-full border border-[#eadfcd] shadow-inner sm:h-44 sm:w-44" style={{ background: `conic-gradient(${gradient})` }}>
+        <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full border border-[#eadfcd] bg-[#fffdf8] text-center shadow-sm">
+          <span className="text-[10px] font-bold text-[#6f8378]">إجمالي</span>
+          <span className="mt-0.5 text-lg font-black text-[#103c2d]">{formatNumber(total)}</span>
         </div>
       </div>
-      <div className="space-y-3">
+      <div className="grid grid-cols-2 gap-2">
         {segments.map((segment) => (
-          <div key={segment.platformId} className="flex items-center justify-between gap-3 rounded-lg border border-[#efe6d8] bg-[#fffdf8] px-4 py-3">
-            <div className="flex min-w-0 items-center gap-3">
-              <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
-              <span className="truncate text-sm font-black text-[#103c2d]">{segment.name}</span>
-            </div>
-            <span className="text-sm font-black text-[#5f796d]">{formatAverage(segment.percentage)}%</span>
+          <div key={segment.platformId} className="flex min-w-0 items-center gap-2 rounded-md border border-[#efe6d8] bg-[#fffdf8] px-2 py-2">
+            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
+            <span className="truncate text-xs font-black text-[#103c2d]">{segment.name}</span>
           </div>
         ))}
       </div>
@@ -448,89 +444,120 @@ function PlatformDistributionDonut({
   );
 }
 
-function PlatformComparisonBars({
-  rows,
+function CompactMetricCard({
+  title,
+  value,
+  hint,
+  icon: Icon,
 }: {
-  rows: PublicAchievements["achievementsByPlatform"];
+  title: string;
+  value: string;
+  hint: string;
+  icon: ElementType;
 }) {
-  const maxValue = Math.max(...rows.map((row) => row.publications), 1);
-  if (rows.length === 0) {
-    return (
-      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
-        لا توجد بيانات منصات للمقارنة.
-      </p>
-    );
-  }
-
   return (
-    <div className="space-y-4">
-      {rows.map((row, index) => (
-        <div key={row.platformId} className="space-y-2">
-          <div className="flex items-center justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2 font-black text-[#103c2d]">
-              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f4eddf]">
-                <PlatformIcon name={row.name} className="h-4 w-4" />
-              </span>
-              <span className="truncate">{row.name}</span>
-            </div>
-            <span className="rounded-full bg-[#0f5b3d]/10 px-3 py-1 text-sm font-black text-[#0f5b3d]">
-              {formatNumber(row.publications)}
-            </span>
+    <Card className="border-[#eadfcd] bg-white/90 shadow-sm">
+      <CardContent className="p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <p className="truncate text-[11px] font-black text-[#5f796d]">{title}</p>
+            <p className="mt-1 text-xl font-black leading-none text-[#103c2d] sm:text-2xl">{value}</p>
+            <p className="mt-1 truncate text-[10px] font-bold text-[#7c8f85]">{hint}</p>
           </div>
-          <div className="h-3 overflow-hidden rounded-full bg-[#eee4d2]">
-            <div
-              className="h-full rounded-full"
-              style={{
-                width: `${Math.max(5, (row.publications / maxValue) * 100)}%`,
-                backgroundColor: chartPalette[index % chartPalette.length],
-              }}
-            />
+          <div className="rounded-md border border-[#eadfcd] bg-[#fbf8ef] p-2 text-[#c59226]">
+            <Icon className="h-4 w-4" />
           </div>
         </div>
-      ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+function CompactPeriodSwitch({
+  period,
+  onChange,
+}: {
+  period: PeriodKey;
+  onChange: (period: PeriodKey) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#eadfcd] bg-white/88 px-3 py-2 shadow-sm">
+      <span className="text-xs font-black text-[#5f796d]">الفترة</span>
+      <div className="inline-flex rounded-md border border-[#d8cba9] bg-[#fffdf8] p-0.5">
+        {periodOptions.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => onChange(option.value)}
+            className={`rounded px-3 py-1.5 text-xs font-black ${
+              period === option.value ? "bg-[#d6a12a] text-[#103c2d]" : "text-[#5f796d]"
+            }`}
+          >
+            {option.label}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
 
-function PlatformSummaryTable({
+function CompactMonthlyGrowthChart({
   rows,
 }: {
-  rows: PublicAchievements["achievementsByPlatform"];
+  rows: PublicAchievements["monthlyGrowth"];
 }) {
-  const total = rows.reduce((sum, row) => sum + row.publications, 0);
-  if (rows.length === 0 || total <= 0) {
+  if (rows.length === 0) {
     return (
-      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
-        لا توجد بيانات منصات للعرض.
+      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-8 text-center text-xs font-bold text-[#6f8378]">
+        لا توجد بيانات نمو لهذه الفترة.
       </p>
     );
   }
 
+  const maxValue = Math.max(...rows.map((row) => row.publications), 1);
+  const width = 620;
+  const height = 150;
+  const paddingX = 34;
+  const paddingTop = 18;
+  const paddingBottom = 34;
+  const chartHeight = height - paddingTop - paddingBottom;
+  const usableWidth = width - paddingX * 2;
+  const points = rows.map((row, index) => {
+    const x = rows.length === 1 ? width / 2 : paddingX + (index / (rows.length - 1)) * usableWidth;
+    const y = paddingTop + chartHeight - (row.publications / maxValue) * chartHeight;
+    return { ...row, x, y };
+  });
+  const baseline = height - paddingBottom;
+  const linePath = points.length === 1
+    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y}`
+    : points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  const areaPath = points.length === 1
+    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y} L ${width - paddingX} ${baseline} L ${paddingX} ${baseline} Z`
+    : `${linePath} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
+
   return (
-    <div className="overflow-hidden rounded-lg border border-[#eadfcd] bg-[#fffdf8]">
-      <table className="w-full min-w-[560px] text-right text-sm">
-        <thead className="bg-[#f4eddf] text-[#103c2d]">
-          <tr>
-            <th className="px-4 py-3 font-black">المنصة</th>
-            <th className="px-4 py-3 font-black">الإجمالي</th>
-            <th className="px-4 py-3 font-black">النسبة</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[#eadfcd]">
-          {rows.map((row) => (
-            <tr key={row.platformId}>
-              <td className="px-4 py-3">
-                <div className="flex items-center gap-2 font-bold text-[#103c2d]">
-                  <PlatformIcon name={row.name} className="h-4 w-4" />
-                  <span>{row.name}</span>
-                </div>
-              </td>
-              <td className="px-4 py-3 font-black text-[#0f5b3d]">{formatNumber(row.publications)}</td>
-              <td className="px-4 py-3 font-bold text-[#5f796d]">{formatAverage((row.publications / total) * 100)}%</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+    <div className="overflow-hidden rounded-lg border border-[#efe6d8] bg-[#fffdf8] p-2">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-[150px] w-full" role="img" aria-label="رسم النمو الشهري المختصر">
+        <defs>
+          <linearGradient id="compactMonthlyGrowthFill" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#0f5b3d" stopOpacity="0.24" />
+            <stop offset="100%" stopColor="#0f5b3d" stopOpacity="0.02" />
+          </linearGradient>
+        </defs>
+        <path d={areaPath} fill="url(#compactMonthlyGrowthFill)" />
+        <path d={linePath} fill="none" stroke="#0f5b3d" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" />
+        {points.map((point) => {
+          const date = new Date(point.monthStart);
+          return (
+            <g key={point.monthStart}>
+              <circle cx={point.x} cy={point.y} r="5" fill="#c59226" stroke="#fffaf0" strokeWidth="3" />
+              <text x={point.x} y={height - 12} textAnchor="middle" className="fill-[#6f8378] text-[13px] font-bold">
+                {format(date, "MMM", { locale: ar })}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
     </div>
   );
 }
@@ -547,100 +574,66 @@ function AnalyticsView({
   last30DailyAverage: number;
 }) {
   return (
-    <>
-      <section>
-        <SectionTitle
-          icon={Globe2}
-          title="لوحة الأثر التحليلية"
-          hint="عرض بصري عام يوضح حجم الإنجاز وتوزيعه دون تفاصيل تشغيلية."
-        />
-        <YoutubeViewsCard stats={data.youtubeViews} />
-        <div className="mt-4">
-          <PeriodSelectorCard period={period} onChange={onPeriodChange} />
+    <section className="space-y-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h2 className="flex items-center gap-2 text-xl font-black text-[#103c2d]">
+            <Globe2 className="h-5 w-5 text-[#c59226]" />
+            لوحة تنفيذية مختصرة
+          </h2>
+          <p className="mt-1 text-sm font-semibold text-[#6f8378]">
+            قراءة سريعة ومضغوطة لأهم مؤشرات الإنجاز العامة.
+          </p>
         </div>
-      </section>
+        <CompactPeriodSwitch period={period} onChange={onPeriodChange} />
+      </div>
 
-      <section>
-        <SectionTitle
-          icon={TrendingUp}
-          title="ملخص الأرقام"
-          hint="أرقام مختصرة تساعد على قراءة أثر المشروع بسرعة."
-        />
-        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-          <StatCard
+      <div className="grid gap-4 xl:grid-cols-[1.45fr_0.9fr]">
+        <YoutubeViewsCard stats={data.youtubeViews} />
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-1">
+          <CompactMetricCard
             title="إجمالي المنشورات"
             value={formatNumber(data.allTime.totalPublications)}
             icon={LineChart}
             hint="تراكمي"
           />
-          <StatCard
+          <CompactMetricCard
             title="منشورات آخر 30 يومًا"
             value={formatNumber(data.last30Publications)}
             icon={Clock}
             hint="آخر 30 يومًا"
-            tone="blue"
           />
-          <StatCard
+          <CompactMetricCard
             title="متوسط الإنجاز اليومي"
             value={formatAverage(last30DailyAverage)}
             icon={TrendingUp}
             hint="آخر 30 يومًا"
-            tone="gold"
           />
         </div>
-      </section>
+      </div>
 
-      <section className="grid gap-6 xl:grid-cols-2">
+      <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
         <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-          <CardContent className="p-6">
-            <SectionTitle
-              icon={BarChart3}
-              title="توزيع الإنجازات حسب المنصات"
-              hint="نسبة كل منصة من إجمالي الإنجازات."
-            />
+          <CardContent className="p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <BarChart3 className="h-4 w-4 text-[#c59226]" />
+              <h3 className="text-base font-black text-[#103c2d]">لمحة بصرية للمنصات</h3>
+            </div>
             <PlatformDistributionDonut rows={data.achievementsByPlatform} />
           </CardContent>
         </Card>
-        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-          <CardContent className="p-6">
-            <SectionTitle
-              icon={LineChart}
-              title="مقارنة المنصات"
-              hint="ترتيب المنصات حسب حجم الإنجاز."
-            />
-            <PlatformComparisonBars rows={data.achievementsByPlatform} />
-          </CardContent>
-        </Card>
-      </section>
 
-      <section>
         <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-          <CardContent className="p-6">
-            <SectionTitle
-              icon={LineChart}
-              title="النمو الشهري"
-              hint="رسم يوضح تطور المنشورات عبر الأشهر."
-            />
-            <MonthlyGrowthChart rows={data.monthlyGrowth} />
-          </CardContent>
-        </Card>
-      </section>
-
-      <section>
-        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-          <CardContent className="p-6">
-            <SectionTitle
-              icon={Globe2}
-              title="جدول المنصات المختصر"
-              hint="قراءة رقمية سريعة لإجمالي كل منصة وحصتها."
-            />
-            <div className="overflow-x-auto">
-              <PlatformSummaryTable rows={data.achievementsByPlatform} />
+          <CardContent className="p-4">
+            <div className="mb-3 flex items-center gap-2">
+              <LineChart className="h-4 w-4 text-[#c59226]" />
+              <h3 className="text-base font-black text-[#103c2d]">النمو الشهري</h3>
             </div>
+            <CompactMonthlyGrowthChart rows={data.monthlyGrowth} />
           </CardContent>
         </Card>
-      </section>
-    </>
+      </div>
+    </section>
   );
 }
 
