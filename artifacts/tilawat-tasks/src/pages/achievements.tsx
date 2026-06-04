@@ -370,6 +370,7 @@ export default function Achievements() {
 
   const maxPlatform = Math.max(...(data?.achievementsByPlatform.map((row) => row.publications) ?? [0]), 1);
   const selectedPeriodLabel = periodOptions.find((option) => option.value === period)?.label ?? "الكل";
+  const last30DailyAverage = data ? data.last30Publications / 30 : 0;
 
   return (
     <main dir="rtl" className="min-h-screen bg-[#f6f1e8] text-[#103c2d]">
@@ -457,9 +458,9 @@ export default function Achievements() {
                 />
                 <StatCard
                   title="متوسط الإنجاز اليومي"
-                  value={formatAverage(data.dailyAverage)}
+                  value={formatAverage(last30DailyAverage)}
                   icon={TrendingUp}
-                  hint="منشور يوميًا تقريبًا"
+                  hint="آخر 30 يومًا"
                   tone="gold"
                 />
               </div>
