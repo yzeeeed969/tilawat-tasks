@@ -9,6 +9,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PlatformIcon } from "@/lib/platform-icon";
 
 type PeriodKey = "30d" | "all";
+type ViewMode = "classic" | "analytics";
 
 type PublicAchievements = {
   period: {
@@ -282,6 +283,38 @@ function PeriodSelectorCard({
   );
 }
 
+function ViewModeToggle({
+  viewMode,
+  onChange,
+}: {
+  viewMode: ViewMode;
+  onChange: (viewMode: ViewMode) => void;
+}) {
+  const options: Array<{ value: ViewMode; label: string }> = [
+    { value: "classic", label: "العرض الكلاسيكي" },
+    { value: "analytics", label: "العرض التحليلي" },
+  ];
+
+  return (
+    <div className="inline-flex rounded-lg border border-[#d8cba9] bg-white/85 p-1 shadow-sm">
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onChange(option.value)}
+          className={`rounded-md px-3 py-2 text-sm font-black transition-colors sm:px-4 ${
+            viewMode === option.value
+              ? "bg-[#d6a12a] text-[#103c2d] shadow-sm"
+              : "text-[#5f796d] hover:bg-[#f7f0df] hover:text-[#103c2d]"
+          }`}
+        >
+          {option.label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function MonthlyGrowthChart({
   rows,
 }: {
@@ -360,8 +393,260 @@ function MonthlyGrowthChart({
   );
 }
 
+const chartPalette = ["#0f5b3d", "#c59226", "#2563eb", "#dc2626", "#7c3aed", "#0f766e", "#ea580c", "#475569"];
+
+function PlatformDistributionDonut({
+  rows,
+}: {
+  rows: PublicAchievements["achievementsByPlatform"];
+}) {
+  const total = rows.reduce((sum, row) => sum + row.publications, 0);
+  if (rows.length === 0 || total <= 0) {
+    return (
+      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
+        لا توجد بيانات منصات للعرض.
+      </p>
+    );
+  }
+
+  let cursor = 0;
+  const segments = rows.map((row, index) => {
+    const value = (row.publications / total) * 100;
+    const start = cursor;
+    const end = cursor + value;
+    cursor = end;
+    return {
+      ...row,
+      color: chartPalette[index % chartPalette.length],
+      percentage: value,
+      start,
+      end,
+    };
+  });
+  const gradient = segments.map((segment) => `${segment.color} ${segment.start}% ${segment.end}%`).join(", ");
+
+  return (
+    <div className="grid gap-6 lg:grid-cols-[280px_1fr] lg:items-center">
+      <div className="mx-auto flex h-64 w-64 items-center justify-center rounded-full border border-[#eadfcd] shadow-inner" style={{ background: `conic-gradient(${gradient})` }}>
+        <div className="flex h-36 w-36 flex-col items-center justify-center rounded-full border border-[#eadfcd] bg-[#fffdf8] text-center shadow-sm">
+          <span className="text-xs font-bold text-[#6f8378]">إجمالي المنصات</span>
+          <span className="mt-1 text-2xl font-black text-[#103c2d]">{formatNumber(total)}</span>
+        </div>
+      </div>
+      <div className="space-y-3">
+        {segments.map((segment) => (
+          <div key={segment.platformId} className="flex items-center justify-between gap-3 rounded-lg border border-[#efe6d8] bg-[#fffdf8] px-4 py-3">
+            <div className="flex min-w-0 items-center gap-3">
+              <span className="h-3 w-3 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
+              <span className="truncate text-sm font-black text-[#103c2d]">{segment.name}</span>
+            </div>
+            <span className="text-sm font-black text-[#5f796d]">{formatAverage(segment.percentage)}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PlatformComparisonBars({
+  rows,
+}: {
+  rows: PublicAchievements["achievementsByPlatform"];
+}) {
+  const maxValue = Math.max(...rows.map((row) => row.publications), 1);
+  if (rows.length === 0) {
+    return (
+      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
+        لا توجد بيانات منصات للمقارنة.
+      </p>
+    );
+  }
+
+  return (
+    <div className="space-y-4">
+      {rows.map((row, index) => (
+        <div key={row.platformId} className="space-y-2">
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2 font-black text-[#103c2d]">
+              <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-[#f4eddf]">
+                <PlatformIcon name={row.name} className="h-4 w-4" />
+              </span>
+              <span className="truncate">{row.name}</span>
+            </div>
+            <span className="rounded-full bg-[#0f5b3d]/10 px-3 py-1 text-sm font-black text-[#0f5b3d]">
+              {formatNumber(row.publications)}
+            </span>
+          </div>
+          <div className="h-3 overflow-hidden rounded-full bg-[#eee4d2]">
+            <div
+              className="h-full rounded-full"
+              style={{
+                width: `${Math.max(5, (row.publications / maxValue) * 100)}%`,
+                backgroundColor: chartPalette[index % chartPalette.length],
+              }}
+            />
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function PlatformSummaryTable({
+  rows,
+}: {
+  rows: PublicAchievements["achievementsByPlatform"];
+}) {
+  const total = rows.reduce((sum, row) => sum + row.publications, 0);
+  if (rows.length === 0 || total <= 0) {
+    return (
+      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
+        لا توجد بيانات منصات للعرض.
+      </p>
+    );
+  }
+
+  return (
+    <div className="overflow-hidden rounded-lg border border-[#eadfcd] bg-[#fffdf8]">
+      <table className="w-full min-w-[560px] text-right text-sm">
+        <thead className="bg-[#f4eddf] text-[#103c2d]">
+          <tr>
+            <th className="px-4 py-3 font-black">المنصة</th>
+            <th className="px-4 py-3 font-black">الإجمالي</th>
+            <th className="px-4 py-3 font-black">النسبة</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-[#eadfcd]">
+          {rows.map((row) => (
+            <tr key={row.platformId}>
+              <td className="px-4 py-3">
+                <div className="flex items-center gap-2 font-bold text-[#103c2d]">
+                  <PlatformIcon name={row.name} className="h-4 w-4" />
+                  <span>{row.name}</span>
+                </div>
+              </td>
+              <td className="px-4 py-3 font-black text-[#0f5b3d]">{formatNumber(row.publications)}</td>
+              <td className="px-4 py-3 font-bold text-[#5f796d]">{formatAverage((row.publications / total) * 100)}%</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function AnalyticsView({
+  data,
+  period,
+  onPeriodChange,
+  last30DailyAverage,
+}: {
+  data: PublicAchievements;
+  period: PeriodKey;
+  onPeriodChange: (period: PeriodKey) => void;
+  last30DailyAverage: number;
+}) {
+  return (
+    <>
+      <section>
+        <SectionTitle
+          icon={Globe2}
+          title="لوحة الأثر التحليلية"
+          hint="عرض بصري عام يوضح حجم الإنجاز وتوزيعه دون تفاصيل تشغيلية."
+        />
+        <YoutubeViewsCard stats={data.youtubeViews} />
+        <div className="mt-4">
+          <PeriodSelectorCard period={period} onChange={onPeriodChange} />
+        </div>
+      </section>
+
+      <section>
+        <SectionTitle
+          icon={TrendingUp}
+          title="ملخص الأرقام"
+          hint="أرقام مختصرة تساعد على قراءة أثر المشروع بسرعة."
+        />
+        <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
+          <StatCard
+            title="إجمالي المنشورات"
+            value={formatNumber(data.allTime.totalPublications)}
+            icon={LineChart}
+            hint="تراكمي"
+          />
+          <StatCard
+            title="منشورات آخر 30 يومًا"
+            value={formatNumber(data.last30Publications)}
+            icon={Clock}
+            hint="آخر 30 يومًا"
+            tone="blue"
+          />
+          <StatCard
+            title="متوسط الإنجاز اليومي"
+            value={formatAverage(last30DailyAverage)}
+            icon={TrendingUp}
+            hint="آخر 30 يومًا"
+            tone="gold"
+          />
+        </div>
+      </section>
+
+      <section className="grid gap-6 xl:grid-cols-2">
+        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
+          <CardContent className="p-6">
+            <SectionTitle
+              icon={BarChart3}
+              title="توزيع الإنجازات حسب المنصات"
+              hint="نسبة كل منصة من إجمالي الإنجازات."
+            />
+            <PlatformDistributionDonut rows={data.achievementsByPlatform} />
+          </CardContent>
+        </Card>
+        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
+          <CardContent className="p-6">
+            <SectionTitle
+              icon={LineChart}
+              title="مقارنة المنصات"
+              hint="ترتيب المنصات حسب حجم الإنجاز."
+            />
+            <PlatformComparisonBars rows={data.achievementsByPlatform} />
+          </CardContent>
+        </Card>
+      </section>
+
+      <section>
+        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
+          <CardContent className="p-6">
+            <SectionTitle
+              icon={LineChart}
+              title="النمو الشهري"
+              hint="رسم يوضح تطور المنشورات عبر الأشهر."
+            />
+            <MonthlyGrowthChart rows={data.monthlyGrowth} />
+          </CardContent>
+        </Card>
+      </section>
+
+      <section>
+        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
+          <CardContent className="p-6">
+            <SectionTitle
+              icon={Globe2}
+              title="جدول المنصات المختصر"
+              hint="قراءة رقمية سريعة لإجمالي كل منصة وحصتها."
+            />
+            <div className="overflow-x-auto">
+              <PlatformSummaryTable rows={data.achievementsByPlatform} />
+            </div>
+          </CardContent>
+        </Card>
+      </section>
+    </>
+  );
+}
+
 export default function Achievements() {
   const [period, setPeriod] = useState<PeriodKey>("all");
+  const [viewMode, setViewMode] = useState<ViewMode>("classic");
   const { data, isLoading, isError } = useQuery({
     queryKey: ["public-achievements", period],
     queryFn: () => fetchPublicAchievements(period),
@@ -413,6 +698,9 @@ export default function Achievements() {
       </section>
 
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:py-10">
+        <div className="flex justify-center sm:justify-end">
+          <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
+        </div>
         {isLoading ? (
           <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
             {[...Array(5)].map((_, index) => <Skeleton key={index} className="h-32 rounded-lg bg-white/70" />)}
@@ -424,6 +712,7 @@ export default function Achievements() {
             </CardContent>
           </Card>
         ) : (
+          viewMode === "classic" ? (
           <>
             <section id="platforms">
               <SectionTitle
@@ -515,6 +804,14 @@ export default function Achievements() {
               </Card>
             </section>
           </>
+          ) : (
+            <AnalyticsView
+              data={data}
+              period={period}
+              onPeriodChange={setPeriod}
+              last30DailyAverage={last30DailyAverage}
+            />
+          )
         )}
       </div>
 
