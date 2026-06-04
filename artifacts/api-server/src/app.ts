@@ -9,7 +9,7 @@ import { logger } from "./lib/logger";
 const app: Express = express();
 const clientDistDir = path.resolve(process.cwd(), "artifacts/tilawat-tasks/dist/public");
 const clientIndexPath = path.join(clientDistDir, "index.html");
-// Railway watches the API service, so this marker forces rebuilds that include frontend assets. dependency-picker-ui-v1
+// Railway watches the API service, so this marker forces rebuilds that include frontend assets. achievements-cache-v2
 const SESSION_COOKIE_NAME = "sid";
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 
@@ -58,8 +58,13 @@ app.get("/health", (_req, res) => {
 
 app.use(express.static(clientDistDir, {
   setHeaders(res, filePath) {
-    if (filePath.endsWith("index.html") || filePath.endsWith("sw.js")) {
-      res.setHeader("Cache-Control", "no-cache");
+    if (filePath.endsWith("sw.js")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Service-Worker-Allowed", "/");
+      return;
+    }
+    if (filePath.endsWith("index.html")) {
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
       return;
     }
     if (filePath.includes(`${path.sep}assets${path.sep}`)) {
@@ -79,7 +84,7 @@ app.get(/.*/, (req, res, next) => {
     return;
   }
 
-  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
   res.sendFile(clientIndexPath, (err) => {
     if (err) next(err);
   });
