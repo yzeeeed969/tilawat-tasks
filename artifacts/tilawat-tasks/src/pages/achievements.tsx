@@ -73,6 +73,84 @@ function formatAverage(value: number) {
   return new Intl.NumberFormat("ar-SA", { maximumFractionDigits: 1 }).format(value);
 }
 
+function numberBelowThousandToArabic(value: number): string {
+  const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"];
+  const teens = [
+    "عشرة",
+    "أحد عشر",
+    "اثنا عشر",
+    "ثلاثة عشر",
+    "أربعة عشر",
+    "خمسة عشر",
+    "ستة عشر",
+    "سبعة عشر",
+    "ثمانية عشر",
+    "تسعة عشر",
+  ];
+  const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
+  const hundreds = ["", "مئة", "مئتان", "ثلاثمئة", "أربعمئة", "خمسمئة", "ستمئة", "سبعمئة", "ثمانمئة", "تسعمئة"];
+
+  const parts: string[] = [];
+  const hundred = Math.floor(value / 100);
+  const rest = value % 100;
+
+  if (hundred > 0) parts.push(hundreds[hundred]);
+  if (rest > 0) {
+    if (rest < 10) {
+      parts.push(ones[rest]);
+    } else if (rest < 20) {
+      parts.push(teens[rest - 10]);
+    } else {
+      const one = rest % 10;
+      const ten = Math.floor(rest / 10);
+      parts.push(one > 0 ? `${ones[one]} و${tens[ten]}` : tens[ten]);
+    }
+  }
+
+  return parts.join(" و");
+}
+
+function scaleGroupToArabic(value: number, singular: string, dual: string, plural: string, singularAccusative: string) {
+  if (value === 1) return singular;
+  if (value === 2) return dual;
+  const words = numberBelowThousandToArabic(value);
+  if (value >= 3 && value <= 10) return `${words} ${plural}`;
+  return `${words} ${singularAccusative}`;
+}
+
+function numberToArabicWords(value: number): string {
+  const rounded = Math.max(0, Math.round(value));
+  if (rounded === 0) return "صفر";
+
+  const scales = [
+    { singular: "", dual: "", plural: "", singularAccusative: "" },
+    { singular: "ألف", dual: "ألفان", plural: "آلاف", singularAccusative: "ألفًا" },
+    { singular: "مليون", dual: "مليونان", plural: "ملايين", singularAccusative: "مليونًا" },
+    { singular: "مليار", dual: "ملياران", plural: "مليارات", singularAccusative: "مليارًا" },
+  ];
+
+  const groups: number[] = [];
+  let remaining = rounded;
+  while (remaining > 0) {
+    groups.push(remaining % 1000);
+    remaining = Math.floor(remaining / 1000);
+  }
+
+  const parts: string[] = [];
+  for (let index = groups.length - 1; index >= 0; index -= 1) {
+    const group = groups[index];
+    if (group === 0) continue;
+    if (index === 0) {
+      parts.push(numberBelowThousandToArabic(group));
+    } else {
+      const scale = scales[index] ?? scales[scales.length - 1];
+      parts.push(scaleGroupToArabic(group, scale.singular, scale.dual, scale.plural, scale.singularAccusative));
+    }
+  }
+
+  return parts.join(" و");
+}
+
 function formatDateTime(date: string | Date) {
   return format(new Date(date), "EEEE، d MMMM yyyy، h:mm a", { locale: ar });
 }
@@ -139,6 +217,68 @@ function SectionTitle({ icon: Icon, title, hint }: { icon: ElementType; title: s
         <p className="mt-1 text-sm text-[#6f8378]">{hint}</p>
       </div>
     </div>
+  );
+}
+
+function YoutubeViewsCard({ stats }: { stats: PublicAchievements["youtubeViews"] }) {
+  const hasValue = stats.totalViews !== null;
+  return (
+    <Card className="border-[#eadfcd] bg-white/90 shadow-sm backdrop-blur">
+      <CardContent className="p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <p className="text-sm font-black leading-6 text-[#5f796d]">
+              مشاهدات قنوات YouTube التابعة لتطبيق تلاوات الحرمين
+            </p>
+            <p className="mt-3 break-words text-3xl font-black leading-tight text-[#103c2d] sm:text-5xl">
+              {hasValue ? `${formatNumber(stats.totalViews!)} مشاهدة` : "غير متاح مؤقتًا"}
+            </p>
+            {hasValue ? (
+              <p className="mt-3 max-w-3xl text-sm font-bold leading-7 text-[#5f796d] sm:text-base">
+                {numberToArabicWords(stats.totalViews!)} مشاهدة
+              </p>
+            ) : null}
+            <p className="mt-3 text-xs text-[#7c8f85]">
+              {stats.updatedAt ? `آخر تحديث: ${formatDateTime(stats.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
+            </p>
+          </div>
+          <div className="rounded-lg border border-sky-100 bg-sky-50 p-3 text-sky-700">
+            <Eye className="h-5 w-5" />
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
+function PeriodSelectorCard({
+  period,
+  onChange,
+}: {
+  period: PeriodKey;
+  onChange: (period: PeriodKey) => void;
+}) {
+  return (
+    <Card className="border-[#eadfcd] bg-white/88 shadow-sm backdrop-blur">
+      <CardContent className="p-4 sm:p-5">
+        <div className="grid gap-3 sm:grid-cols-[1fr_260px] sm:items-end">
+          <div>
+            <p className="text-base font-black text-[#103c2d]">الفترة</p>
+            <p className="mt-1 text-sm text-[#6f8378]">اختر الفترة التي تريد عرض إحصائياتها.</p>
+          </div>
+          <select
+            id="achievement-period"
+            value={period}
+            onChange={(event) => onChange(event.target.value as PeriodKey)}
+            className="h-12 w-full rounded-lg border border-[#d8cba9] bg-white px-3 text-base font-bold text-[#103c2d] outline-none focus:border-[#b88724]"
+          >
+            {periodOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
@@ -230,7 +370,6 @@ export default function Achievements() {
 
   const maxPlatform = Math.max(...(data?.achievementsByPlatform.map((row) => row.publications) ?? [0]), 1);
   const selectedPeriodLabel = periodOptions.find((option) => option.value === period)?.label ?? "الكل";
-  const isAllPeriod = period === "all";
 
   return (
     <main dir="rtl" className="min-h-screen bg-[#f6f1e8] text-[#103c2d]">
@@ -256,7 +395,7 @@ export default function Achievements() {
           </div>
         </nav>
 
-        <div className="mx-auto grid w-full max-w-7xl gap-8 px-5 pb-12 pt-6 sm:px-8 lg:grid-cols-[1fr_360px] lg:items-end lg:pb-16">
+        <div className="mx-auto w-full max-w-7xl px-5 pb-12 pt-6 sm:px-8 lg:pb-16">
           <div className="max-w-3xl">
             <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#d8c496] bg-white/70 px-3 py-1 text-sm font-bold text-[#8a641d] shadow-sm backdrop-blur">
               <Globe2 className="h-4 w-4" />
@@ -267,23 +406,6 @@ export default function Achievements() {
             </h1>
             <p className="mt-4 max-w-2xl text-base font-semibold text-[#5d756b]">
               عرض رسمي مختصر لأثر العمل ومنجزاته عبر المنصات.
-            </p>
-          </div>
-
-          <div className="rounded-lg border border-[#decfae] bg-white/78 p-4 shadow-sm backdrop-blur">
-            <label className="text-sm font-black text-[#103c2d]" htmlFor="achievement-period">الفترة</label>
-            <select
-              id="achievement-period"
-              value={period}
-              onChange={(event) => setPeriod(event.target.value as PeriodKey)}
-              className="mt-2 h-12 w-full rounded-lg border border-[#d8cba9] bg-white px-3 text-base font-bold text-[#103c2d] outline-none focus:border-[#b88724]"
-            >
-              {periodOptions.map((option) => (
-                <option key={option.value} value={option.value}>{option.label}</option>
-              ))}
-            </select>
-            <p className="mt-3 text-xs leading-6 text-[#74877d]">
-              تؤثر الفترة على إحصائيات الفترة فقط، بينما تبقى الأرقام التراكمية ثابتة.
             </p>
           </div>
         </div>
@@ -306,37 +428,50 @@ export default function Achievements() {
               <SectionTitle
                 icon={Globe2}
                 title="الإحصائيات التراكمية"
-                hint="أرقام عامة ثابتة لا تتغير عند تغيير الفترة."
+                hint="أرقام عامة لعرض أثر المشروع."
+              />
+              <YoutubeViewsCard stats={data.youtubeViews} />
+              <div className="mt-4">
+                <PeriodSelectorCard period={period} onChange={setPeriod} />
+              </div>
+            </section>
+
+            <section>
+              <SectionTitle
+                icon={Clock}
+                title="إحصائيات الفترة"
+                hint={`تتغير حسب اختيار الفترة الحالية: ${selectedPeriodLabel}.`}
               />
               <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
                 <StatCard
-                  className="col-span-2 xl:col-span-1"
-                  title="مشاهدات قنوات YouTube التابعة لتطبيق تلاوات الحرمين"
-                  value={data.youtubeViews.totalViews === null ? "غير متاح مؤقتًا" : `${formatNumber(data.youtubeViews.totalViews)} مشاهدة`}
-                  icon={Eye}
-                  hint={data.youtubeViews.updatedAt ? `آخر تحديث: ${formatDateTime(data.youtubeViews.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
-                  tone="blue"
-                />
-                <StatCard
-                  title="إجمالي المنشورات التراكمي"
-                  value={formatNumber(data.allTime.totalPublications)}
+                  title="إجمالي منشورات الفترة"
+                  value={formatNumber(data.totalPublications)}
                   icon={LineChart}
-                  hint="الأرقام التأسيسية + إنجازات النظام"
+                  hint={selectedPeriodLabel}
                 />
                 <StatCard
-                  title="المنصات النشطة"
-                  value={formatNumber(data.activePlatforms)}
-                  icon={Globe2}
-                  hint="حسب الأرقام التراكمية"
+                  title="المهام المكتملة في الفترة"
+                  value={formatNumber(data.completedTasks)}
+                  icon={CheckCircle2}
+                  hint="حسب الفترة المختارة"
+                />
+                <StatCard
+                  title="متوسط الإنجاز اليومي"
+                  value={formatAverage(data.dailyAverage)}
+                  icon={TrendingUp}
+                  hint="منشور يوميًا تقريبًا"
+                  tone="gold"
                 />
               </div>
+            </section>
 
+            <section>
               <Card className="mt-8 border-[#eadfcd] bg-white/88 shadow-sm">
                 <CardContent className="p-6">
                   <SectionTitle
                     icon={BarChart3}
                     title="الإنجازات حسب المنصات"
-                    hint="أرقام تراكمية ثابتة: الرقم التأسيسي لكل منصة + إنجازات نظام المهام."
+                    hint="عرض إجمالي الإنجازات لكل منصة."
                   />
                   {data.achievementsByPlatform.length === 0 ? (
                     <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
@@ -358,46 +493,12 @@ export default function Achievements() {
                             </span>
                           </div>
                           <Progress value={(platform.publications / maxPlatform) * 100} className="mt-3 h-2 bg-[#eee4d2]" />
-                          <p className="mt-2 text-xs font-semibold text-[#778b80]">
-                            {platform.baselinePublications > 0
-                              ? `يشمل ${formatNumber(platform.baselinePublications)} رقمًا تأسيسيًا و${formatNumber(platform.systemPublications)} من نظام المهام`
-                              : `${formatNumber(platform.systemPublications)} من نظام المهام`}
-                          </p>
                         </div>
                       ))}
                     </div>
                   )}
                 </CardContent>
               </Card>
-            </section>
-
-            <section>
-              <SectionTitle
-                icon={Clock}
-                title="إحصائيات الفترة"
-                hint={`تتغير حسب اختيار الفترة الحالية: ${selectedPeriodLabel}.`}
-              />
-              <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-                <StatCard
-                  title="إجمالي منشورات الفترة"
-                  value={formatNumber(data.totalPublications)}
-                  icon={LineChart}
-                  hint={isAllPeriod ? "الكل: تأسيسي + إنجازات النظام" : selectedPeriodLabel}
-                />
-                <StatCard
-                  title="المهام المكتملة في الفترة"
-                  value={formatNumber(data.completedTasks)}
-                  icon={CheckCircle2}
-                  hint="من نظام إدارة المهام"
-                />
-                <StatCard
-                  title="متوسط الإنجاز اليومي"
-                  value={formatAverage(data.dailyAverage)}
-                  icon={TrendingUp}
-                  hint={isAllPeriod ? "متوسط تراكمي تقريبي" : "منشور يوميًا تقريبًا"}
-                  tone="gold"
-                />
-              </div>
             </section>
 
             <section>
