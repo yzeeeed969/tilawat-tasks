@@ -425,11 +425,12 @@ function PlatformDistributionDonut({
   const gradient = segments.map((segment) => `${segment.color} ${segment.start}% ${segment.end}%`).join(", ");
 
   return (
-    <div className="grid gap-3 sm:grid-cols-[170px_1fr] sm:items-center">
-      <div className="mx-auto flex h-40 w-40 items-center justify-center rounded-full border border-[#eadfcd] shadow-inner sm:h-44 sm:w-44" style={{ background: `conic-gradient(${gradient})` }}>
+    <div className="grid gap-3 md:grid-cols-[176px_1fr] md:items-center">
+      <div className="mx-auto flex h-40 w-40 items-center justify-center rounded-full border border-[#eadfcd] shadow-inner md:h-44 md:w-44" style={{ background: `conic-gradient(${gradient})` }}>
         <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full border border-[#eadfcd] bg-[#fffdf8] text-center shadow-sm">
-          <span className="text-[10px] font-bold text-[#6f8378]">إجمالي</span>
+          <span className="text-[10px] font-bold text-[#6f8378]">الإجمالي</span>
           <span className="mt-0.5 text-lg font-black text-[#103c2d]">{formatNumber(total)}</span>
+          <span className="text-[10px] font-bold text-[#6f8378]">منشور</span>
         </div>
       </div>
       <div className="grid grid-cols-2 gap-2">
@@ -437,6 +438,7 @@ function PlatformDistributionDonut({
           <div key={segment.platformId} className="flex min-w-0 items-center gap-2 rounded-md border border-[#efe6d8] bg-[#fffdf8] px-2 py-2">
             <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
             <span className="truncate text-xs font-black text-[#103c2d]">{segment.name}</span>
+            <span className="ms-auto shrink-0 text-xs font-black text-[#5f796d]">{formatNumber(segment.publications)}</span>
           </div>
         ))}
       </div>
@@ -516,7 +518,7 @@ function CompactMonthlyGrowthChart({
 
   const maxValue = Math.max(...rows.map((row) => row.publications), 1);
   const width = 620;
-  const height = 150;
+  const height = 170;
   const paddingX = 34;
   const paddingTop = 18;
   const paddingBottom = 34;
@@ -537,7 +539,7 @@ function CompactMonthlyGrowthChart({
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#efe6d8] bg-[#fffdf8] p-2">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-[150px] w-full" role="img" aria-label="رسم النمو الشهري المختصر">
+      <svg viewBox={`0 0 ${width} ${height}`} className="h-[170px] w-full" role="img" aria-label="رسم النمو الشهري المختصر">
         <defs>
           <linearGradient id="compactMonthlyGrowthFill" x1="0" x2="0" y1="0" y2="1">
             <stop offset="0%" stopColor="#0f5b3d" stopOpacity="0.24" />
@@ -551,6 +553,9 @@ function CompactMonthlyGrowthChart({
           return (
             <g key={point.monthStart}>
               <circle cx={point.x} cy={point.y} r="5" fill="#c59226" stroke="#fffaf0" strokeWidth="3" />
+              <text x={point.x} y={point.y - 12} textAnchor="middle" className="fill-[#103c2d] text-[12px] font-black">
+                {formatNumber(point.publications)}
+              </text>
               <text x={point.x} y={height - 12} textAnchor="middle" className="fill-[#6f8378] text-[13px] font-bold">
                 {format(date, "MMM", { locale: ar })}
               </text>
@@ -575,49 +580,53 @@ function AnalyticsView({
 }) {
   return (
     <section className="space-y-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="flex items-center gap-2 text-xl font-black text-[#103c2d]">
+          <h2 className="flex items-center gap-2 text-lg font-black text-[#103c2d] sm:text-xl">
             <Globe2 className="h-5 w-5 text-[#c59226]" />
-            لوحة تنفيذية مختصرة
+            الإنجازات العامة لتطبيق تلاوات الحرمين
           </h2>
-          <p className="mt-1 text-sm font-semibold text-[#6f8378]">
-            قراءة سريعة ومضغوطة لأهم مؤشرات الإنجاز العامة.
+          <p className="mt-1 text-xs font-semibold text-[#6f8378] sm:text-sm">
+            أرقام حقيقية .. أثر ممتد
           </p>
         </div>
+        <p className="rounded-full border border-[#eadfcd] bg-white/85 px-3 py-1.5 text-xs font-black text-[#5f796d] shadow-sm">
+          آخر تحديث: {formatDateTime(data.lastUpdated)}
+        </p>
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-[1.55fr_0.72fr]">
+        <YoutubeViewsCard stats={data.youtubeViews} />
         <CompactPeriodSwitch period={period} onChange={onPeriodChange} />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[1.45fr_0.9fr]">
-        <YoutubeViewsCard stats={data.youtubeViews} />
-        <div className="grid grid-cols-1 gap-3 sm:grid-cols-3 xl:grid-cols-1">
-          <CompactMetricCard
-            title="إجمالي المنشورات"
-            value={formatNumber(data.allTime.totalPublications)}
-            icon={LineChart}
-            hint="تراكمي"
-          />
-          <CompactMetricCard
-            title="منشورات آخر 30 يومًا"
-            value={formatNumber(data.last30Publications)}
-            icon={Clock}
-            hint="آخر 30 يومًا"
-          />
-          <CompactMetricCard
-            title="متوسط الإنجاز اليومي"
-            value={formatAverage(last30DailyAverage)}
-            icon={TrendingUp}
-            hint="آخر 30 يومًا"
-          />
-        </div>
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+        <CompactMetricCard
+          title="إجمالي المنشورات"
+          value={formatNumber(data.allTime.totalPublications)}
+          icon={LineChart}
+          hint="منشور"
+        />
+        <CompactMetricCard
+          title="منشورات آخر 30 يومًا"
+          value={formatNumber(data.last30Publications)}
+          icon={Clock}
+          hint="منشور حديث"
+        />
+        <CompactMetricCard
+          title="متوسط الإنجاز اليومي"
+          value={formatAverage(last30DailyAverage)}
+          icon={TrendingUp}
+          hint="منشور / يوم"
+        />
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[0.82fr_1.18fr]">
+      <div className="grid gap-4 xl:grid-cols-[0.88fr_1.12fr]">
         <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
           <CardContent className="p-4">
             <div className="mb-3 flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-[#c59226]" />
-              <h3 className="text-base font-black text-[#103c2d]">لمحة بصرية للمنصات</h3>
+              <h3 className="text-base font-black text-[#103c2d]">توزيع الإنجازات حسب المنصات</h3>
             </div>
             <PlatformDistributionDonut rows={data.achievementsByPlatform} />
           </CardContent>
