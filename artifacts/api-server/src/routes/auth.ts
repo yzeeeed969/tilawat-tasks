@@ -16,6 +16,12 @@ function getAppDomain(req: any): string {
   return `${req.protocol}://${req.get("host")}`;
 }
 
+function getClientBasePath(): string {
+  const rawBasePath = process.env.BASE_PATH?.trim();
+  if (!rawBasePath || rawBasePath === "/") return "";
+  return `/${rawBasePath.replace(/^\/+|\/+$/g, "")}`;
+}
+
 const router = Router();
 let resetTokensSchemaPromise: Promise<unknown> | null = null;
 const passwordResetCooldowns = new Map<string, number>();
@@ -253,9 +259,9 @@ router.post("/auth/forgot-password", async (req, res) => {
   const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
   await db.insert(resetTokensTable).values({ userId: user.id, token, expiresAt, used: false });
 
-  const basePath = process.env.BASE_PATH ?? "";
+  const basePath = getClientBasePath();
   const domain = getAppDomain(req);
-  const resetLink = `${domain}${basePath}/reset-password?token=${token}`;
+  const resetLink = `${domain}${basePath}/reset-password?token=${encodeURIComponent(token)}`;
 
   const displayName = user.displayName ?? user.username;
   await sendTelegramPasswordReset({

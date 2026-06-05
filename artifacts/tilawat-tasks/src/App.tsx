@@ -88,6 +88,7 @@ function AppRouter() {
       <Route path="/achievements" component={Achievements} />
       <Route path="/sign-in" component={SignInPage} />
       <Route path="/reset-password" component={ResetPasswordPage} />
+      <Route path="/reset-password/:token" component={ResetPasswordPage} />
       <Route path="/tasks/:id" component={TaskLinkRoute} />
       <Route path="/tasks">
         <TasksRoute />
