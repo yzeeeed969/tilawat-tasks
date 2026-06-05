@@ -492,7 +492,7 @@ function UserRow({ u, onUpdate, onDelete }: {
 }
 
 // ── User Management Section ───────────────────────────────────────────────────
-function UserManagementSection() {
+export function UserManagementSection() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -1377,7 +1377,7 @@ function TelegramToggleRow({ title, description, checked, onChange }: {
   );
 }
 
-function TelegramSettingsSection() {
+export function TelegramSettingsSection() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const { user } = useAuth();
@@ -1665,7 +1665,7 @@ function TelegramSettingsSection() {
   );
 }
 
-function PublicStatsSettingsSection() {
+export function PublicStatsSettingsSection() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
   const [youtubeViewsInput, setYoutubeViewsInput] = useState("");
@@ -1771,6 +1771,55 @@ function PublicStatsSettingsSection() {
 }
 
 // ── Main Settings page ────────────────────────────────────────────────────────
+export function TelegramSettingsPage() {
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div>
+        <h2 className="text-3xl font-bold text-foreground tracking-tight">Telegram</h2>
+        <p className="text-muted-foreground mt-2 text-lg">إدارة إشعارات Telegram والربط وسجل الإرسال</p>
+      </div>
+      <TelegramSettingsSection />
+    </div>
+  );
+}
+
+export function PublicStatsSettingsPage() {
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div>
+        <h2 className="text-3xl font-bold text-foreground tracking-tight">إحصائيات عامة</h2>
+        <p className="text-muted-foreground mt-2 text-lg">إدارة أرقام الإنجازات العامة التي تظهر للزوار</p>
+      </div>
+      <PublicStatsSettingsSection />
+    </div>
+  );
+}
+
+export function GeneralSettingsPage() {
+  const isAdmin = useIsAdmin();
+  const { user } = useAuth();
+  const perms = user?.permissions ?? null;
+  const canManageAccounts = isAdmin || (perms?.canManageAccounts ?? false);
+
+  return (
+    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div>
+        <h2 className="text-3xl font-bold text-foreground tracking-tight">الإعدادات العامة</h2>
+        <p className="text-muted-foreground mt-2 text-lg">إدارة الحسابات والصلاحيات العامة للفريق</p>
+      </div>
+      {canManageAccounts ? (
+        <UserManagementSection />
+      ) : (
+        <Card className="border-border/50 shadow-sm">
+          <CardContent className="p-6 text-sm text-muted-foreground">
+            ليست لديك صلاحية الوصول إلى الإعدادات العامة.
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 export default function Settings() {
   const isAdmin = useIsAdmin();
   const { user } = useAuth();

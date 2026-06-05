@@ -375,9 +375,9 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const adminNavItems = [
     { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
     { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
-    { href: "/settings#telegram", label: "Telegram", icon: Bell, show: canManageSettings },
-    { href: "/settings#public-stats", label: "إحصائيات عامة", icon: BarChart3, show: canManageSettings },
-    { href: "/settings#general", label: "الإعدادات العامة", icon: Settings, show: canManageSettings },
+    { href: "/settings/telegram", label: "Telegram", icon: Bell, show: canManageSettings },
+    { href: "/settings/public-stats", label: "إحصائيات عامة", icon: BarChart3, show: canManageSettings },
+    { href: "/settings/general", label: "الإعدادات العامة", icon: Settings, show: canManageSettings },
   ].filter((item) => item.show);
 
   const renderNavItem = (item: { href: string; label: string; icon: typeof LayoutDashboard }) => {
