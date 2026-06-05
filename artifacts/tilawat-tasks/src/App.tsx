@@ -102,11 +102,6 @@ function AppRouter() {
           <AppLayout><Reports /></AppLayout>
         </ProtectedRoute>
       </Route>
-      <Route path="/settings">
-        <ProtectedRoute>
-          <AppLayout><Settings /></AppLayout>
-        </ProtectedRoute>
-      </Route>
       <Route path="/settings/telegram">
         <ProtectedRoute>
           <AppLayout><TelegramSettingsPage /></AppLayout>
@@ -120,6 +115,11 @@ function AppRouter() {
       <Route path="/settings/general">
         <ProtectedRoute>
           <AppLayout><GeneralSettingsPage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/settings">
+        <ProtectedRoute>
+          <AppLayout><Settings /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/reciters">
