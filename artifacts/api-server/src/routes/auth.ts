@@ -4,7 +4,6 @@ import crypto from "crypto";
 import { db } from "@workspace/db";
 import { usersTable, membersTable, activityLogTable, resetTokensTable } from "@workspace/db/schema";
 import { eq, count, and, gt, sql } from "drizzle-orm";
-import { sendPasswordResetEmail } from "../services/email";
 import { ensureAdminLinkedMember } from "../lib/user-member";
 import { getPublicAppUrl } from "../lib/public-url";
 import { sendTelegramPasswordReset } from "../services/telegram-notification-engine";
@@ -19,6 +18,8 @@ function getAppDomain(req: any): string {
 
 const router = Router();
 let resetTokensSchemaPromise: Promise<unknown> | null = null;
+const passwordResetCooldowns = new Map<string, number>();
+const PASSWORD_RESET_COOLDOWN_MS = 10 * 60 * 1000;
 
 function ensureResetTokensSchema() {
   if (!resetTokensSchemaPromise) {
@@ -238,6 +239,14 @@ router.post("/auth/forgot-password", async (req, res) => {
     return;
   }
 
+  const cooldownKey = String(user.id);
+  const lastRequestedAt = passwordResetCooldowns.get(cooldownKey) ?? 0;
+  if (Date.now() - lastRequestedAt < PASSWORD_RESET_COOLDOWN_MS) {
+    res.json({ ok: true });
+    return;
+  }
+  passwordResetCooldowns.set(cooldownKey, Date.now());
+
   await db.delete(resetTokensTable).where(eq(resetTokensTable.userId, user.id));
 
   const token = crypto.randomBytes(48).toString("hex");
@@ -249,16 +258,12 @@ router.post("/auth/forgot-password", async (req, res) => {
   const resetLink = `${domain}${basePath}/reset-password?token=${token}`;
 
   const displayName = user.displayName ?? user.username;
-  const telegramResult = await sendTelegramPasswordReset({
+  await sendTelegramPasswordReset({
     userId: user.id,
     displayName,
     resetLink,
     expiresAt,
   }).catch(() => ({ sent: false }));
-
-  if (!telegramResult.sent && user.email) {
-    await sendPasswordResetEmail(user.email, resetLink, displayName);
-  }
 
   res.json({ ok: true });
 });

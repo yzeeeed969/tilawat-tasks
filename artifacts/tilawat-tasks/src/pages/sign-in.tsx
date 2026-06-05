@@ -83,18 +83,21 @@ export default function SignInPage() {
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setForgotError("");
-    if (!forgotInput.trim()) { setForgotError("أدخل اسم المستخدم أو البريد الإلكتروني"); return; }
+    if (!forgotInput.trim()) { setForgotError("أدخل اسم المستخدم"); return; }
     setForgotLoading(true);
     try {
-      const isEmail = forgotInput.includes("@");
-      await fetch("/api/auth/forgot-password", {
+      const res = await fetch("/api/auth/forgot-password", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(isEmail ? { email: forgotInput.trim() } : { username: forgotInput.trim() }),
+        body: JSON.stringify({ username: forgotInput.trim() }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "تعذر إرسال طلب الاستعادة");
+      }
       setForgotSent(true);
-    } catch {
-      setForgotError("حدث خطأ في الاتصال بالخادم");
+    } catch (err: any) {
+      setForgotError(err?.message || "حدث خطأ في الاتصال بالخادم");
     } finally {
       setForgotLoading(false);
     }
@@ -138,13 +141,13 @@ export default function SignInPage() {
             <div className="text-center mb-2">
               <h2 className="text-xl font-bold text-foreground">استرداد كلمة المرور</h2>
               <p className="text-sm text-muted-foreground mt-1">
-                أدخل اسم المستخدم أو البريد. إذا كان Telegram مربوطًا بالحساب سيصلك رابط الاسترداد هناك
+                أدخل اسم المستخدم. إذا كان الحساب موجودًا ومربوطًا بـ Telegram فسيصلك رابط إعادة تعيين كلمة المرور
               </p>
             </div>
             {forgotSent ? (
               <div className="space-y-4">
                 <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 text-sm text-center">
-                  إذا كان الحساب مسجلاً ومربوطًا بـ Telegram فسيصلك رابط الاسترداد هناك. وإن لم يكن مربوطًا فسنستخدم البريد المسجل إن وجد
+                  إذا كان الحساب موجودًا ومربوطًا بـ Telegram فسيصلك رابط إعادة تعيين كلمة المرور.
                 </div>
                 <button
                   type="button"
@@ -157,14 +160,14 @@ export default function SignInPage() {
             ) : (
               <form onSubmit={handleForgotPassword} className="space-y-3">
                 <div className="space-y-1.5">
-                  <Label htmlFor="forgotInput" className="font-medium">اسم المستخدم أو البريد الإلكتروني</Label>
+                  <Label htmlFor="forgotInput" className="font-medium">اسم المستخدم</Label>
                   <div className="relative">
                     <Mail className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="forgotInput"
                       value={forgotInput}
                       onChange={(e) => setForgotInput(e.target.value)}
-                      placeholder="0501234567 أو example@gmail.com"
+                      placeholder="مثال: 0501234567"
                       className="pr-10"
                       dir="ltr"
                       autoComplete="username"
