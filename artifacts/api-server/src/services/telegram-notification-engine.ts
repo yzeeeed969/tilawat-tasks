@@ -22,6 +22,8 @@ import { getTaskUrl } from "../lib/public-url";
 
 const RIYADH_OFFSET_HOURS = 3;
 const LINK_TOKEN_BYTES = 18;
+const OVERDUE_TELEGRAM_ALERT_LIMIT_DAYS = 7;
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 type NotificationType =
   | "telegram_daily_reminder"
@@ -106,6 +108,25 @@ function riyadhParts(now = new Date()) {
 function riyadhDateKey(now = new Date()) {
   const p = riyadhParts(now);
   return `${p.year}-${String(p.month).padStart(2, "0")}-${String(p.day).padStart(2, "0")}`;
+}
+
+function dateKeyToDayIndex(dateKey: string) {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateKey);
+  if (!match) return null;
+  return Math.floor(Date.UTC(Number(match[1]), Number(match[2]) - 1, Number(match[3])) / DAY_MS);
+}
+
+function overdueAgeDaysInRiyadh(dueDate: Date | null, now = new Date()) {
+  if (!dueDate || Number.isNaN(dueDate.getTime())) return null;
+  const dueDayIndex = dateKeyToDayIndex(riyadhDateKey(dueDate));
+  const todayDayIndex = dateKeyToDayIndex(riyadhDateKey(now));
+  if (dueDayIndex === null || todayDayIndex === null) return null;
+  return todayDayIndex - dueDayIndex;
+}
+
+function isWithinOverdueTelegramAlertWindow(task: Pick<TaskRow, "dueDate">, now = new Date()) {
+  const ageDays = overdueAgeDaysInRiyadh(task.dueDate, now);
+  return ageDays !== null && ageDays <= OVERDUE_TELEGRAM_ALERT_LIMIT_DAYS;
 }
 
 function riyadhLocalToUtc(year: number, month: number, day: number, hours = 0, minutes = 0, seconds = 0, ms = 0) {
@@ -747,7 +768,7 @@ async function sendDailyMemberReminders(settings: TelegramSettings, now: Date) {
 async function sendOverdueNotifications(settings: TelegramSettings, now: Date) {
   const cutoff = overdueCutoff(now, settings.overdueAfterTime);
   const dateKey = riyadhDateKey(now);
-  const overdueTasks = await getOverdueTasks(cutoff);
+  const overdueTasks = (await getOverdueTasks(cutoff)).filter((task) => isWithinOverdueTelegramAlertWindow(task, now));
   if (overdueTasks.length === 0) return 0;
 
   const admins = settings.notifyAdminOverdue ? await getAdminRecipients() : [];
@@ -806,7 +827,9 @@ async function sendAdminDailySummary(settings: TelegramSettings, now: Date) {
   const tasks = await getTasksInRange(start, end);
   const cutoff = overdueCutoff(now, settings.overdueAfterTime);
   const completed = tasks.filter((task) => task.status === "completed");
-  const overdue = tasks.filter((task) => task.status !== "completed" && task.dueDate && task.dueDate <= cutoff);
+  const overdue = tasks.filter(
+    (task) => task.status !== "completed" && task.dueDate && task.dueDate <= cutoff && isWithinOverdueTelegramAlertWindow(task, now),
+  );
   const incomplete = tasks.filter((task) => task.status !== "completed" && !overdue.some((overdueTask) => overdueTask.id === task.id));
   const admins = await getAdminRecipients();
   let sent = 0;
