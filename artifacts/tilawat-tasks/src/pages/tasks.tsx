@@ -902,6 +902,31 @@ function TaskDueStatusLabel({ task }: { task: DueStatusTask }) {
   );
 }
 
+type DueStatusFilter = "all" | "overdue" | "due_today" | "completed_on_time" | "completed_late";
+
+function getTaskDueStatus(task: DueStatusTask): Exclude<DueStatusFilter, "all"> | null {
+  if (!task.dueDate) return null;
+
+  const dueDate = new Date(task.dueDate);
+  if (Number.isNaN(dueDate.getTime())) return null;
+
+  const due = startOfDay(dueDate);
+  const today = startOfDay(new Date());
+
+  if (task.status !== "completed") {
+    if (due.getTime() < today.getTime()) return "overdue";
+    if (due.getTime() === today.getTime()) return "due_today";
+    return null;
+  }
+
+  if (!task.completedAt) return null;
+  const completedDate = new Date(task.completedAt);
+  if (Number.isNaN(completedDate.getTime())) return null;
+
+  const completed = startOfDay(completedDate);
+  return completed.getTime() <= due.getTime() ? "completed_on_time" : "completed_late";
+}
+
 function TaskDayDateLabel({
   dueDate,
   showHijri = true,
@@ -2856,6 +2881,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [filterReciter, setFilterReciter] = useState<string>("all");
   const [filterMosque, setFilterMosque] = useState<string>("all");
   const [filterStatus, setFilterStatus] = useState<string>("all");
+  const [filterDueStatus, setFilterDueStatus] = useState<DueStatusFilter>("all");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [quickDateFilter, setQuickDateFilter] = useState<Date | null>(null);
   const [quickWeekOffset, setQuickWeekOffset] = useState(0);
@@ -2982,6 +3008,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         if (task.reciter?.id !== reciterId) return false;
       }
       if (filterStatus !== "all" && task.status !== filterStatus) return false;
+      if (filterDueStatus !== "all" && getTaskDueStatus(task) !== filterDueStatus) return false;
 
       if (quickDateFilter) {
         if (!task.dueDate) return false;
@@ -3007,7 +3034,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       if (aTime !== bTime) return aTime - bTime;
       return a.id - b.id;
     });
-  }, [searchedTasks, filterPlatform, filterReciter, filterStatus, quickDateFilter, filterDueDate]);
+  }, [searchedTasks, filterPlatform, filterReciter, filterStatus, filterDueStatus, quickDateFilter, filterDueDate]);
 
   const proofsDialogTask = useMemo(
     () => tasks?.find((task) => task.id === proofsDialogTaskId) ?? null,
@@ -3279,6 +3306,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     setFilterReciter("all");
     setFilterMosque("all");
     setFilterStatus("all");
+    setFilterDueStatus("all");
     setFilterDueDate("all");
     setQuickDateFilter(null);
     setSelectedCalendarDate(null);
@@ -4255,6 +4283,48 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         )}
       </div>
 
+      {activeTab === "active" && (
+        <div className="bg-card border border-border rounded-lg shadow-sm p-3">
+          <div className="flex items-center gap-2 mb-2 text-sm font-bold text-sidebar-primary">
+            <Layers className="h-4 w-4" />
+            <span>شريط المنصات</span>
+          </div>
+          <div className="flex gap-2 overflow-x-auto pb-1">
+            <Button
+              type="button"
+              size="sm"
+              variant={filterPlatform === "all" ? "default" : "outline"}
+              className={cn(
+                "shrink-0 whitespace-nowrap",
+                filterPlatform === "all" && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+              )}
+              onClick={() => setFilterPlatform("all")}
+            >
+              الكل
+            </Button>
+            {platforms?.map((platform) => {
+              const active = filterPlatform === platform.id.toString();
+              return (
+                <Button
+                  key={platform.id}
+                  type="button"
+                  size="sm"
+                  variant={active ? "default" : "outline"}
+                  className={cn(
+                    "shrink-0 gap-2 whitespace-nowrap",
+                    active && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+                  )}
+                  onClick={() => setFilterPlatform(platform.id.toString())}
+                >
+                  <PlatformIcon name={platform.name} className="h-4 w-4" />
+                  <span>{platform.name}</span>
+                </Button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       {/* Filters */}
       {activeTab === "active" && (
       <div className="flex flex-col sm:flex-row gap-3 p-4 bg-card border border-border rounded-lg shadow-sm flex-wrap">
@@ -4357,6 +4427,19 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             <SelectItem value="all">كل الحالات</SelectItem>
             <SelectItem value="pending">قيد التنفيذ</SelectItem>
             <SelectItem value="completed">مكتمل</SelectItem>
+          </SelectContent>
+        </Select>
+
+        <Select value={filterDueStatus} onValueChange={(v) => setFilterDueStatus(v as DueStatusFilter)}>
+          <SelectTrigger className="min-w-[170px] bg-background">
+            <SelectValue placeholder="حالة الاستحقاق" />
+          </SelectTrigger>
+          <SelectContent dir="rtl">
+            <SelectItem value="all">كل حالات الاستحقاق</SelectItem>
+            <SelectItem value="overdue">متأخرة</SelectItem>
+            <SelectItem value="due_today">مستحقة اليوم</SelectItem>
+            <SelectItem value="completed_on_time">مكتملة في الوقت</SelectItem>
+            <SelectItem value="completed_late">مكتملة متأخرة</SelectItem>
           </SelectContent>
         </Select>
 
