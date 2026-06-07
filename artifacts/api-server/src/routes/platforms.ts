@@ -106,16 +106,17 @@ router.get("/platforms/:platformId/pages", async (req, res) => {
 router.post("/platforms/:platformId/pages", async (req, res) => {
   const { platformId } = CreatePlatformPageParams.parse({ platformId: Number(req.params.platformId) });
   const { name, reciterId, pageUrl } = CreatePlatformPageBody.parse(req.body) as { name?: string; reciterId?: number | null; pageUrl?: string | null };
+  const cleanPageUrl = typeof pageUrl === "string" && pageUrl.trim() ? pageUrl.trim() : null;
   // Auto-generate name from reciter if not provided
-  let pageName = name ?? "";
+  let pageName = name?.trim() ?? "";
   if (!pageName && reciterId) {
     const [reciter] = await db.select().from(recitersTable).where(eq(recitersTable.id, reciterId));
     pageName = reciter?.name ?? "";
   }
-  if (!pageName) pageName = pageUrl ?? "صفحة";
+  if (!pageName) pageName = cleanPageUrl ?? "صفحة";
   const [page] = await db
     .insert(platformPagesTable)
-    .values({ platformId, name: pageName, reciterId: reciterId ?? null, pageUrl: pageUrl ?? null })
+    .values({ platformId, name: pageName, reciterId: reciterId ?? null, pageUrl: cleanPageUrl })
     .returning();
   res.status(201).json(page);
 });
@@ -123,17 +124,20 @@ router.post("/platforms/:platformId/pages", async (req, res) => {
 router.patch("/platforms/:platformId/pages/:id", async (req, res) => {
   const platformId = Number(req.params.platformId);
   const id = Number(req.params.id);
-  const { reciterId, pageUrl } = req.body as { reciterId?: number | null; pageUrl?: string | null };
-  let name: string | undefined;
-  if (reciterId) {
+  const { name, reciterId, pageUrl } = req.body as { name?: string | null; reciterId?: number | null; pageUrl?: string | null };
+  const cleanPageUrl = typeof pageUrl === "string" && pageUrl.trim() ? pageUrl.trim() : null;
+  let pageName = typeof name === "string" ? name.trim() : "";
+  if (!pageName && reciterId) {
     const [reciter] = await db.select().from(recitersTable).where(eq(recitersTable.id, reciterId));
-    name = reciter?.name;
+    pageName = reciter?.name ?? "";
   }
-  if (!name) name = pageUrl ?? undefined;
+  if (!pageName && cleanPageUrl) pageName = cleanPageUrl;
   const updateData: Record<string, unknown> = {};
   if (reciterId !== undefined) updateData.reciterId = reciterId ?? null;
-  if (pageUrl !== undefined) updateData.pageUrl = pageUrl ?? null;
-  if (name) updateData.name = name;
+  if (pageUrl !== undefined) updateData.pageUrl = cleanPageUrl;
+  if (name !== undefined || reciterId !== undefined || pageUrl !== undefined) {
+    if (pageName) updateData.name = pageName;
+  }
   const [page] = await db
     .update(platformPagesTable)
     .set(updateData)

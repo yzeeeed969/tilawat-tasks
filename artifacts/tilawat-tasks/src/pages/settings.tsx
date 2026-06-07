@@ -921,9 +921,11 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
   const [editName, setEditName] = useState(p.name);
   const [editBaselinePostsCount, setEditBaselinePostsCount] = useState(String(p.baselinePostsCount ?? 0));
   const [pagesOpen, setPagesOpen] = useState(false);
+  const [newPageName, setNewPageName] = useState("");
   const [newPageUrl, setNewPageUrl] = useState("");
   const [newPageReciterId, setNewPageReciterId] = useState<number | null>(null);
   const [editingPageId, setEditingPageId] = useState<number | null>(null);
+  const [editPageName, setEditPageName] = useState("");
   const [editPageUrl, setEditPageUrl] = useState("");
   const [editPageReciterId, setEditPageReciterId] = useState<number | null>(null);
   const [savingPage, setSavingPage] = useState(false);
@@ -994,10 +996,18 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
   };
 
   const addPage = () => {
-    if (!newPageReciterId && !newPageUrl.trim()) return;
-    createPage.mutate({ platformId: p.id, data: { reciterId: newPageReciterId, pageUrl: newPageUrl.trim() || undefined } as any }, {
+    if (!newPageReciterId && !newPageName.trim() && !newPageUrl.trim()) return;
+    createPage.mutate({
+      platformId: p.id,
+      data: {
+        name: newPageName.trim() || undefined,
+        reciterId: newPageReciterId,
+        pageUrl: newPageUrl.trim() || undefined,
+      } as any,
+    }, {
       onSuccess: () => {
         queryClient.invalidateQueries({ queryKey: getListPlatformPagesQueryKey(p.id) });
+        setNewPageName("");
         setNewPageUrl("");
         setNewPageReciterId(null);
         toast({ title: "تمت إضافة الصفحة" });
@@ -1012,8 +1022,9 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
     });
   };
 
-  const startEditPage = (pg: { id: number; reciterId?: number | null; pageUrl?: string | null }) => {
+  const startEditPage = (pg: { id: number; name?: string | null; reciterId?: number | null; pageUrl?: string | null }) => {
     setEditingPageId(pg.id);
+    setEditPageName(pg.name ?? "");
     setEditPageUrl((pg as any).pageUrl ?? "");
     setEditPageReciterId(pg.reciterId ?? null);
   };
@@ -1025,7 +1036,11 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
       await fetch(`/api/platforms/${p.id}/pages/${editingPageId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reciterId: editPageReciterId, pageUrl: editPageUrl.trim() || null }),
+        body: JSON.stringify({
+          name: editPageName.trim() || null,
+          reciterId: editPageReciterId,
+          pageUrl: editPageUrl.trim() || null,
+        }),
       });
       queryClient.invalidateQueries({ queryKey: getListPlatformPagesQueryKey(p.id) });
       setEditingPageId(null);
@@ -1113,8 +1128,9 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
                   <li key={pg.id} className="bg-background border border-border/50 rounded overflow-hidden">
                     {isEditing ? (
                       <div className="p-2 space-y-2 bg-sidebar-primary/5">
+                        <Input value={editPageName} onChange={(e) => setEditPageName(e.target.value)} placeholder="اسم الصفحة أو القناة" className="h-7 text-xs" />
                         <div className="flex gap-2">
-                          <Input value={editPageUrl} onChange={(e) => setEditPageUrl(e.target.value)} placeholder="رابط الصفحة" dir="ltr" className="h-7 text-xs flex-1" />
+                          <Input value={editPageUrl} onChange={(e) => setEditPageUrl(e.target.value)} placeholder="رابط الصفحة (اختياري)" dir="ltr" className="h-7 text-xs flex-1" />
                           <Button size="sm" className="h-7 px-2 bg-sidebar-primary text-sidebar-primary-foreground text-xs" onClick={savePageEdit} disabled={savingPage}>
                             {savingPage ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
                           </Button>
@@ -1167,7 +1183,10 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
                     ) : (
                       <div className="flex items-center justify-between px-3 py-1.5">
                         <div className="flex flex-col min-w-0">
-                          <span className="text-sm font-medium">{reciter?.name ?? pg.name}</span>
+                          <span className="text-sm font-medium">{pg.name || reciter?.name || "صفحة عامة"}</span>
+                          {!reciter && (
+                            <span className="text-[10px] text-muted-foreground">صفحة عامة - تظهر مع أي قارئ</span>
+                          )}
                           {(pg as any).pageUrl && (
                             <a href={(pg as any).pageUrl} target="_blank" rel="noopener noreferrer" className="text-[10px] text-blue-500 hover:underline truncate max-w-[200px]">
                               {(pg as any).pageUrl}
@@ -1199,10 +1218,12 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
             <p className="text-xs text-muted-foreground text-center py-2">لا توجد صفحات بعد</p>
           )}
           <div className="flex flex-col gap-2">
+            <Input value={newPageName} onChange={(e) => setNewPageName(e.target.value)} placeholder="اسم الصفحة أو القناة (مثال: تصاميم الحرمين)" className="h-8 text-sm"
+              onKeyDown={(e) => { if (e.key === "Enter") addPage(); }} />
             <div className="flex gap-2">
               <Input value={newPageUrl} onChange={(e) => setNewPageUrl(e.target.value)} placeholder="رابط الصفحة (اختياري)" dir="ltr" className="h-8 text-sm flex-1"
                 onKeyDown={(e) => { if (e.key === "Enter") addPage(); }} />
-              <Button size="sm" className="h-8 bg-sidebar-primary text-sidebar-primary-foreground px-3" onClick={addPage} disabled={createPage.isPending || (!newPageReciterId && !newPageUrl.trim())}>
+              <Button size="sm" className="h-8 bg-sidebar-primary text-sidebar-primary-foreground px-3" onClick={addPage} disabled={createPage.isPending || (!newPageReciterId && !newPageName.trim() && !newPageUrl.trim())}>
                 {createPage.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
               </Button>
             </div>
