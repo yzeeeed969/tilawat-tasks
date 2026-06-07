@@ -1008,6 +1008,116 @@ function MemberMultiSelect({
   );
 }
 
+type PlatformPageOption = {
+  id: number;
+  name: string;
+  reciterId?: number | null;
+};
+
+function useTaskFormPlatformPageOptions({
+  platformId,
+  reciterId,
+  pageId,
+  currentTask,
+}: {
+  platformId: number | null;
+  reciterId: number | null;
+  pageId: number | null;
+  currentTask?: TaskWithDetails | null;
+}) {
+  const { data: pages } = useListPlatformPages(platformId ?? 0, {
+    query: { queryKey: getListPlatformPagesQueryKey(platformId ?? 0), enabled: Boolean(platformId) },
+  });
+
+  return useMemo(() => {
+    const visiblePages = (pages ?? [])
+      .map((page: any) => ({
+        id: page.id,
+        name: page.name ?? `الصفحة #${page.id}`,
+        reciterId: toPositiveNumber(page.reciterId),
+      }))
+      .filter((page) => {
+        const pageReciterId = toPositiveNumber(page.reciterId);
+        return pageReciterId === null || (reciterId !== null && pageReciterId === reciterId);
+      });
+
+    const currentPage = (currentTask as any)?.platformPage;
+    const currentPageOption = currentPage?.id
+      ? {
+          id: currentPage.id,
+          name: currentPage.name ?? `الصفحة الحالية #${currentPage.id}`,
+          reciterId: toPositiveNumber(currentPage.reciterId),
+        }
+      : null;
+
+    const selectedPageFallback =
+      pageId && !visiblePages.some((page) => page.id === pageId) && currentPageOption?.id !== pageId
+        ? {
+            id: pageId,
+            name: `الصفحة الحالية #${pageId}`,
+            reciterId: null,
+          }
+        : null;
+
+    return mergeById<PlatformPageOption>([
+      ...visiblePages,
+      currentPageOption,
+      selectedPageFallback,
+    ]);
+  }, [pages, reciterId, pageId, currentTask]);
+}
+
+function PlatformPageSelectField({
+  pageOptions,
+  onLinkedReciterSelect,
+}: {
+  pageOptions: PlatformPageOption[];
+  onLinkedReciterSelect?: (reciterId: number) => void;
+}) {
+  return (
+    <FormField
+      name="pageId"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>الصفحة / القناة</FormLabel>
+          <Select
+            onValueChange={(value) => {
+              const nextPageId = parseSelectNumberValue(value);
+              field.onChange(nextPageId);
+              const selectedPage = pageOptions.find((page) => page.id === nextPageId);
+              const linkedReciterId = toPositiveNumber(selectedPage?.reciterId);
+              if (linkedReciterId !== null) {
+                onLinkedReciterSelect?.(linkedReciterId);
+              }
+            }}
+            value={safeSelectNumberValue(field.value)}
+          >
+            <FormControl>
+              <SelectTrigger>
+                <SelectValue placeholder="اختر الصفحة أو القناة" />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+              <SelectItem value="none">بدون تحديد صفحة</SelectItem>
+              {pageOptions.map((page) => (
+                <SelectItem key={page.id} value={String(page.id)}>
+                  <span className="flex flex-col text-right leading-5">
+                    <span>{page.name || `الصفحة #${page.id}`}</span>
+                    {toPositiveNumber(page.reciterId) === null && (
+                      <span className="text-[10px] text-muted-foreground">صفحة عامة</span>
+                    )}
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  );
+}
+
 function BasicTaskFormFields({
   platforms,
   members,
@@ -1029,6 +1139,7 @@ function BasicTaskFormFields({
   const [dependencyOpen, setDependencyOpen] = useState(false);
   const platformId = watch("platformId");
   const reciterId = watch("reciterId");
+  const pageId = toPositiveNumber(watch("pageId"));
   const appPrayer = watch("appPrayer");
   const memberIds = watch("memberIds") ?? [];
   const dependsOnTaskId = watch("dependsOnTaskId");
@@ -1066,7 +1177,15 @@ function BasicTaskFormFields({
     ]);
   }, [members, currentTask]);
 
+  const pageOptions = useTaskFormPlatformPageOptions({
+    platformId: toPositiveNumber(platformId),
+    reciterId: toPositiveNumber(reciterId),
+    pageId,
+    currentTask,
+  });
+
   const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
+  const selectedPage = pageOptions.find((page) => page.id === pageId);
   const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
 
   const dependencyOptions = useMemo(
@@ -1100,10 +1219,10 @@ function BasicTaskFormFields({
     const reciter = reciterOptions.find((item) => item.id === reciterId);
     const parts = isApplicationPlatform
       ? [appPrayer, reciter?.name, selectedPlatform?.name]
-      : [reciter?.name, selectedPlatform?.name];
+      : [reciter?.name ?? selectedPage?.name, selectedPlatform?.name];
     const nextTitle = parts.filter(Boolean).join(" — ") || "مهمة جديدة";
     setValue("title", nextTitle, { shouldDirty: false });
-  }, [isApplicationPlatform, appPrayer, reciterId, reciterOptions, selectedPlatform?.name, setValue]);
+  }, [isApplicationPlatform, appPrayer, reciterId, reciterOptions, selectedPage?.name, selectedPlatform?.name, setValue]);
 
   return (
     <>
@@ -1117,7 +1236,10 @@ function BasicTaskFormFields({
           <FormItem>
             <FormLabel>المنصة</FormLabel>
             <Select
-              onValueChange={(value) => field.onChange(parseSelectNumberValue(value) ?? undefined)}
+              onValueChange={(value) => {
+                field.onChange(parseSelectNumberValue(value) ?? undefined);
+                setValue("pageId", null, { shouldDirty: true, shouldValidate: true });
+              }}
               value={safeSelectNumberValue(field.value)}
             >
               <FormControl>
@@ -1150,7 +1272,14 @@ function BasicTaskFormFields({
           <FormItem>
             <FormLabel>القارئ</FormLabel>
             <Select
-              onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
+              onValueChange={(value) => {
+                const nextReciterId = parseSelectNumberValue(value);
+                field.onChange(nextReciterId);
+                const selectedPageReciterId = toPositiveNumber(selectedPage?.reciterId);
+                if (selectedPageReciterId !== null && selectedPageReciterId !== nextReciterId) {
+                  setValue("pageId", null, { shouldDirty: true, shouldValidate: true });
+                }
+              }}
               value={safeSelectNumberValue(field.value)}
             >
               <FormControl>
@@ -1171,6 +1300,15 @@ function BasicTaskFormFields({
           </FormItem>
         )}
       />
+
+      {!isApplicationPlatform && toPositiveNumber(platformId) !== null && pageOptions.length > 0 && (
+        <PlatformPageSelectField
+          pageOptions={pageOptions}
+          onLinkedReciterSelect={(linkedReciterId) =>
+            setValue("reciterId", linkedReciterId, { shouldDirty: true, shouldValidate: true })
+          }
+        />
+      )}
 
       {isApplicationPlatform && (
         <FormField
@@ -1472,11 +1610,12 @@ function EditTaskFormFields({
   currentTask?: TaskWithDetails | null;
   showDependency?: boolean;
 }) {
-  const { watch } = useFormContext<TaskFormValues>();
+  const { watch, setValue } = useFormContext<TaskFormValues>();
   const [dependencyOpen, setDependencyOpen] = useState(false);
 
   const platformId = toPositiveNumber(watch("platformId"));
   const reciterId = toPositiveNumber(watch("reciterId"));
+  const pageId = toPositiveNumber(watch("pageId"));
   const memberIds = Array.isArray(watch("memberIds"))
     ? (watch("memberIds") ?? []).filter((id) => Boolean(toPositiveNumber(id)))
     : [];
@@ -1515,12 +1654,20 @@ function EditTaskFormFields({
     ]);
   }, [members, currentTask]);
 
+  const pageOptions = useTaskFormPlatformPageOptions({
+    platformId,
+    reciterId,
+    pageId,
+    currentTask,
+  });
+
   const dependencyOptions = useMemo(
     () => buildTaskDependencySelectOptions(allTasks, excludeTaskId, dependsOnTaskId),
     [allTasks, excludeTaskId, dependsOnTaskId]
   );
 
   const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
+  const selectedPage = pageOptions.find((page) => page.id === pageId);
   const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
 
   const editWarnings = [
@@ -1544,7 +1691,10 @@ function EditTaskFormFields({
           <FormItem>
             <FormLabel>المنصة</FormLabel>
             <Select
-              onValueChange={(value) => field.onChange(parseSelectNumberValue(value) ?? undefined)}
+              onValueChange={(value) => {
+                field.onChange(parseSelectNumberValue(value) ?? undefined);
+                setValue("pageId", null, { shouldDirty: true, shouldValidate: true });
+              }}
               value={safeSelectNumberValue(field.value)}
             >
               <FormControl>
@@ -1577,7 +1727,14 @@ function EditTaskFormFields({
           <FormItem>
             <FormLabel>القارئ</FormLabel>
             <Select
-              onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
+              onValueChange={(value) => {
+                const nextReciterId = parseSelectNumberValue(value);
+                field.onChange(nextReciterId);
+                const selectedPageReciterId = toPositiveNumber(selectedPage?.reciterId);
+                if (selectedPageReciterId !== null && selectedPageReciterId !== nextReciterId) {
+                  setValue("pageId", null, { shouldDirty: true, shouldValidate: true });
+                }
+              }}
               value={safeSelectNumberValue(field.value)}
             >
               <FormControl>
@@ -1598,6 +1755,15 @@ function EditTaskFormFields({
           </FormItem>
         )}
       />
+
+      {!isApplicationPlatform && platformId !== null && pageOptions.length > 0 && (
+        <PlatformPageSelectField
+          pageOptions={pageOptions}
+          onLinkedReciterSelect={(linkedReciterId) =>
+            setValue("reciterId", linkedReciterId, { shouldDirty: true, shouldValidate: true })
+          }
+        />
+      )}
 
       {isApplicationPlatform && (
         <FormField
@@ -3363,7 +3529,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       }
       const selectedPlatform = platforms?.find((platform) => platform.id === data.platformId);
       const selectedReciter = reciters?.find((reciter) => reciter.id === data.reciterId);
-      const taskTitle = [selectedReciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || "مهمة جديدة";
+      const explicitTitle = typeof data.title === "string" ? data.title.trim() : "";
+      const taskTitle = explicitTitle || [selectedReciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || "مهمة جديدة";
       const taskDate = new Date(data.startDate).toISOString();
 
       setIsCreateSubmitting(true);
@@ -3386,7 +3553,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             recurrenceDurationDays: null,
             recurrenceDays: null,
             weeklyQuotaRequired: null,
-            pageId: null,
+            pageId: data.pageId ?? null,
             expandDailyInstances: false,
             recurrencePattern: "none",
             source: "admin_created",
@@ -3495,7 +3662,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       }
       const selectedPlatform = platforms?.find((platform) => platform.id === data.platformId);
       const selectedReciter = reciters?.find((reciter) => reciter.id === data.reciterId);
-      const taskTitle = [selectedReciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || data.title || "مهمة جديدة";
+      const explicitTitle = typeof data.title === "string" ? data.title.trim() : "";
+      const taskTitle = explicitTitle || [selectedReciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || "مهمة جديدة";
       const taskDate = new Date(data.startDate).toISOString();
 
       updateTask.mutate(
@@ -3506,6 +3674,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             platformId: data.platformId,
             memberIds: memberIdsForStableUpdate,
             reciterId: data.reciterId ?? null,
+            pageId: data.pageId ?? null,
             startDate: taskDate,
             dueDate: taskDate,
             updateScope: "single",
