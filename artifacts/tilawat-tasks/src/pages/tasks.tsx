@@ -1851,16 +1851,21 @@ function EditTaskFormFields({
         name="description"
         render={({ field }) => (
           <FormItem>
-            <FormLabel>ملاحظة <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
+            <FormLabel>
+              ملاحظة تظهر للعضو <span className="text-xs text-muted-foreground">(اختياري)</span>
+            </FormLabel>
             <FormControl>
               <Textarea
                 value={field.value ?? ""}
                 onChange={field.onChange}
-                placeholder="أي تفاصيل أو توجيهات إضافية..."
+                placeholder="اكتب ملاحظة تظهر داخل المهمة للعضو..."
                 rows={3}
                 className="resize-none"
               />
             </FormControl>
+            <p className="text-xs leading-5 text-muted-foreground">
+              ستظهر هذه الملاحظة داخل صف المهمة للعضو.
+            </p>
             <FormMessage />
           </FormItem>
         )}
@@ -2484,15 +2489,18 @@ function TaskFormFields({
         render={({ field }) => (
           <FormItem>
             <FormLabel className="text-muted-foreground text-sm">
-              ملاحظة <span className="text-xs">(اختياري)</span>
+              ملاحظة تظهر للعضو <span className="text-xs">(اختياري)</span>
             </FormLabel>
             <FormControl>
               <Textarea
-                placeholder="أي تفاصيل أو توجيهات إضافية للعضو..."
+                placeholder="اكتب ملاحظة تظهر داخل المهمة للعضو..."
                 className="resize-none min-h-[72px]"
                 {...field}
               />
             </FormControl>
+            <p className="text-xs leading-5 text-muted-foreground">
+              ستظهر هذه الملاحظة داخل صف المهمة للعضو.
+            </p>
             <FormMessage />
           </FormItem>
         )}
