@@ -771,6 +771,32 @@ function MemberCreatedTaskBadge({ task }: { task: TaskWithDetails }) {
   );
 }
 
+function TaskNoteLine({
+  task,
+  className,
+  compact = false,
+}: {
+  task: { description?: string | null };
+  className?: string;
+  compact?: boolean;
+}) {
+  const note = typeof task.description === "string" ? task.description.trim() : "";
+  if (!note) return null;
+
+  return (
+    <div
+      className={cn(
+        "max-w-full whitespace-normal break-words rounded-md border border-amber-200/80 bg-amber-50/80 text-amber-900",
+        compact ? "px-1.5 py-0.5 text-[10px] leading-snug" : "px-2 py-1 text-xs leading-relaxed",
+        className
+      )}
+    >
+      <span className="font-semibold">ملاحظة: </span>
+      <span>{note}</span>
+    </div>
+  );
+}
+
 function TaskProofCell({
   task,
   onAdd,
@@ -2960,6 +2986,7 @@ function ReciterTaskCard({
                         <TaskDayDateLabel dueDate={task.dueDate} showHijri={showHijri} />
                         <TaskDueStatusLabel task={task} />
                       </div>
+                      <TaskNoteLine task={task} className="max-w-[520px]" />
                       <div className="flex flex-wrap gap-1">
                         {taskMembers.map((m) => (
                           <span
@@ -4811,7 +4838,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                       <TableCell className="font-medium">
                         <div>
                           <p className="line-through text-muted-foreground">{task.title}</p>
-                          {task.description && <p className="text-xs text-muted-foreground/60 truncate max-w-[200px]">{task.description}</p>}
+                          <TaskNoteLine task={task} compact className="mt-1 max-w-[260px] opacity-75" />
                         </div>
                       </TableCell>
                       <TableCell>
@@ -5036,6 +5063,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                   {weeklyQuotaInfo(task).extra > 0 ? ` +${weeklyQuotaInfo(task).extra} إضافي` : ""}
                                 </p>
                               )}
+                              <TaskNoteLine task={task} compact className="mt-1" />
                               {reciter && <p className="text-muted-foreground truncate">{reciter.name}</p>}
                               <div className="flex items-center justify-between gap-1 mt-1">
                                 <div className="flex items-center gap-1 min-w-0">
@@ -5152,6 +5180,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                   <span>{task.title}</span>
                                   <WeeklyQuotaBadge task={task} />
                                   <MemberCreatedTaskBadge task={task} />
+                                  <TaskNoteLine task={task} className="mt-1 max-w-[320px]" />
                                 </div>
                               </TableCell>
                               <TableCell>
@@ -5214,6 +5243,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                       <span className="font-medium line-through">{task.title}</span>
                                       <WeeklyQuotaBadge task={task} />
                                       <MemberCreatedTaskBadge task={task} />
+                                      <TaskNoteLine task={task} compact className="mt-1 max-w-[320px]" />
                                     </div>
                                   </TableCell>
                                   <TableCell className="opacity-60">
@@ -5320,13 +5350,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                 <Repeat2 className="h-2.5 w-2.5" />
                                 {task.recurrence === "daily" ? "يومي" : task.recurrence === "weekly" ? "أسبوعي" : task.recurrence === "custom_days" ? "أيام محددة" : "شهري"}
                               </span>
-                            )}
+                              )}
+                            </div>
+                            <TaskNoteLine task={task} className="max-w-[360px]" />
                           </div>
-                          {task.description && (
-                            <span className="text-xs text-muted-foreground truncate max-w-[220px]">{task.description}</span>
-                          )}
-                        </div>
-                      </TableCell>
+                        </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
                           <PlatformIcon name={task.platform.name} />
