@@ -4440,7 +4440,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           placeholder="بحث في المهام، المنصات، القراء، الأعضاء..."
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          className="pr-9 bg-card"
+          className="h-11 pr-9 bg-card sm:h-10"
         />
         {searchQuery && (
           <button
@@ -4453,19 +4453,19 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       </div>
 
       {activeTab === "active" && (
-        <div className="bg-card border border-border rounded-lg shadow-sm p-3">
+        <div className="rounded-xl border border-border bg-card p-3 shadow-sm sm:rounded-lg">
           <div className="flex items-center gap-2 mb-2 text-sm font-bold text-sidebar-primary">
             <Layers className="h-4 w-4" />
             <span>شريط المنصات</span>
           </div>
-          <div className="flex gap-2 overflow-x-auto pb-1">
+          <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
             <Button
               type="button"
               size="sm"
               variant={filterPlatform === "all" ? "default" : "outline"}
               className={cn(
-                "shrink-0 whitespace-nowrap",
-                filterPlatform === "all" && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+                "h-10 shrink-0 rounded-full px-4 shadow-sm whitespace-nowrap sm:h-9 sm:rounded-md",
+                filterPlatform === "all" && "bg-sidebar-primary text-sidebar-primary-foreground ring-2 ring-sidebar-primary/20 hover:bg-sidebar-primary/90"
               )}
               onClick={() => setFilterPlatform("all")}
             >
@@ -4480,8 +4480,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   size="sm"
                   variant={active ? "default" : "outline"}
                   className={cn(
-                    "shrink-0 gap-2 whitespace-nowrap",
-                    active && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+                    "h-10 shrink-0 gap-2 rounded-full px-4 shadow-sm whitespace-nowrap sm:h-9 sm:rounded-md",
+                    active && "bg-sidebar-primary text-sidebar-primary-foreground ring-2 ring-sidebar-primary/20 hover:bg-sidebar-primary/90"
                   )}
                   onClick={() => setFilterPlatform(platform.id.toString())}
                 >
@@ -4496,23 +4496,30 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
       {/* Filters */}
       {activeTab === "active" && (
-      <div className="flex flex-col sm:flex-row gap-3 p-4 bg-card border border-border rounded-lg shadow-sm flex-wrap">
-        <Select value={filterPlatform} onValueChange={setFilterPlatform}>
-          <SelectTrigger className="min-w-[140px] bg-background">
-            <SelectValue placeholder="كل المنصات" />
-          </SelectTrigger>
-          <SelectContent dir="rtl">
-            <SelectItem value="all">كل المنصات</SelectItem>
-            {platforms?.map((p) => (
-              <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
+      <div className="grid grid-cols-1 gap-3 rounded-xl border border-border bg-card p-3 shadow-sm sm:flex sm:flex-row sm:flex-wrap sm:rounded-lg sm:p-4">
+        <div className="flex items-center justify-between sm:hidden">
+          <span className="text-sm font-bold text-sidebar-primary">الفلاتر</span>
+          <span className="text-xs text-muted-foreground">مرتبطة بالبحث وشريط المنصات</span>
+        </div>
+
+        <div className="hidden sm:block">
+          <Select value={filterPlatform} onValueChange={setFilterPlatform}>
+            <SelectTrigger className="min-w-[140px] bg-background">
+              <SelectValue placeholder="كل المنصات" />
+            </SelectTrigger>
+            <SelectContent dir="rtl">
+              <SelectItem value="all">كل المنصات</SelectItem>
+              {platforms?.map((p) => (
+                <SelectItem key={p.id} value={p.id.toString()}>{p.name}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
 
         {/* Mosque filter (only in reciter view) */}
         {view === "reciter" && (
           <Select value={filterMosque} onValueChange={setFilterMosque}>
-            <SelectTrigger className="min-w-[160px] bg-background">
+            <SelectTrigger className="w-full bg-background sm:min-w-[160px]">
               <SelectValue placeholder="كل المساجد" />
             </SelectTrigger>
             <SelectContent dir="rtl">
@@ -4525,7 +4532,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
         {/* Reciter filter */}
         <Select value={filterReciter} onValueChange={setFilterReciter}>
-          <SelectTrigger className="min-w-[150px] bg-background">
+          <SelectTrigger className="w-full bg-background sm:min-w-[150px]">
             <SelectValue placeholder="كل القراء" />
           </SelectTrigger>
           <SelectContent dir="rtl" className="max-h-64 overflow-y-auto">
@@ -4552,7 +4559,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         {view === "list" && isAdmin && (
           <>
             <Select value={filterMember} onValueChange={setFilterMember} disabled={isAdminMemberPreview}>
-              <SelectTrigger className="min-w-[150px] bg-background">
+              <SelectTrigger className="w-full bg-background sm:min-w-[150px]">
                 <SelectValue placeholder="كل الأعضاء" />
               </SelectTrigger>
               <SelectContent dir="rtl">
@@ -4575,7 +4582,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 }
               }}
             >
-              <SelectTrigger className="min-w-[170px] bg-background">
+              <SelectTrigger className="w-full bg-background sm:min-w-[170px]">
                 <SelectValue placeholder="عرض كعضو" />
               </SelectTrigger>
               <SelectContent dir="rtl">
@@ -4589,7 +4596,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         )}
 
         <Select value={filterStatus} onValueChange={setFilterStatus}>
-          <SelectTrigger className="min-w-[140px] bg-background">
+          <SelectTrigger className="w-full bg-background sm:min-w-[140px]">
             <SelectValue placeholder="كل الحالات" />
           </SelectTrigger>
           <SelectContent dir="rtl">
@@ -4600,7 +4607,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         </Select>
 
         <Select value={filterDueStatus} onValueChange={(v) => setFilterDueStatus(v as DueStatusFilter)}>
-          <SelectTrigger className="min-w-[170px] bg-background">
+          <SelectTrigger className="w-full bg-background sm:min-w-[170px]">
             <SelectValue placeholder="حالة الاستحقاق" />
           </SelectTrigger>
           <SelectContent dir="rtl">
@@ -4614,7 +4621,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
         {/* Date filter */}
         <Select value={filterDueDate} onValueChange={(v) => setFilterDueDate(v as typeof filterDueDate)}>
-          <SelectTrigger className="min-w-[160px] bg-background">
+          <SelectTrigger className="w-full bg-background sm:min-w-[160px]">
             <SelectValue placeholder="كل الأوقات" />
           </SelectTrigger>
           <SelectContent dir="rtl">
@@ -4631,12 +4638,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         </Select>
 
         {isAdmin && view === "list" && (
-          <div className="flex items-center gap-2 mr-auto">
+          <div className="flex w-full items-center gap-2 sm:mr-auto sm:w-auto">
             <span className="text-xs text-muted-foreground whitespace-nowrap">
               يعرض {adminListShown} من {adminListTotal} مهمة
             </span>
             <Select value={adminListLimit} onValueChange={(value) => setAdminListLimit(value as AdminListLimit)}>
-              <SelectTrigger className="min-w-[120px] bg-background">
+              <SelectTrigger className="w-full bg-background sm:min-w-[120px]">
                 <SelectValue placeholder="عدد المهام" />
               </SelectTrigger>
               <SelectContent dir="rtl">
@@ -4649,7 +4656,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           </div>
         )}
 
-        <Button type="button" variant="outline" className="gap-2" onClick={resetFilters}>
+        <Button type="button" variant="outline" className="w-full gap-2 sm:w-auto" onClick={resetFilters}>
           <RotateCcw className="h-4 w-4" />
           إعادة تعيين الفلاتر
         </Button>
@@ -4657,7 +4664,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       )}
 
       {activeTab === "active" && view === "list" && (
-        <div className="rounded-lg border border-border bg-card p-3 shadow-sm">
+        <div className="rounded-xl border border-border bg-card p-3 shadow-sm sm:rounded-lg">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div className="flex flex-col gap-0.5">
               <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
@@ -4736,7 +4743,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               )}
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
+          <div className="-mx-1 mt-3 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] lg:mx-0 lg:grid lg:grid-cols-7 lg:overflow-visible lg:px-0 lg:pb-0 [&::-webkit-scrollbar]:hidden">
             {quickWeekDays.map((day) => {
               const selected = quickDateFilter ? isSameDay(day, quickDateFilter) : false;
               const today = isSameDay(day, new Date());
@@ -4749,7 +4756,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     setFilterDueDate("all");
                   }}
                   className={cn(
-                    "rounded-md border px-3 py-2 text-center transition-colors",
+                    "min-w-[118px] shrink-0 rounded-md border px-3 py-2 text-center transition-colors lg:min-w-0 lg:shrink",
                     selected
                       ? "border-sidebar-primary bg-sidebar-primary text-sidebar-primary-foreground"
                       : today
