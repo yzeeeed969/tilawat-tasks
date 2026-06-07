@@ -483,7 +483,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
                   {initials}
                 </button>
               </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" side="bottom" className="w-44 mt-1">
+              <DropdownMenuContent align="end" side="bottom" className="w-56 mt-1">
                 <div className="px-3 py-2 border-b border-border">
                   <p className="text-sm font-semibold truncate">{name}</p>
                   <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>
@@ -502,6 +502,25 @@ export function AppLayout({ children }: { children: ReactNode }) {
                     ربط Telegram
                   </DropdownMenuItem>
                 </Link>
+                {adminNavItems.length > 0 && (
+                  <>
+                    <div className="my-1 border-t border-border" />
+                    <div className="px-3 py-1 text-[11px] font-bold text-muted-foreground">
+                      إدارة النظام
+                    </div>
+                    {adminNavItems.map((item) => {
+                      const Icon = item.icon;
+                      return (
+                        <Link key={`mobile-admin-${item.href}`} href={item.href}>
+                          <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
+                            <Icon className="h-4 w-4" />
+                            {item.label}
+                          </DropdownMenuItem>
+                        </Link>
+                      );
+                    })}
+                  </>
+                )}
                 <DropdownMenuItem className="cursor-pointer flex items-center gap-2" onClick={handleSwitchAccount}>
                   <RefreshCw className="h-4 w-4" />
                   {user?.role === "admin" ? "تبديل إلى عضو" : "تبديل إلى المدير"}
