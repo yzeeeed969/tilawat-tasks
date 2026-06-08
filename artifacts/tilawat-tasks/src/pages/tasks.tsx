@@ -4063,7 +4063,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               }}
             >
               <DialogTrigger asChild>
-                <Button className="bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold">
+                <Button className="hidden sm:inline-flex bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold">
                   <Plus className="ml-2 h-4 w-4" />
                   {TASK_FORM_STABILITY_MODE ? "مهمة جديدة" : isAdmin ? "مهمة جديدة" : "مهمة مقطوعة"}
                 </Button>
@@ -4474,6 +4474,20 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           </button>
         )}
       </div>
+
+      {activeTab === "active" &&
+        (TASK_FORM_STABILITY_MODE
+          ? isAdmin
+          : isAdmin || (ENABLE_MEMBER_CREATED_TASKS && user?.memberId)) && (
+          <Button
+            type="button"
+            onClick={() => setIsCreateOpen(true)}
+            className="h-12 w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold shadow-sm sm:hidden"
+          >
+            <Plus className="ml-2 h-4 w-4" />
+            {TASK_FORM_STABILITY_MODE ? "مهمة جديدة" : isAdmin ? "مهمة جديدة" : "مهمة مقطوعة"}
+          </Button>
+        )}
 
       {activeTab === "active" && (
         <div className="rounded-xl border border-border bg-card p-3 shadow-sm sm:rounded-lg">
