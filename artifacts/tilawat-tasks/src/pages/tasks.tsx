@@ -797,6 +797,34 @@ function TaskNoteLine({
   );
 }
 
+function TaskDescriptionField({ compact = false }: { compact?: boolean }) {
+  return (
+    <FormField
+      name="description"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel className={compact ? "text-muted-foreground text-sm" : undefined}>
+            ملاحظة تظهر للعضو <span className="text-xs text-muted-foreground">(اختياري)</span>
+          </FormLabel>
+          <FormControl>
+            <Textarea
+              value={field.value ?? ""}
+              onChange={field.onChange}
+              placeholder="اكتب ملاحظة تظهر داخل المهمة للعضو..."
+              rows={3}
+              className={cn("resize-none", compact && "min-h-[72px]")}
+            />
+          </FormControl>
+          <p className="text-xs leading-5 text-muted-foreground">
+            ستظهر هذه الملاحظة داخل صف المهمة للعضو.
+          </p>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  );
+}
+
 function TaskProofCell({
   task,
   onAdd,
@@ -1392,6 +1420,8 @@ function BasicTaskFormFields({
         )}
       />
 
+      <TaskDescriptionField />
+
       <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-muted/20">
         <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
           <CalendarDays className="h-3.5 w-3.5" />
@@ -1847,29 +1877,7 @@ function EditTaskFormFields({
         )}
       />
 
-      <FormField
-        name="description"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>
-              ملاحظة تظهر للعضو <span className="text-xs text-muted-foreground">(اختياري)</span>
-            </FormLabel>
-            <FormControl>
-              <Textarea
-                value={field.value ?? ""}
-                onChange={field.onChange}
-                placeholder="اكتب ملاحظة تظهر داخل المهمة للعضو..."
-                rows={3}
-                className="resize-none"
-              />
-            </FormControl>
-            <p className="text-xs leading-5 text-muted-foreground">
-              ستظهر هذه الملاحظة داخل صف المهمة للعضو.
-            </p>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+      <TaskDescriptionField />
 
       <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-muted/20">
         <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
@@ -2484,27 +2492,7 @@ function TaskFormFields({
         />
       )}
 
-      <FormField
-        name="description"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel className="text-muted-foreground text-sm">
-              ملاحظة تظهر للعضو <span className="text-xs">(اختياري)</span>
-            </FormLabel>
-            <FormControl>
-              <Textarea
-                placeholder="اكتب ملاحظة تظهر داخل المهمة للعضو..."
-                className="resize-none min-h-[72px]"
-                {...field}
-              />
-            </FormControl>
-            <p className="text-xs leading-5 text-muted-foreground">
-              ستظهر هذه الملاحظة داخل صف المهمة للعضو.
-            </p>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
+      <TaskDescriptionField compact />
 
       {showDependency && (
         <FormField
