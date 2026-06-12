@@ -834,7 +834,10 @@ function MemberSelfTaskFormFields({
   reciters: Reciter[] | undefined;
   currentMemberName?: string | null;
 }) {
-  const { setValue } = useFormContext<TaskFormValues>();
+  const { register, watch, setValue, formState } = useFormContext<TaskFormValues>();
+  const selectedPlatformId = watch("platformId");
+  const selectedReciterId = watch("reciterId");
+  const selectedDate = watch("startDate");
 
   const platformOptions = useMemo(() => platforms ?? [], [platforms]);
   const reciterOptions = useMemo(
@@ -862,106 +865,87 @@ function MemberSelfTaskFormFields({
         </p>
       </div>
 
-      <FormField
-        name="title"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>عنوان المهمة</FormLabel>
-            <FormControl>
-              <Input
-                value={field.value ?? ""}
-                onChange={field.onChange}
-                placeholder="مثال: عمل إضافي غير مخطط"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
+      <div className="space-y-2">
+        <label className="text-sm font-medium">عنوان المهمة</label>
+        <Input
+          {...register("title")}
+          placeholder="مثال: عمل إضافي غير مخطط"
+        />
+        {formState.errors.title?.message && (
+          <p className="text-[0.8rem] font-medium text-destructive">{String(formState.errors.title.message)}</p>
         )}
-      />
+      </div>
 
-      <FormField
-        name="platformId"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>المنصة</FormLabel>
-            <Select
-              onValueChange={(value) => field.onChange(parseSelectNumberValue(value) ?? undefined)}
-              value={safeSelectNumberValue(field.value)}
-            >
-              <FormControl>
-                <SelectTrigger>
-                  <SelectValue placeholder="اختر المنصة" />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                <SelectItem value="none" disabled>
-                  اختر المنصة
-                </SelectItem>
-                {platformOptions.map((platform) => (
-                  <SelectItem key={platform.id} value={String(platform.id)}>
-                    <span className="flex items-center gap-2">
-                      <PlatformIcon name={platform.name} />
-                      <span>{platform.name || `المنصة #${platform.id}`}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FormMessage />
-          </FormItem>
+      <div className="space-y-2">
+        <label className="text-sm font-medium">المنصة</label>
+        <select
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          value={selectedPlatformId ? String(selectedPlatformId) : ""}
+          onChange={(event) => {
+            const nextPlatformId = parseSelectNumberValue(event.target.value);
+            setValue("platformId", nextPlatformId ?? 0, { shouldDirty: true, shouldValidate: true });
+          }}
+        >
+          <option value="" disabled>اختر المنصة</option>
+          {platformOptions.map((platform) => (
+            <option key={platform.id} value={String(platform.id)}>
+              {platform.name || `المنصة #${platform.id}`}
+            </option>
+          ))}
+        </select>
+        {formState.errors.platformId?.message && (
+          <p className="text-[0.8rem] font-medium text-destructive">{String(formState.errors.platformId.message)}</p>
         )}
-      />
+      </div>
 
-      <FormField
-        name="reciterId"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>
-              القارئ <span className="text-xs font-normal text-muted-foreground">(اختياري)</span>
-            </FormLabel>
-            <Select
-              onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
-              value={safeSelectNumberValue(field.value)}
-            >
-              <FormControl>
-                <SelectTrigger>
-                  <SelectValue placeholder="بدون قارئ" />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                <SelectItem value="none">بدون قارئ</SelectItem>
-                {reciterOptions.map((reciter) => (
-                  <SelectItem key={reciter.id} value={String(reciter.id)}>
-                    {reciter.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FormMessage />
-          </FormItem>
+      <div className="space-y-2">
+        <label className="text-sm font-medium">
+          القارئ <span className="text-xs font-normal text-muted-foreground">(اختياري)</span>
+        </label>
+        <select
+          className="flex h-9 w-full rounded-md border border-input bg-background px-3 py-1 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+          value={selectedReciterId ? String(selectedReciterId) : "none"}
+          onChange={(event) =>
+            setValue("reciterId", parseSelectNumberValue(event.target.value), { shouldDirty: true, shouldValidate: true })
+          }
+        >
+          <option value="none">بدون قارئ</option>
+          {reciterOptions.map((reciter) => (
+            <option key={reciter.id} value={String(reciter.id)}>
+              {reciter.name}
+            </option>
+          ))}
+        </select>
+        {formState.errors.reciterId?.message && (
+          <p className="text-[0.8rem] font-medium text-destructive">{String(formState.errors.reciterId.message)}</p>
         )}
-      />
+      </div>
 
-      <TaskDescriptionField compact />
+      <div className="space-y-2">
+        <label className="text-sm font-medium">ملاحظة تظهر للمدير</label>
+        <Textarea
+          {...register("description")}
+          rows={3}
+          className="min-h-[72px] resize-none"
+          placeholder="اكتب تفاصيل مختصرة عند الحاجة..."
+        />
+      </div>
 
-      <FormField
-        name="startDate"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel className="flex items-center gap-1">
-              تاريخ المهمة <span className="text-[10px] font-normal text-red-500">مطلوب</span>
-            </FormLabel>
-            <FormControl>
-              <DatePickerInput
-                value={field.value ?? ""}
-                onChange={field.onChange}
-                placeholder="اختر تاريخًا"
-              />
-            </FormControl>
-            <FormMessage />
-          </FormItem>
+      <div className="space-y-2">
+        <label className="text-sm font-medium">
+          تاريخ المهمة <span className="text-[10px] font-normal text-red-500">مطلوب</span>
+        </label>
+        <Input
+          type="date"
+          value={selectedDate ?? ""}
+          onChange={(event) =>
+            setValue("startDate", event.target.value, { shouldDirty: true, shouldValidate: true })
+          }
+        />
+        {formState.errors.startDate?.message && (
+          <p className="text-[0.8rem] font-medium text-destructive">{String(formState.errors.startDate.message)}</p>
         )}
-      />
+      </div>
 
       <div className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 text-xs leading-6 text-muted-foreground">
         يمكن إضافة الشاهد بعد إنشاء المهمة أو عند إكمالها من بطاقة المهمة.
