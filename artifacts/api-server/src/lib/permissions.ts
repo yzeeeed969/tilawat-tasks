@@ -10,6 +10,7 @@ type TaskLike = {
   memberId?: number | null;
   memberIds?: number[];
   members?: Array<{ id: number }>;
+  source?: string | null;
 };
 
 function hasPermission(user: UserLike, keys: string[]) {
@@ -45,7 +46,7 @@ export function canEditTask(user: UserLike, task: TaskLike) {
 export function canDeleteTask(user: UserLike, task: TaskLike) {
   if (user.role === "admin") return true;
   if (hasPermission(user, ["canDeleteTasks", "deleteTasks", "canManageTasks", "manageTasks", "tasksManage"])) return true;
-  return isAssignedToTask(user, task);
+  return task.source === "member_created" && isAssignedToTask(user, task);
 }
 
 export function canCreateTask(user: UserLike, memberIds: number[]) {

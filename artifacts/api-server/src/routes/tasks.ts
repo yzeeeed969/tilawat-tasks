@@ -435,6 +435,57 @@ function parseWeeklyQuotaRequired(value: unknown): number | null {
   return quota;
 }
 
+function validateMemberTaskUpdate(reqBody: Record<string, unknown>, user: any, currentTask: any): string | null {
+  if (user?.role === "admin") return null;
+  if (!user?.memberId) return "Forbidden";
+
+  const allowedAdminCreatedKeys = new Set(["status", "progress", "submissionUrl"]);
+  if (currentTask.source !== "member_created") {
+    const requestedKeys = Object.keys(reqBody).filter((key) => key !== "updateScope");
+    return requestedKeys.every((key) => allowedAdminCreatedKeys.has(key))
+      ? null
+      : "Members cannot edit admin-created task details";
+  }
+
+  if (currentTask.seriesId) return "Members cannot edit series tasks";
+
+  if ("memberIds" in reqBody) {
+    const memberIds = Array.isArray(reqBody.memberIds) ? reqBody.memberIds.map((id) => Number(id)) : [];
+    if (memberIds.length !== 1 || memberIds[0] !== user.memberId) {
+      return "Members can only assign self-created tasks to themselves";
+    }
+  }
+
+  const seriesType = reqBody.seriesType;
+  const recurrence = reqBody.recurrence ?? reqBody.recurrenceType;
+  if (seriesType !== undefined && seriesType !== null && seriesType !== "" && seriesType !== "temporary") {
+    return "Members cannot create or edit task series";
+  }
+  if (recurrence !== undefined && recurrence !== null && recurrence !== "" && recurrence !== "none") {
+    return "Members cannot create recurring tasks";
+  }
+
+  const forbiddenKeys = [
+    "dependsOnTaskId",
+    "weeklyQuotaRequired",
+    "recurrenceIntervalDays",
+    "recurrenceDurationDays",
+    "recurrenceDays",
+  ];
+  for (const key of forbiddenKeys) {
+    const value = reqBody[key];
+    if (value !== undefined && value !== null && value !== "" && value !== false) {
+      return "Members can only edit simple self-created tasks";
+    }
+  }
+
+  if (reqBody.endDate !== undefined && reqBody.endDate !== null && reqBody.endDate !== "") {
+    return "Members cannot create date ranges";
+  }
+
+  return null;
+}
+
 function daysBetweenDates(from: Date, to: Date) {
   const dayMs = 24 * 60 * 60 * 1000;
   return Math.round((normalizeDate(to)!.getTime() - normalizeDate(from)!.getTime()) / dayMs);
@@ -847,7 +898,10 @@ router.post("/tasks", async (req, res) => {
       (rawRecurrence && rawRecurrence !== "none") ||
       (req.body as any).endDate ||
       (req.body as any).weeklyQuotaRequired ||
+      (req.body as any).recurrenceIntervalDays ||
+      (req.body as any).recurrenceDurationDays ||
       (req.body as any).recurrenceDays ||
+      (req.body as any).expandDailyInstances ||
       (req.body as any).dependsOnTaskId
     ) {
       res.status(403).json({ error: "Members can only create one-off self tasks" });
@@ -1278,6 +1332,12 @@ router.put("/tasks/:id", async (req, res) => {
     return;
   }
 
+  const memberUpdateError = validateMemberTaskUpdate(req.body as Record<string, unknown>, currentUser, currentTask);
+  if (memberUpdateError) {
+    res.status(403).json({ error: memberUpdateError });
+    return;
+  }
+
   let dependsOnTaskId: number | null | undefined;
   if ("dependsOnTaskId" in (req.body as any)) {
     if (currentUser?.role !== "admin") {
@@ -1690,12 +1750,18 @@ router.post("/tasks/:id/duplicate", async (req, res) => {
     res.status(404).json({ error: "Task not found" });
     return;
   }
-  if (!canViewTask((req as any).currentUser, original) || !canCreateTask((req as any).currentUser, original.memberIds)) {
+  const currentUser = (req as any).currentUser;
+  if (!canViewTask(currentUser, original) || !canCreateTask(currentUser, original.memberIds)) {
     res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  if (currentUser?.role !== "admin" && original.source !== "member_created") {
+    res.status(403).json({ error: "Members can only duplicate self-created tasks" });
     return;
   }
 
   const [newTask] = await db.insert(tasksTable).values({
+    source: currentUser?.role === "admin" ? original.source : "member_created",
     title: `${original.title} (نسخة)`,
     description: original.description,
     platformId: original.platformId,

@@ -647,7 +647,7 @@ type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
 type EditTaskScope = "single" | "future" | "series";
 const TASK_FORM_STABILITY_MODE = false;
 const USE_SAFE_PHASE_ONE_TASK_FORM = true;
-const ENABLE_MEMBER_CREATED_TASKS = false;
+const ENABLE_MEMBER_CREATED_TASKS = true;
 const ENABLE_TASK_DEPENDENCIES = true;
 type UrlDialogState = {
   taskId: number;
@@ -895,6 +895,144 @@ function TaskProofCell({
       <Link2 className="h-3 w-3" />
       أضف
     </button>
+  );
+}
+
+function AdminTaskMobileCard({
+  task,
+  isSelected,
+  isOverdue,
+  showHijri,
+  onToggleSelect,
+  onEdit,
+  onQuickReciter,
+  onComments,
+  onProof,
+  onManageProofs,
+  onDuplicate,
+  onStatusChange,
+  onDelete,
+}: {
+  task: TaskWithDetails;
+  isSelected: boolean;
+  isOverdue: boolean;
+  showHijri: boolean;
+  onToggleSelect: () => void;
+  onEdit: () => void;
+  onQuickReciter: () => void;
+  onComments: () => void;
+  onProof: () => void;
+  onManageProofs: () => void;
+  onDuplicate: () => void;
+  onStatusChange: (status: TaskStatus) => void;
+  onDelete: () => void;
+}) {
+  const reciter = task.reciter as Reciter | null | undefined;
+  const taskMembers = task.members && task.members.length > 0 ? task.members : [task.member];
+
+  return (
+    <div
+      id={`task-${task.id}`}
+      className={cn(
+        "rounded-lg border bg-card p-3 shadow-sm",
+        isOverdue && "border-red-200 bg-red-50/40",
+        isSelected && "border-sidebar-primary bg-sidebar-primary/5"
+      )}
+    >
+      <div className="flex items-start gap-3">
+        <Checkbox checked={isSelected} onCheckedChange={onToggleSelect} className="mt-1" />
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0">
+              <p className="break-words text-sm font-semibold leading-6 text-foreground">{task.title}</p>
+              <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                <WeeklyQuotaBadge task={task} />
+                <MemberCreatedTaskBadge task={task} />
+              </div>
+            </div>
+            <TaskStatusBadge status={task.status} />
+          </div>
+          <TaskNoteLine task={task} compact />
+        </div>
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
+        <div className="rounded-md bg-muted/40 p-2">
+          <span className="block text-muted-foreground">المنصة</span>
+          <span className="mt-1 flex items-center gap-1.5 font-medium">
+            <PlatformIcon name={task.platform.name} className="h-4 w-4" />
+            {task.platform.name}
+          </span>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2">
+          <span className="block text-muted-foreground">القارئ</span>
+          <span className="mt-1 block font-medium">{reciter?.name ?? "—"}</span>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2">
+          <span className="block text-muted-foreground">المسؤولون</span>
+          <div className="mt-1 flex flex-wrap gap-1">
+            {taskMembers.map((member) => (
+              <span key={member.id} className="rounded-full bg-sidebar-primary/10 px-2 py-0.5 font-medium text-sidebar-primary">
+                {member.name}
+              </span>
+            ))}
+          </div>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2">
+          <span className="block text-muted-foreground">التاريخ</span>
+          <div className="mt-1 font-medium"><TaskDayDateLabel dueDate={task.dueDate} showHijri={showHijri} /></div>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2">
+          <span className="block text-muted-foreground">الاستحقاق</span>
+          <div className="mt-1"><TaskDueStatusLabel task={task} /></div>
+        </div>
+        <div className="rounded-md bg-muted/40 p-2">
+          <span className="block text-muted-foreground">الشاهد</span>
+          <div className="mt-1"><TaskProofCell task={task} onAdd={() => onProof()} onManage={() => onManageProofs()} /></div>
+        </div>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
+        <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={onEdit}>
+          <Pencil className="h-3.5 w-3.5" />
+          تعديل
+        </Button>
+        <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={onProof}>
+          <Link2 className="h-3.5 w-3.5" />
+          الشاهد
+        </Button>
+        <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={onQuickReciter}>
+          <MicVocal className="h-3.5 w-3.5" />
+          القارئ
+        </Button>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button type="button" size="sm" variant="ghost" className="mr-auto h-8 w-8 p-0">
+              <MoreHorizontal className="h-4 w-4" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem onClick={onComments} className="cursor-pointer flex items-center gap-2">
+              <MessageSquare className="h-4 w-4 text-sidebar-primary/70" />التعليقات
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={onDuplicate} className="cursor-pointer flex items-center gap-2">
+              <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={() => onStatusChange("pending")} className="cursor-pointer flex items-center gap-2">
+              <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => onStatusChange("completed")} className="cursor-pointer flex items-center gap-2">
+              <Check className="h-4 w-4 text-green-600" />مكتمل
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem onClick={onDelete} className="cursor-pointer flex items-center gap-2 text-red-600 focus:text-red-700 focus:bg-red-50">
+              <Trash2 className="h-4 w-4" />نقل إلى السلة
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    </div>
   );
 }
 
@@ -3481,6 +3619,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const invalidateTasks = () => queryClient.invalidateQueries({ queryKey: getListTasksQueryKey() });
 
+  const canModifyTaskAsCurrentUser = (task: TaskWithDetails) => {
+    if (isAdmin || isAdminMemberPreview) return true;
+    return ENABLE_MEMBER_CREATED_TASKS && (task as any).source === "member_created";
+  };
+
   const toggleTaskSelect = (id: number) => setSelectedTaskIds((prev) => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
   });
@@ -3533,11 +3676,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       toast({ title: "لا يوجد عضو مرتبط بحسابك لإنشاء مهمة مقطوعة", variant: "destructive" });
       return;
     }
-    if (TASK_FORM_STABILITY_MODE && !isAdmin) {
+    if (TASK_FORM_STABILITY_MODE && !isAdmin && !isMemberSelfTask) {
       toast({ title: "إنشاء المهمة المقطوعة موقوف مؤقتًا أثناء تثبيت نموذج المهام", variant: "destructive" });
       return;
     }
-    if (TASK_FORM_STABILITY_MODE) {
+    if (TASK_FORM_STABILITY_MODE && !isMemberSelfTask) {
       if (!data.platformId) {
         toast({ title: "اختر المنصة أولًا", variant: "destructive" });
         return;
@@ -4082,7 +4225,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   <div className="flex-1 overflow-y-auto px-6 py-4">
                     <Form {...createForm}>
                       <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">
-                        {TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM ? (
+                        {(TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM) && !(ENABLE_MEMBER_CREATED_TASKS && !isAdmin) ? (
                           <BasicTaskFormFields
                             platforms={platforms}
                             members={members as { id: number; name: string; role: string }[]}
@@ -4840,9 +4983,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 {tasks?.map((task) => {
                   const taskMembers = task.members && task.members.length > 0 ? task.members : [task.member];
                   return (
-                    <TableRow
-                      key={task.id}
-                      id={`task-${task.id}`}
+                      <TableRow
+                        key={task.id}
+                      id={`task-table-${task.id}`}
                       className={cn("hover:bg-red-50/20", isLinkedTask(task.id) && linkedTaskClassName)}
                     >
                       <TableCell className="font-medium">
@@ -5299,6 +5442,36 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             </div>
           ) : (
             /* ── Admin view ── */
+            <>
+            <div className="space-y-3 md:hidden">
+              {adminListTasks?.map((task) => {
+                const isOverdue =
+                  Boolean(task.dueDate) &&
+                  task.status !== "completed" &&
+                  isPast(new Date(task.dueDate!)) &&
+                  !isToday(new Date(task.dueDate!));
+                const isSelected = selectedTaskIds.has(task.id);
+                return (
+                  <AdminTaskMobileCard
+                    key={task.id}
+                    task={task}
+                    isSelected={isSelected}
+                    isOverdue={isOverdue}
+                    showHijri={showHijri}
+                    onToggleSelect={() => toggleTaskSelect(task.id)}
+                    onEdit={() => openEditDialog(task)}
+                    onQuickReciter={() => openQuickReciterDialog(task)}
+                    onComments={() => openComments(task)}
+                    onProof={() => openUrlDialog(task)}
+                    onManageProofs={() => openProofsDialog(task)}
+                    onDuplicate={() => handleDuplicate(task.id)}
+                    onStatusChange={(status) => handleStatusChange(task.id, status)}
+                    onDelete={() => handleDelete(task.id)}
+                  />
+                );
+              })}
+            </div>
+            <div className="hidden md:block">
             <Table>
               <TableHeader className="bg-muted/50">
                 <TableRow>
@@ -5468,6 +5641,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 })}
               </TableBody>
             </Table>
+            </div>
+            </>
           )}
         </div>
       ))}
