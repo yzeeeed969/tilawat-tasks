@@ -825,6 +825,151 @@ function TaskDescriptionField({ compact = false }: { compact?: boolean }) {
   );
 }
 
+function MemberSelfTaskFormFields({
+  platforms,
+  reciters,
+  currentMemberName,
+}: {
+  platforms: { id: number; name: string }[] | undefined;
+  reciters: Reciter[] | undefined;
+  currentMemberName?: string | null;
+}) {
+  const { setValue } = useFormContext<TaskFormValues>();
+
+  const platformOptions = useMemo(() => platforms ?? [], [platforms]);
+  const reciterOptions = useMemo(
+    () => reciters?.filter((reciter) => !isPlaceholderApplicationReciter(reciter.name)) ?? [],
+    [reciters]
+  );
+
+  useEffect(() => {
+    setValue("seriesType", "temporary", { shouldDirty: false });
+    setValue("recurrence", "none", { shouldDirty: false });
+    setValue("endDate", "", { shouldDirty: false });
+    setValue("weeklyQuotaRequired", null, { shouldDirty: false });
+    setValue("dependsOnTaskId", null, { shouldDirty: false });
+    setValue("recurrenceDays", null, { shouldDirty: false });
+    setValue("recurrenceIntervalDays", null, { shouldDirty: false });
+    setValue("recurrenceDurationDays", null, { shouldDirty: false });
+  }, [setValue]);
+
+  return (
+    <>
+      <div className="rounded-md border border-green-200 bg-green-50/70 px-4 py-3 text-sm leading-6 text-green-800">
+        <p className="font-semibold">مهمة أضيفها لنفسي فقط</p>
+        <p className="text-xs text-green-700/80">
+          ستُسند هذه المهمة إلى {currentMemberName ?? "حسابي"}، ولن يظهر اختيار الأعضاء أو التكرار أو السلاسل.
+        </p>
+      </div>
+
+      <FormField
+        name="title"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>عنوان المهمة</FormLabel>
+            <FormControl>
+              <Input
+                value={field.value ?? ""}
+                onChange={field.onChange}
+                placeholder="مثال: عمل إضافي غير مخطط"
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        name="platformId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>المنصة</FormLabel>
+            <Select
+              onValueChange={(value) => field.onChange(parseSelectNumberValue(value) ?? undefined)}
+              value={safeSelectNumberValue(field.value)}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="اختر المنصة" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                <SelectItem value="none" disabled>
+                  اختر المنصة
+                </SelectItem>
+                {platformOptions.map((platform) => (
+                  <SelectItem key={platform.id} value={String(platform.id)}>
+                    <span className="flex items-center gap-2">
+                      <PlatformIcon name={platform.name} />
+                      <span>{platform.name || `المنصة #${platform.id}`}</span>
+                    </span>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <FormField
+        name="reciterId"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel>
+              القارئ <span className="text-xs font-normal text-muted-foreground">(اختياري)</span>
+            </FormLabel>
+            <Select
+              onValueChange={(value) => field.onChange(parseSelectNumberValue(value))}
+              value={safeSelectNumberValue(field.value)}
+            >
+              <FormControl>
+                <SelectTrigger>
+                  <SelectValue placeholder="بدون قارئ" />
+                </SelectTrigger>
+              </FormControl>
+              <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                <SelectItem value="none">بدون قارئ</SelectItem>
+                {reciterOptions.map((reciter) => (
+                  <SelectItem key={reciter.id} value={String(reciter.id)}>
+                    {reciter.name}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <TaskDescriptionField compact />
+
+      <FormField
+        name="startDate"
+        render={({ field }) => (
+          <FormItem>
+            <FormLabel className="flex items-center gap-1">
+              تاريخ المهمة <span className="text-[10px] font-normal text-red-500">مطلوب</span>
+            </FormLabel>
+            <FormControl>
+              <DatePickerInput
+                value={field.value ?? ""}
+                onChange={field.onChange}
+                placeholder="اختر تاريخًا"
+              />
+            </FormControl>
+            <FormMessage />
+          </FormItem>
+        )}
+      />
+
+      <div className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 text-xs leading-6 text-muted-foreground">
+        يمكن إضافة الشاهد بعد إنشاء المهمة أو عند إكمالها من بطاقة المهمة.
+      </div>
+    </>
+  );
+}
+
 function TaskProofCell({
   task,
   onAdd,
@@ -3750,11 +3895,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
     let pageId = data.pageId ?? null;
 
-    if (isApplicationPlatform && !data.reciterId) {
+    if (!isMemberSelfTask && isApplicationPlatform && !data.reciterId) {
       toast({ title: "اختر القارئ داخل التطبيق", variant: "destructive" });
       return;
     }
-    if (isApplicationPlatform && !data.appPrayer) {
+    if (!isMemberSelfTask && isApplicationPlatform && !data.appPrayer) {
       toast({ title: "اختر الصلاة", variant: "destructive" });
       return;
     }
@@ -3765,7 +3910,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, memberIdsForCreate);
       }
       const reciter = reciters?.find((r) => r.id === data.reciterId);
-      const taskTitle = isApplicationPlatform
+      const taskTitle = isMemberSelfTask
+        ? data.title || selectedPlatform?.name || "مهمة مقطوعة"
+        : isApplicationPlatform
         ? [data.appPrayer, reciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ")
         : isWeeklyQuota
           ? `${data.title || selectedPlatform?.name || "مهمة"} — هدف أسبوعي (${weeklyQuotaRequired} مرات)`
@@ -4109,8 +4256,110 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {isAdmin && !isAdminMemberPreview && (
+        <div className="space-y-3 sm:hidden">
+          <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <h2 className="text-2xl font-bold tracking-tight text-foreground">المهام</h2>
+                <p className="mt-1 text-sm text-muted-foreground">إدارة ومتابعة مهام الفريق</p>
+                {view === "list" && activeTab === "active" && (
+                  <p className="mt-2 inline-flex rounded-full border border-sidebar-primary/20 bg-sidebar-primary/5 px-2.5 py-1 text-xs font-semibold text-sidebar-primary">
+                    يعرض {adminListShown} من {adminListTotal} مهمة
+                  </p>
+                )}
+              </div>
+              {activeTab === "active" && (
+                <Button
+                  type="button"
+                  onClick={() => setIsCreateOpen(true)}
+                  className="h-10 shrink-0 gap-1 bg-sidebar-primary px-3 font-semibold text-sidebar-primary-foreground hover:bg-sidebar-primary/90"
+                >
+                  <Plus className="h-4 w-4" />
+                  مهمة
+                </Button>
+              )}
+            </div>
+          </div>
+
+          <div className="grid gap-2">
+            <div className="grid grid-cols-2 overflow-hidden rounded-lg border border-border bg-card">
+              <button
+                type="button"
+                onClick={() => setActiveTab("active")}
+                className={cn(
+                  "flex h-10 items-center justify-center gap-1.5 text-sm font-semibold transition-colors",
+                  activeTab === "active"
+                    ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                    : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                <LayoutList className="h-4 w-4" />
+                القائمة
+              </button>
+              <button
+                type="button"
+                onClick={() => setActiveTab("trash")}
+                className={cn(
+                  "flex h-10 items-center justify-center gap-1.5 border-r border-border text-sm font-semibold transition-colors",
+                  activeTab === "trash"
+                    ? "bg-red-600 text-white"
+                    : "text-muted-foreground hover:bg-muted"
+                )}
+              >
+                <Trash2 className="h-4 w-4" />
+                السلة
+              </button>
+            </div>
+
+            <div className="grid grid-cols-3 overflow-hidden rounded-lg border border-border bg-card">
+              {(
+                [
+                  { key: "list", label: "قائمة", icon: LayoutList },
+                  { key: "reciter", label: "القارئ", icon: Layers },
+                  { key: "calendar", label: "تقويم", icon: CalendarDays },
+                ] as const
+              ).map(({ key, label, icon: Icon }, index) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setView(key)}
+                  className={cn(
+                    "flex h-10 items-center justify-center gap-1.5 text-sm font-semibold transition-colors",
+                    index > 0 && "border-r border-border",
+                    view === key
+                      ? "bg-sidebar-primary text-sidebar-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => setShowArchived((previous) => !previous)}
+              className={cn(
+                "flex h-10 items-center justify-center gap-1.5 rounded-lg border text-sm font-semibold transition-colors",
+                showArchived
+                  ? "border-amber-300 bg-amber-50 text-amber-700"
+                  : "border-border bg-card text-muted-foreground hover:bg-muted"
+              )}
+            >
+              <Archive className="h-4 w-4" />
+              {showArchived ? "المكتملة" : "الأرشيف"}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+      <div className={cn(
+        "flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4",
+        isAdmin && !isAdminMemberPreview && "hidden sm:flex"
+      )}>
         <div>
           <h2 className="text-3xl font-bold text-foreground tracking-tight">المهام</h2>
           <p className="text-muted-foreground mt-2">
@@ -4225,7 +4474,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   <div className="flex-1 overflow-y-auto px-6 py-4">
                     <Form {...createForm}>
                       <form onSubmit={createForm.handleSubmit(onCreateSubmit)} className="space-y-4">
-                        {(TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM) && !(ENABLE_MEMBER_CREATED_TASKS && !isAdmin) ? (
+                        {ENABLE_MEMBER_CREATED_TASKS && !isAdmin ? (
+                          <MemberSelfTaskFormFields
+                            platforms={platforms}
+                            reciters={reciters}
+                            currentMemberName={currentMemberName}
+                          />
+                        ) : (TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM) ? (
                           <BasicTaskFormFields
                             platforms={platforms}
                             members={members as { id: number; name: string; role: string }[]}
@@ -4618,7 +4873,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         )}
       </div>
 
-      {activeTab === "active" &&
+      {activeTab === "active" && !isAdmin &&
         (TASK_FORM_STABILITY_MODE
           ? isAdmin
           : isAdmin || (ENABLE_MEMBER_CREATED_TASKS && user?.memberId)) && (
@@ -5668,11 +5923,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
       {/* Bulk action bar */}
       {isAdmin && !isAdminMemberPreview && selectedTaskIds.size > 0 && (
-        <div className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-2 bg-sidebar-primary text-sidebar-primary-foreground px-4 py-2.5 rounded-xl shadow-2xl border border-white/10">
+        <div className="fixed bottom-4 left-1/2 z-50 flex w-[calc(100vw-1.5rem)] max-w-xl -translate-x-1/2 flex-wrap items-center justify-center gap-2 rounded-xl border border-white/10 bg-sidebar-primary px-3 py-2.5 text-sidebar-primary-foreground shadow-2xl sm:bottom-6 sm:w-auto sm:flex-nowrap sm:px-4">
           <span className="font-semibold text-sm">{selectedTaskIds.size} مهمة محددة</span>
-          <div className="h-5 w-px bg-white/20 mx-1" />
+          <div className="hidden h-5 w-px bg-white/20 mx-1 sm:block" />
           <Select value={bulkReassignId} onValueChange={handleBulkReassign} disabled={bulkPending}>
-            <SelectTrigger className="h-8 min-w-[150px] bg-white/10 border-white/20 text-white text-xs hover:bg-white/20">
+            <SelectTrigger className="h-8 min-w-[150px] flex-1 bg-white/10 border-white/20 text-white text-xs hover:bg-white/20 sm:flex-none">
               <Users className="h-3 w-3 ml-1.5 shrink-0" />
               <SelectValue placeholder="إسناد لعضو..." />
             </SelectTrigger>
