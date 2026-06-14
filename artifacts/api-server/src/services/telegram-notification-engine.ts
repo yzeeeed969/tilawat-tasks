@@ -33,6 +33,7 @@ type NotificationType =
   | "telegram_admin_daily_summary"
   | "telegram_daily_public_summary"
   | "telegram_daily_public_summary_manual"
+  | "telegram_weekly_member_appreciation"
   | "telegram_task_assigned"
   | "telegram_task_dependency_ready"
   | "telegram_weekly_quota_reminder"
@@ -74,6 +75,10 @@ type DailyPublication = PublicPostTaskRow & {
   proofUrl: string;
   proofIndex: number;
   proofTotal: number;
+};
+
+type WeeklyCompletedTask = TaskRow & {
+  proofUrls: string[];
 };
 
 function tokenHash(token: string) {
@@ -545,6 +550,68 @@ async function getWeeklyQuotaReminderTasks(start: Date, end: Date): Promise<Week
   return rows.map((row) => ({ ...row, proofCount: Number(row.proofCount ?? 0) }));
 }
 
+async function getCompletedTasksInWeek(start: Date, end: Date): Promise<WeeklyCompletedTask[]> {
+  await ensureTaskQuotaSchema();
+  const tasks = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      status: tasksTable.status,
+      dueDate: tasksTable.dueDate,
+      completedAt: tasksTable.completedAt,
+      submissionUrl: tasksTable.submissionUrl,
+      memberId: tasksTable.memberId,
+      memberName: membersTable.name,
+      platformName: platformsTable.name,
+      reciterName: recitersTable.name,
+    })
+    .from(tasksTable)
+    .innerJoin(membersTable, eq(tasksTable.memberId, membersTable.id))
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(and(
+      isNull(tasksTable.deletedAt),
+      eq(tasksTable.status, "completed"),
+      gte(tasksTable.completedAt, start),
+      lte(tasksTable.completedAt, end),
+    ))
+    .orderBy(asc(tasksTable.completedAt), asc(tasksTable.id));
+
+  if (tasks.length === 0) return [];
+
+  const taskIds = tasks.map((task) => task.id);
+  const proofRows = await db
+    .select({
+      taskId: taskProofsTable.taskId,
+      url: taskProofsTable.url,
+      createdAt: taskProofsTable.createdAt,
+    })
+    .from(taskProofsTable)
+    .where(and(
+      inArray(taskProofsTable.taskId, taskIds),
+      isNull(taskProofsTable.deletedAt),
+    ))
+    .orderBy(asc(taskProofsTable.createdAt), asc(taskProofsTable.id));
+
+  const proofsByTask = new Map<number, string[]>();
+  for (const proof of proofRows) {
+    const url = proof.url?.trim();
+    if (!url) continue;
+    const urls = proofsByTask.get(proof.taskId) ?? [];
+    urls.push(url);
+    proofsByTask.set(proof.taskId, urls);
+  }
+
+  return tasks.map((task) => {
+    const proofUrls = proofsByTask.get(task.id) ?? [];
+    const fallbackUrl = task.submissionUrl?.trim();
+    return {
+      ...task,
+      proofUrls: proofUrls.length > 0 ? proofUrls : fallbackUrl ? [fallbackUrl] : [],
+    };
+  });
+}
+
 function normalizeText(value: string | null | undefined) {
   return String(value ?? "")
     .replace(/[()（）\[\]{}]/g, "")
@@ -603,6 +670,54 @@ function taskFieldLine(task: { title: string; platformName?: string | null; reci
   const display = taskDisplayParts(task);
   const platform = display.platformName ? ` (${escapeHtml(display.platformName)})` : "";
   return `${display.emoji} ${escapeHtml(display.title)}${platform}`;
+}
+
+function buildWeeklyAppreciationMessage(input: {
+  memberName: string;
+  tasks: WeeklyCompletedTask[];
+  weekStart: Date;
+  weekEnd: Date;
+}) {
+  const platforms = [...new Set(input.tasks.map((task) => task.platformName).filter(Boolean))];
+  const reciters = [...new Set(input.tasks.map((task) => task.reciterName).filter(Boolean))];
+  const taskLines = input.tasks
+    .slice(0, 8)
+    .map((task) => taskLine(task));
+  const proofLines = input.tasks
+    .flatMap((task) => {
+      const display = taskDisplayParts(task);
+      return task.proofUrls.map((url) => `• ${escapeHtml(display.title)} — ${escapeHtml(url)}`);
+    })
+    .slice(0, 12);
+  const extraTasksCount = Math.max(input.tasks.length - taskLines.length, 0);
+  const totalProofs = input.tasks.reduce((sum, task) => sum + task.proofUrls.length, 0);
+  const extraProofsCount = Math.max(totalProofs - proofLines.length, 0);
+
+  return [
+    "السلام عليكم ورحمة الله وبركاته",
+    "",
+    `شكرًا لك يا ${escapeHtml(input.memberName)} على جهودك المباركة خلال هذا الأسبوع.`,
+    "",
+    `الفترة: ${escapeHtml(formatRiyadhDate(input.weekStart))} إلى ${escapeHtml(formatRiyadhDate(input.weekEnd))}`,
+    "",
+    "أنجزت هذا الأسبوع:",
+    "",
+    `• ${input.tasks.length} مهمة.`,
+    platforms.length > 0 ? `• على منصات: ${platforms.map(escapeHtml).join("، ")}.` : "",
+    reciters.length > 0 ? `• لعدد ${reciters.length} قراء: ${reciters.map(escapeHtml).join("، ")}.` : "",
+    "",
+    "<b>أبرز الأعمال المنجزة:</b>",
+    ...taskLines,
+    extraTasksCount > 0 ? `• و ${extraTasksCount} مهمة أخرى.` : "",
+    proofLines.length > 0 ? "" : "",
+    proofLines.length > 0 ? "<b>الشواهد:</b>" : "",
+    ...proofLines,
+    extraProofsCount > 0 ? `• و ${extraProofsCount} شاهد آخر.` : "",
+    "",
+    "نسأل الله أن يبارك في وقتك وجهدك، وأن يجعل هذا العمل في ميزان حسناتك.",
+    "",
+    "فريق تلاوات الحرمين",
+  ].filter(Boolean).join("\n");
 }
 
 async function getDailyPublications(start: Date, end: Date): Promise<DailyPublication[]> {
@@ -976,6 +1091,47 @@ async function sendWeeklyQuotaReminders(settings: TelegramSettings, now: Date) {
   return sent;
 }
 
+async function sendWeeklyMemberAppreciation(settings: TelegramSettings, now: Date) {
+  const parts = riyadhParts(now);
+  if (parts.weekday !== 6 || !isTimeReached(now, settings.dailySummaryTime)) return 0;
+
+  const { start, end } = riyadhWeekRange(now);
+  const weekKey = riyadhWeekKey(now);
+  const completedTasks = await getCompletedTasksInWeek(start, end);
+  if (completedTasks.length === 0) return 0;
+
+  const assignedMap = await getAssignedMembersMap(completedTasks);
+  const memberIds = [...new Set([...assignedMap.values()].flat())];
+  const recipients = await getMemberRecipients(memberIds);
+  let sent = 0;
+
+  for (const recipient of recipients) {
+    if (!recipient.memberId) continue;
+    const memberTasks = completedTasks.filter((task) => assignedMap.get(task.id)?.includes(recipient.memberId!));
+    if (memberTasks.length === 0) continue;
+
+    const memberName = recipient.memberName ?? recipient.displayName ?? recipient.username;
+    const text = buildWeeklyAppreciationMessage({
+      memberName,
+      tasks: memberTasks,
+      weekStart: start,
+      weekEnd: end,
+    });
+
+    const result = await sendLoggedTelegram({
+      type: "telegram_weekly_member_appreciation",
+      dedupeKey: `telegram:weekly_appreciation:${weekKey}:member:${recipient.memberId}`,
+      chatId: recipient.chatId,
+      text,
+      recipientUserId: recipient.userId,
+      recipientMemberId: recipient.memberId,
+    });
+    if (result.sent) sent += 1;
+  }
+
+  return sent;
+}
+
 export async function notifyTelegramTaskCompleted(task: {
   id: number;
   title: string;
@@ -1125,15 +1281,17 @@ export async function runTelegramNotificationCycle(now = new Date()) {
   const daily = await sendDailyMemberReminders(settings, now);
   const overdue = await sendOverdueNotifications(settings, now);
   const weeklyQuota = await sendWeeklyQuotaReminders(settings, now);
+  const weeklyAppreciation = await sendWeeklyMemberAppreciation(settings, now);
   const summary = await sendAdminDailySummary(settings, now);
   const publicSummary = await sendDailyPublicSummary(settings, now);
 
   return {
     enabled: true,
-    sent: daily + overdue + weeklyQuota + summary + publicSummary,
+    sent: daily + overdue + weeklyQuota + weeklyAppreciation + summary + publicSummary,
     daily,
     overdue,
     weeklyQuota,
+    weeklyAppreciation,
     summary,
     publicSummary,
   };
