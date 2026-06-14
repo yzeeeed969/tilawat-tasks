@@ -135,7 +135,13 @@ const WEEKDAY_OPTIONS = [
 ] as const;
 
 function isApplicationPlatformName(name?: string | null) {
-  return Boolean(name && (/تطبيق/.test(name) || /app/i.test(name)));
+  if (!name) return false;
+  const normalized = name.trim().toLowerCase();
+  return (
+    /تطبيق/.test(normalized) ||
+    /app|application/i.test(normalized) ||
+    (/تلاوات/.test(normalized) && /الحرمين/.test(normalized))
+  );
 }
 
 function isPlaceholderApplicationReciter(name?: string | null) {
