@@ -1571,6 +1571,7 @@ function BasicTaskFormFields({
   excludeTaskId,
   currentTask,
   showDependency = false,
+  taskFlowPreviewSlot,
 }: {
   platforms: { id: number; name: string }[] | undefined;
   members: { id: number; name: string; role: string }[] | undefined;
@@ -1579,6 +1580,7 @@ function BasicTaskFormFields({
   excludeTaskId?: number;
   currentTask?: TaskWithDetails | null;
   showDependency?: boolean;
+  taskFlowPreviewSlot?: ReactNode;
 }) {
   const { watch, setValue } = useFormContext<TaskFormValues>();
   const [dependencyOpen, setDependencyOpen] = useState(false);
@@ -1745,6 +1747,8 @@ function BasicTaskFormFields({
           </FormItem>
         )}
       />
+
+      {taskFlowPreviewSlot}
 
       {!isApplicationPlatform && toPositiveNumber(platformId) !== null && pageOptions.length > 0 && (
         <PlatformPageSelectField
@@ -4722,6 +4726,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             reciters={reciters}
                             allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                             showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
+                            taskFlowPreviewSlot={
+                              isAdmin ? (
+                                <TaskFlowPreviewPanel
+                                  canPreview={canPreviewTaskFlow}
+                                  loading={taskFlowPreviewLoading}
+                                  error={taskFlowPreviewError}
+                                  items={taskFlowPreview}
+                                  onPreview={handlePreviewTaskFlow}
+                                />
+                              ) : null
+                            }
                           />
                         ) : (
                           <TaskFormFields
@@ -4732,15 +4747,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                             isMemberSelfTask={ENABLE_MEMBER_CREATED_TASKS && !isAdmin}
                             currentMemberName={currentMemberName}
-                          />
-                        )}
-                        {isAdmin && (
-                          <TaskFlowPreviewPanel
-                            canPreview={canPreviewTaskFlow}
-                            loading={taskFlowPreviewLoading}
-                            error={taskFlowPreviewError}
-                            items={taskFlowPreview}
-                            onPreview={handlePreviewTaskFlow}
                           />
                         )}
                       </form>
