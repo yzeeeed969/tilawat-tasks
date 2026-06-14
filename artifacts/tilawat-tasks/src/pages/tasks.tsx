@@ -649,6 +649,20 @@ const TASK_FORM_STABILITY_MODE = false;
 const USE_SAFE_PHASE_ONE_TASK_FORM = true;
 const ENABLE_MEMBER_CREATED_TASKS = true;
 const ENABLE_TASK_DEPENDENCIES = true;
+type TaskFlowPreviewItem = {
+  key: string;
+  platformId: number;
+  platformName: string;
+  pageId: number;
+  pageName: string;
+  reciterName: string;
+  memberIds: number[];
+  memberNames: string[];
+  dueDate: string;
+  title: string;
+  warnings: string[];
+  existingTaskId?: number;
+};
 type UrlDialogState = {
   taskId: number;
   currentUrl: string;
@@ -822,6 +836,116 @@ function TaskDescriptionField({ compact = false }: { compact?: boolean }) {
         </FormItem>
       )}
     />
+  );
+}
+
+function normalizeTaskPreviewTitle(value: unknown) {
+  return String(value ?? "")
+    .replace(/[()（）\[\]{}]/g, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function taskDateKey(value: unknown) {
+  if (!value) return "";
+  const date = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return "";
+  return format(date, "yyyy-MM-dd");
+}
+
+function TaskFlowPreviewPanel({
+  canPreview,
+  loading,
+  error,
+  items,
+  onPreview,
+}: {
+  canPreview: boolean;
+  loading: boolean;
+  error: string | null;
+  items: TaskFlowPreviewItem[] | null;
+  onPreview: () => void;
+}) {
+  if (!canPreview) return null;
+
+  return (
+    <div className="space-y-3 rounded-md border border-dashed border-sidebar-primary/30 bg-sidebar-primary/5 p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
+          <p className="text-sm font-semibold text-foreground">تدفق بيانات إضافة المهام</p>
+          <p className="text-xs leading-5 text-muted-foreground">
+            معاينة فقط للمنصات التابعة لهذا القارئ، دون إنشاء أو حفظ أي مهمة.
+          </p>
+        </div>
+        <Button type="button" variant="outline" size="sm" onClick={onPreview} disabled={loading}>
+          {loading ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Layers className="ml-2 h-4 w-4" />}
+          اقتراح مهام المنصات التابعة لهذا القارئ
+        </Button>
+      </div>
+
+      {error && (
+        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+          {error}
+        </div>
+      )}
+
+      {items && (
+        <div className="space-y-2">
+          {items.length === 0 ? (
+            <div className="rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
+              لا توجد صفحات تابعة لهذا القارئ على منصات أخرى.
+            </div>
+          ) : (
+            items.map((item) => {
+              const isReady = item.warnings.length === 0;
+              return (
+                <div key={item.key} className="rounded-md border bg-background p-3 text-sm">
+                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <PlatformIcon name={item.platformName} className="h-4 w-4 shrink-0" />
+                      <span className="font-semibold">{item.platformName}</span>
+                      <span className="text-muted-foreground">-</span>
+                      <span className="truncate text-muted-foreground">{item.pageName}</span>
+                    </div>
+                    <Badge variant={isReady ? "default" : "secondary"} className={isReady ? "bg-green-600" : ""}>
+                      {isReady ? "جاهزة" : "تحتاج مراجعة"}
+                    </Badge>
+                  </div>
+
+                  <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
+                    <div><span className="font-medium text-foreground">القارئ: </span>{item.reciterName}</div>
+                    <div><span className="font-medium text-foreground">التاريخ: </span>{item.dueDate}</div>
+                    <div className="sm:col-span-2"><span className="font-medium text-foreground">اسم المهمة: </span>{item.title}</div>
+                    <div className="sm:col-span-2">
+                      <span className="font-medium text-foreground">المسؤولون: </span>
+                      {item.memberNames.length > 0 ? item.memberNames.join("، ") : "لا يوجد مسؤول"}
+                    </div>
+                  </div>
+
+                  {item.warnings.length > 0 && (
+                    <div className="mt-2 space-y-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs leading-5 text-amber-800">
+                      {item.warnings.map((warning) => (
+                        <div key={warning} className="flex items-start gap-1.5">
+                          <CircleDashed className="mt-0.5 h-3 w-3 shrink-0" />
+                          <span>{warning}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })
+          )}
+
+          {items.length > 0 && (
+            <Button type="button" variant="secondary" size="sm" className="w-full" disabled>
+              الاعتماد سيُضاف لاحقًا
+            </Button>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -3365,6 +3489,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [bulkReassignId, setBulkReassignId] = useState("none");
   const [bulkPending, setBulkPending] = useState(false);
+  const [taskFlowPreview, setTaskFlowPreview] = useState<TaskFlowPreviewItem[] | null>(null);
+  const [taskFlowPreviewLoading, setTaskFlowPreviewLoading] = useState(false);
+  const [taskFlowPreviewError, setTaskFlowPreviewError] = useState<string | null>(null);
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -3684,6 +3811,127 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     createForm.setValue("weeklyQuotaRequired", null);
     createForm.setValue("dependsOnTaskId", null);
   }, [isAdmin, user?.memberId, createForm]);
+
+  const createPlatformId = createForm.watch("platformId");
+  const createReciterId = createForm.watch("reciterId");
+  const createStartDate = createForm.watch("startDate");
+  const createDueDate = createForm.watch("dueDate");
+  const createSelectedPlatform = platforms?.find((platform) => platform.id === createPlatformId);
+  const createSelectedReciter = reciters?.find((reciter) => reciter.id === createReciterId);
+  const canPreviewTaskFlow = Boolean(
+    isAdmin &&
+    !isAdminMemberPreview &&
+    isCreateOpen &&
+    createSelectedPlatform &&
+    isApplicationPlatformName(createSelectedPlatform.name) &&
+    createSelectedReciter
+  );
+
+  useEffect(() => {
+    setTaskFlowPreview(null);
+    setTaskFlowPreviewError(null);
+  }, [canPreviewTaskFlow, createPlatformId, createReciterId, createStartDate, createDueDate]);
+
+  const handlePreviewTaskFlow = async () => {
+    if (!canPreviewTaskFlow || !createSelectedReciter || !createSelectedPlatform) return;
+
+    const values = createForm.getValues();
+    const sourcePlatformId = Number(values.platformId);
+    const reciterId = Number(values.reciterId);
+    const dueDate = taskDateKey(values.startDate || values.dueDate || new Date());
+    const loadedTasks = dependencyCandidateTasks ?? rawTasks ?? [];
+    const targetPlatforms = (platforms ?? []).filter(
+      (platform) => platform.id !== sourcePlatformId && !isApplicationPlatformName(platform.name)
+    );
+
+    setTaskFlowPreviewLoading(true);
+    setTaskFlowPreviewError(null);
+
+    try {
+      const previewItems: TaskFlowPreviewItem[] = [];
+
+      for (const platform of targetPlatforms) {
+        const pagesResponse = await fetch(`/api/platforms/${platform.id}/pages`, { credentials: "include" });
+        if (!pagesResponse.ok) continue;
+
+        const pages = (await pagesResponse.json()) as Array<{
+          id: number;
+          name?: string | null;
+          title?: string | null;
+          pageName?: string | null;
+          reciterId?: number | null;
+        }>;
+        const reciterPages = pages.filter((page) => page.reciterId === reciterId);
+
+        for (const page of reciterPages) {
+          let memberIds: number[] = [];
+          const membersResponse = await fetch(`/api/platforms/${platform.id}/pages/${page.id}/members`, {
+            credentials: "include",
+          });
+          if (membersResponse.ok) {
+            const linkedMembers = await membersResponse.json();
+            if (Array.isArray(linkedMembers)) {
+              memberIds = linkedMembers
+                .map((memberId) => Number(memberId))
+                .filter((memberId) => Number.isFinite(memberId));
+            }
+          }
+
+          const memberNames = (members ?? [])
+            .filter((member) => memberIds.includes(member.id))
+            .map((member) => member.name);
+          const title = `${platform.name} — ${createSelectedReciter.name}`;
+          const normalizedTitle = normalizeTaskPreviewTitle(title);
+          const duplicateTask = loadedTasks.find((task) => {
+            const taskPlatform = taskPlatformId(task);
+            const taskReciter = taskReciterId(task);
+            const taskDate = taskDateKey((task as any).startDate ?? (task as any).dueDate);
+            const taskTitle = normalizeTaskPreviewTitle((task as any).title);
+            const titleMatches =
+              taskTitle === normalizedTitle ||
+              (taskTitle.length > 0 && normalizedTitle.includes(taskTitle)) ||
+              (normalizedTitle.length > 0 && taskTitle.includes(normalizedTitle));
+
+            return (
+              taskPlatform === platform.id &&
+              taskReciter === reciterId &&
+              taskDate === dueDate &&
+              titleMatches
+            );
+          });
+          const warnings: string[] = [];
+          if (memberIds.length === 0) warnings.push("تحذير: لا يوجد مسؤول مرتبط بهذه الصفحة.");
+          if (duplicateTask) warnings.push(`تحذير: توجد مهمة مشابهة مسبقًا #${duplicateTask.id}.`);
+
+          previewItems.push({
+            key: `${platform.id}-${page.id}`,
+            platformId: platform.id,
+            platformName: platform.name,
+            pageId: page.id,
+            pageName: page.name ?? page.pageName ?? page.title ?? `صفحة #${page.id}`,
+            reciterName: createSelectedReciter.name,
+            memberIds,
+            memberNames,
+            dueDate,
+            title,
+            warnings,
+            existingTaskId: duplicateTask?.id,
+          });
+        }
+      }
+
+      setTaskFlowPreview(previewItems);
+      if (previewItems.length === 0) {
+        setTaskFlowPreviewError("لا توجد صفحات تابعة لهذا القارئ على منصات أخرى.");
+      }
+    } catch (error) {
+      console.error("[task-flow-preview] failed to generate preview", error);
+      setTaskFlowPreview(null);
+      setTaskFlowPreviewError("تعذر توليد معاينة مهام المنصات التابعة. حدث الصفحة ثم حاول مرة أخرى.");
+    } finally {
+      setTaskFlowPreviewLoading(false);
+    }
+  };
 
   const openEditDialog = (task: TaskWithDetails) => {
     try {
@@ -4434,6 +4682,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     memberId: user?.memberId,
                     defaultValues: createForm.getValues(),
                   });
+                } else {
+                  setTaskFlowPreview(null);
+                  setTaskFlowPreviewError(null);
                 }
                 setIsCreateOpen(open);
               }}
@@ -4481,6 +4732,15 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                             isMemberSelfTask={ENABLE_MEMBER_CREATED_TASKS && !isAdmin}
                             currentMemberName={currentMemberName}
+                          />
+                        )}
+                        {isAdmin && (
+                          <TaskFlowPreviewPanel
+                            canPreview={canPreviewTaskFlow}
+                            loading={taskFlowPreviewLoading}
+                            error={taskFlowPreviewError}
+                            items={taskFlowPreview}
+                            onPreview={handlePreviewTaskFlow}
                           />
                         )}
                       </form>
