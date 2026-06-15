@@ -669,6 +669,11 @@ type TaskFlowPreviewItem = {
   warnings: string[];
   existingTaskId?: number;
 };
+type TaskFlowCreateResult = {
+  parentTaskId?: number;
+  created: Array<{ taskId: number; platformName: string; pageName: string }>;
+  skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }>;
+};
 type UrlDialogState = {
   taskId: number;
   currentUrl: string;
@@ -866,14 +871,21 @@ function TaskFlowPreviewPanel({
   error,
   items,
   onPreview,
+  creating,
+  createResult,
+  onCreateChildren,
 }: {
   canPreview: boolean;
   loading: boolean;
   error: string | null;
   items: TaskFlowPreviewItem[] | null;
   onPreview: () => void;
+  creating: boolean;
+  createResult: TaskFlowCreateResult | null;
+  onCreateChildren: () => void;
 }) {
   if (!canPreview) return null;
+  const readyItemsCount = items?.filter((item) => item.warnings.length === 0).length ?? 0;
 
   return (
     <div className="space-y-3 rounded-md border border-dashed border-sidebar-primary/30 bg-sidebar-primary/5 p-3">
@@ -944,8 +956,37 @@ function TaskFlowPreviewPanel({
             })
           )}
 
-          {items.length > 0 && (
-            <Button type="button" variant="secondary" size="sm" className="w-full" disabled>
+          {createResult && (
+            <div className="space-y-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs leading-5 text-green-900">
+              <div className="font-semibold">
+                تم إنشاء {createResult.created.length} مهمة تابعة، وتخطي {createResult.skipped.length} عنصر.
+              </div>
+              {createResult.created.length > 0 && (
+                <div>
+                  <span className="font-medium">المهام المنشأة: </span>
+                  {createResult.created.map((item) => `${item.platformName} - ${item.pageName}`).join("، ")}
+                </div>
+              )}
+              {createResult.skipped.length > 0 && (
+                <div>
+                  <span className="font-medium">المتخطى: </span>
+                  {createResult.skipped.map((item) => `${item.platformName ?? item.pageName ?? "عنصر"} (${item.reason})`).join("، ")}
+                </div>
+              )}
+            </div>
+          )}
+
+          {items.length > 0 && !createResult && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="w-full text-[0px]"
+              disabled={readyItemsCount === 0 || creating}
+              onClick={onCreateChildren}
+            >
+              {creating && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+              <span className="text-sm">اعتماد وإنشاء المهام التابعة</span>
               الاعتماد سيُضاف لاحقًا
             </Button>
           )}
@@ -3502,6 +3543,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [taskFlowPreview, setTaskFlowPreview] = useState<TaskFlowPreviewItem[] | null>(null);
   const [taskFlowPreviewLoading, setTaskFlowPreviewLoading] = useState(false);
   const [taskFlowPreviewError, setTaskFlowPreviewError] = useState<string | null>(null);
+  const [taskFlowCreatePending, setTaskFlowCreatePending] = useState(false);
+  const [taskFlowCreateResult, setTaskFlowCreateResult] = useState<TaskFlowCreateResult | null>(null);
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -3840,6 +3883,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   useEffect(() => {
     setTaskFlowPreview(null);
     setTaskFlowPreviewError(null);
+    setTaskFlowCreateResult(null);
   }, [canPreviewTaskFlow, createPlatformId, createReciterId, createStartDate, createDueDate]);
 
   const handlePreviewTaskFlow = async () => {
@@ -3902,6 +3946,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     };
     setTaskFlowPreviewLoading(true);
     setTaskFlowPreviewError(null);
+    setTaskFlowCreateResult(null);
 
     try {
       const previewItems: TaskFlowPreviewItem[] = [];
@@ -3946,6 +3991,84 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       setTaskFlowPreviewError("تعذر توليد معاينة مهام المنصات التابعة. حدث الصفحة ثم حاول مرة أخرى.");
     } finally {
       setTaskFlowPreviewLoading(false);
+    }
+  };
+
+  const handleCreateTaskFlowChildren = async (data: TaskFormValues) => {
+    if (!canPreviewTaskFlow || !taskFlowPreview?.some((item) => item.warnings.length === 0)) return;
+    if ((data.seriesType && data.seriesType !== "temporary") || (data.recurrence && data.recurrence !== "none") || data.endDate) {
+      toast({ title: "اعتماد التدفق متاح للمهمة الحالية فقط، وليس للنطاقات أو السلاسل.", variant: "destructive" });
+      return;
+    }
+    if (!data.platformId || !data.memberIds?.length || !data.startDate || Number.isNaN(new Date(data.startDate).getTime())) {
+      toast({ title: "أكمل بيانات المهمة الأصلية قبل الاعتماد", variant: "destructive" });
+      return;
+    }
+    const confirmed = window.confirm("سيتم إنشاء المهمة الأصلية أولًا، ثم إنشاء المهام التابعة الجاهزة فقط. هل تريد المتابعة؟");
+    if (!confirmed) return;
+
+    const selectedPlatform = platforms?.find((p) => p.id === data.platformId);
+    const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+    const reciter = reciters?.find((r) => r.id === data.reciterId);
+    if (!isApplicationPlatform || !data.reciterId || !data.appPrayer) {
+      toast({ title: "اختر تطبيق تلاوات الحرمين والقارئ والصلاة قبل الاعتماد", variant: "destructive" });
+      return;
+    }
+
+    setTaskFlowCreatePending(true);
+    setIsCreateSubmitting(true);
+    try {
+      const pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, data.memberIds);
+      const taskDate = new Date(data.startDate).toISOString();
+      const taskTitle = [data.appPrayer, reciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || "مهمة جديدة";
+      const parentTask = await createTask.mutateAsync({
+        data: {
+          title: taskTitle,
+          description: data.description,
+          platformId: data.platformId,
+          memberIds: data.memberIds,
+          reciterId: data.reciterId,
+          status: "pending",
+          priority: data.priority ?? "normal",
+          progress: data.progress ?? 0,
+          seriesType: "temporary",
+          startDate: taskDate,
+          dueDate: taskDate,
+          recurrence: "none",
+          recurrenceIntervalDays: null,
+          recurrenceDurationDays: null,
+          recurrenceDays: null,
+          weeklyQuotaRequired: null,
+          pageId,
+          expandDailyInstances: false,
+          recurrencePattern: "none",
+          dependsOnTaskId: ENABLE_TASK_DEPENDENCIES ? data.dependsOnTaskId ?? null : null,
+          source: "admin_created",
+        } as any,
+      });
+
+      const response = await fetch(`/api/tasks/${parentTask.id}/flow-children`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+      });
+      if (!response.ok) {
+        throw new Error(`Flow children request failed: ${response.status}`);
+      }
+      const result = (await response.json()) as TaskFlowCreateResult;
+      setTaskFlowCreateResult({ ...result, parentTaskId: parentTask.id });
+      invalidateTasks();
+      queryClient.invalidateQueries({ queryKey: ["page-members"] });
+      toast({
+        title: `تم إنشاء ${result.created.length} مهمة تابعة`,
+        description: result.skipped.length > 0 ? `تم تخطي ${result.skipped.length} عنصر بسبب التحذيرات أو التكرار.` : undefined,
+      });
+    } catch (error) {
+      console.error("[task-flow-create] failed to create flow children", { error, data });
+      toast({ title: "تعذر اعتماد وإنشاء المهام التابعة", variant: "destructive" });
+    } finally {
+      setTaskFlowCreatePending(false);
+      setIsCreateSubmitting(false);
     }
   };
 
@@ -4701,6 +4824,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 } else {
                   setTaskFlowPreview(null);
                   setTaskFlowPreviewError(null);
+                  setTaskFlowCreateResult(null);
                 }
                 setIsCreateOpen(open);
               }}
@@ -4746,6 +4870,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                   error={taskFlowPreviewError}
                                   items={taskFlowPreview}
                                   onPreview={handlePreviewTaskFlow}
+                                  creating={taskFlowCreatePending}
+                                  createResult={taskFlowCreateResult}
+                                  onCreateChildren={createForm.handleSubmit(handleCreateTaskFlowChildren)}
                                 />
                               ) : null
                             }
@@ -4769,9 +4896,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                       type="button"
                       onClick={createForm.handleSubmit(onCreateSubmit)}
                       className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
-                      disabled={isCreateSubmitting || createTask.isPending}
+                      disabled={isCreateSubmitting || createTask.isPending || taskFlowCreatePending || Boolean(taskFlowCreateResult)}
                     >
-                      {(isCreateSubmitting || createTask.isPending) && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                      {(isCreateSubmitting || createTask.isPending || taskFlowCreatePending) && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
                       حفظ المهمة
                     </Button>
                   </div>

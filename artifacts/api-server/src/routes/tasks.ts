@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable } from "@workspace/db";
+import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, reciterTaskFlowRulesTable, taskFlowLinksTable } from "@workspace/db";
 import { eq, and, inArray, isNull, isNotNull, ilike, or, sql } from "drizzle-orm";
 import {
   CreateTaskBody,
@@ -14,6 +14,7 @@ import { notifyTelegramTaskAssigned, notifyTelegramTaskCompleted, notifyTelegram
 import { canCreateTask, canDeleteTask, canEditTask, canViewTask } from "../lib/permissions";
 import { ensureTaskQuotaSchema } from "../services/task-quota-schema";
 import { ensureTaskDependenciesSchema } from "../services/task-dependencies-schema";
+import { ensureTaskFlowLinksSchema } from "../services/task-flow-links-schema";
 
 const router = Router();
 
@@ -21,6 +22,7 @@ router.use(async (_req, _res, next) => {
   try {
     await ensureTaskQuotaSchema();
     await ensureTaskDependenciesSchema();
+    await ensureTaskFlowLinksSchema();
     next();
   } catch (err) {
     next(err);
@@ -411,6 +413,36 @@ function normalizeDate(value: unknown): Date | null {
   if (Number.isNaN(date.getTime())) return null;
   date.setHours(0, 0, 0, 0);
   return date;
+}
+
+function taskDateKey(value: unknown) {
+  const date = normalizeDate(value);
+  if (!date) return "";
+  return date.toISOString().slice(0, 10);
+}
+
+function normalizeComparableTitle(value: unknown) {
+  return String(value ?? "")
+    .replace(/[()[\]{}]/g, "")
+    .replace(/\s+/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+function taskFlowTitleMatches(a: string, b: string) {
+  const left = normalizeComparableTitle(a);
+  const right = normalizeComparableTitle(b);
+  return Boolean(left && right && (left === right || left.includes(right) || right.includes(left)));
+}
+
+function isApplicationPlatformName(name?: string | null) {
+  if (!name) return false;
+  const normalized = name.trim().toLowerCase();
+  return (
+    /تطبيق/.test(normalized) ||
+    /app|application/i.test(normalized) ||
+    (/تلاوات/.test(normalized) && /الحرمين/.test(normalized))
+  );
 }
 
 function addDays(date: Date, days: number): Date {
@@ -864,6 +896,192 @@ router.get("/tasks", async (req, res) => {
   }));
 
   res.json(result);
+});
+
+router.post("/tasks/:id/flow-children", async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    res.status(400).json({ error: "Invalid task id" });
+    return;
+  }
+
+  const currentUser = (req as any).currentUser;
+  if (currentUser?.role !== "admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const [parent] = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      description: tasksTable.description,
+      platformId: tasksTable.platformId,
+      platformName: platformsTable.name,
+      memberId: tasksTable.memberId,
+      reciterId: tasksTable.reciterId,
+      reciterName: recitersTable.name,
+      priority: tasksTable.priority,
+      startDate: tasksTable.startDate,
+      dueDate: tasksTable.dueDate,
+      pageId: tasksTable.pageId,
+    })
+    .from(tasksTable)
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(and(eq(tasksTable.id, id), isNull(tasksTable.deletedAt)))
+    .limit(1);
+
+  if (!parent) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+  if (!isApplicationPlatformName(parent.platformName)) {
+    res.status(400).json({ error: "Task flow can only start from the application platform" });
+    return;
+  }
+  if (!parent.reciterId || !parent.reciterName) {
+    res.status(400).json({ error: "Parent task must have a reciter" });
+    return;
+  }
+
+  const flowDate = normalizeDate(parent.dueDate ?? parent.startDate);
+  const flowDateKey = taskDateKey(flowDate);
+  if (!flowDate || !flowDateKey) {
+    res.status(400).json({ error: "Parent task must have a valid date" });
+    return;
+  }
+
+  const rules = await db
+    .select({
+      pageId: reciterTaskFlowRulesTable.pageId,
+      enabled: reciterTaskFlowRulesTable.enabled,
+      pageName: platformPagesTable.name,
+      pageReciterId: platformPagesTable.reciterId,
+      platformId: platformPagesTable.platformId,
+      platformName: platformsTable.name,
+    })
+    .from(reciterTaskFlowRulesTable)
+    .innerJoin(platformPagesTable, eq(reciterTaskFlowRulesTable.pageId, platformPagesTable.id))
+    .innerJoin(platformsTable, eq(platformPagesTable.platformId, platformsTable.id))
+    .where(eq(reciterTaskFlowRulesTable.reciterId, parent.reciterId));
+
+  const enabledRules = rules.filter((rule) => rule.enabled && rule.platformId !== parent.platformId);
+  if (rules.length === 0) {
+    res.json({ created: [], skipped: [{ reason: "rules_not_configured" }] });
+    return;
+  }
+
+  const created: Array<{ taskId: number; platformName: string; pageName: string }> = [];
+  const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }> = [];
+  const batchKey = `task-flow-${parent.id}-${Date.now()}`;
+
+  for (const rule of enabledRules) {
+    if (rule.pageReciterId !== parent.reciterId) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "invalid_page" });
+      continue;
+    }
+
+    const assignedRows = await db
+      .select({ memberId: pageMembersTable.memberId })
+      .from(pageMembersTable)
+      .where(eq(pageMembersTable.pageId, rule.pageId));
+    const memberIds = [...new Set(assignedRows.map((row) => Number(row.memberId)).filter((memberId) => Number.isInteger(memberId) && memberId > 0))];
+    if (memberIds.length === 0) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "no_assignee" });
+      continue;
+    }
+
+    const [existingLink] = await db
+      .select({ id: taskFlowLinksTable.id, childTaskId: taskFlowLinksTable.childTaskId })
+      .from(taskFlowLinksTable)
+      .where(and(
+        eq(taskFlowLinksTable.parentTaskId, parent.id),
+        eq(taskFlowLinksTable.targetPageId, rule.pageId),
+        eq(taskFlowLinksTable.flowDate, flowDate),
+      ))
+      .limit(1);
+    if (existingLink) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
+      continue;
+    }
+
+    const childTitle = `${rule.platformName} — ${parent.reciterName}`;
+    const similarTasks = await db
+      .select({ id: tasksTable.id, title: tasksTable.title })
+      .from(tasksTable)
+      .where(and(
+        isNull(tasksTable.deletedAt),
+        eq(tasksTable.reciterId, parent.reciterId),
+        eq(tasksTable.platformId, rule.platformId),
+        eq(tasksTable.pageId, rule.pageId),
+        sql`${tasksTable.dueDate}::date = ${flowDateKey}::date`,
+      ));
+    const duplicateTask = similarTasks.find((task) => taskFlowTitleMatches(task.title, childTitle));
+    if (duplicateTask) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate", existingTaskId: duplicateTask.id });
+      continue;
+    }
+
+    try {
+      const childTask = await db.transaction(async (tx) => {
+        const [newTask] = await tx.insert(tasksTable).values({
+          source: "admin_created",
+          title: childTitle,
+          description: parent.description,
+          platformId: rule.platformId,
+          memberId: memberIds[0],
+          reciterId: parent.reciterId,
+          status: "pending",
+          priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
+          progress: 0,
+          startDate: flowDate,
+          endDate: null,
+          dueDate: flowDate,
+          recurrence: "none",
+          recurrenceIntervalDays: null,
+          recurrenceDurationDays: null,
+          recurrenceDays: null,
+          weeklyQuotaRequired: null,
+          weeklyQuotaPeriodStart: null,
+          weeklyQuotaPeriodEnd: null,
+          pageId: rule.pageId,
+        }).returning();
+
+        await syncTaskMembersUsing(tx, newTask.id, memberIds);
+        await tx.insert(taskFlowLinksTable).values({
+          parentTaskId: parent.id,
+          childTaskId: newTask.id,
+          reciterId: parent.reciterId!,
+          sourcePageId: parent.pageId ?? null,
+          targetPageId: rule.pageId,
+          targetPlatformId: rule.platformId,
+          flowDate,
+          batchKey,
+          createdByUserId: currentUser.id ?? null,
+        });
+        return newTask;
+      });
+
+      created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName });
+      await logActivity(req, "task_flow_child_created", "task", childTask.id, childTask.title, {
+        parentTaskId: parent.id,
+        targetPageId: rule.pageId,
+        targetPlatformId: rule.platformId,
+      });
+      await notifyTaskAssigned(childTask.id, childTask.title, memberIds).catch(() => {});
+    } catch (error: any) {
+      const code = String(error?.code ?? "");
+      skipped.push({
+        pageId: rule.pageId,
+        platformName: rule.platformName,
+        pageName: rule.pageName,
+        reason: code === "23505" ? "duplicate" : "create_failed",
+      });
+    }
+  }
+
+  res.status(201).json({ created, skipped });
 });
 
 router.post("/tasks", async (req, res) => {
