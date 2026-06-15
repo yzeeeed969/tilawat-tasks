@@ -82,6 +82,32 @@ interface AppUser {
   createdAt: string;
 }
 
+interface ReciterTaskFlowRuleItem {
+  id: number | null;
+  reciterId: number;
+  pageId: number;
+  enabled: boolean;
+  page: {
+    id: number;
+    name: string;
+    reciterId: number | null;
+    pageUrl?: string | null;
+    platformId: number;
+  };
+  platform: {
+    id: number;
+    name: string;
+    icon?: string | null;
+    color?: string | null;
+    isMain?: boolean | null;
+  };
+}
+
+interface ReciterTaskFlowRulesResponse {
+  configured: boolean;
+  rules: ReciterTaskFlowRuleItem[];
+}
+
 interface TelegramSettingsData {
   settings: {
     enabled: boolean;
@@ -705,6 +731,121 @@ export function UserManagementSection() {
 }
 
 // ── Reciters Section ──────────────────────────────────────────────────────────
+function ReciterTaskFlowRulesPanel({ reciterId }: { reciterId: number }) {
+  const queryClient = useQueryClient();
+  const { toast } = useToast();
+  const [enabledByPageId, setEnabledByPageId] = useState<Record<number, boolean>>({});
+
+  const queryKey = ["reciter-task-flow-rules", reciterId];
+  const { data, isLoading, isError } = useQuery<ReciterTaskFlowRulesResponse>({
+    queryKey,
+    queryFn: async () => {
+      const res = await fetch(`/api/reciters/${reciterId}/task-flow-rules`, { credentials: "include" });
+      if (!res.ok) throw new Error("Failed to load task flow rules");
+      return res.json();
+    },
+  });
+
+  useEffect(() => {
+    if (!data) return;
+    setEnabledByPageId(Object.fromEntries(data.rules.map((rule) => [rule.pageId, rule.enabled])));
+  }, [data]);
+
+  const saveMutation = useMutation({
+    mutationFn: async () => {
+      const res = await fetch(`/api/reciters/${reciterId}/task-flow-rules`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          rules: (data?.rules ?? []).map((rule) => ({
+            pageId: rule.pageId,
+            enabled: Boolean(enabledByPageId[rule.pageId]),
+          })),
+        }),
+      });
+      if (!res.ok) throw new Error("Failed to save task flow rules");
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey });
+      toast({ title: "تم حفظ قواعد تدفق المهام" });
+    },
+    onError: () => toast({ title: "تعذر حفظ قواعد تدفق المهام", variant: "destructive" }),
+  });
+
+  const enabledCount = Object.values(enabledByPageId).filter(Boolean).length;
+
+  return (
+    <div className="border-t border-border bg-muted/10 p-3 space-y-3">
+      <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
+        هذه القواعد تحدد الصفحات التي تظهر في معاينة التدفق عند إنشاء مهمة من تطبيق تلاوات الحرمين فقط.
+      </div>
+
+      {isLoading ? (
+        <div className="flex justify-center py-4">
+          <Loader2 className="h-5 w-5 animate-spin text-sidebar-primary" />
+        </div>
+      ) : isError ? (
+        <p className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+          تعذر تحميل قواعد التدفق لهذا القارئ.
+        </p>
+      ) : !data || data.rules.length === 0 ? (
+        <p className="rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
+          لا توجد صفحات مرتبطة بهذا القارئ. أضف صفحات القارئ من قسم المنصات والصفحات أولًا.
+        </p>
+      ) : (
+        <>
+          {!data.configured && (
+            <p className="rounded-md border border-sidebar-primary/20 bg-sidebar-primary/5 px-3 py-2 text-xs leading-5 text-sidebar-primary">
+              لم تُحفظ قواعد لهذا القارئ بعد. لن تستخدم المعاينة الاستنتاج التلقائي حتى تحفظ الصفحات المطلوبة.
+            </p>
+          )}
+          <div className="space-y-2">
+            {data.rules.map((rule) => {
+              const enabled = Boolean(enabledByPageId[rule.pageId]);
+              return (
+                <div key={rule.pageId} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <PlatformIcon name={rule.platform.name} className="h-4 w-4 shrink-0" />
+                    <div className="min-w-0">
+                      <p className="truncate text-sm font-semibold">{rule.platform.name}</p>
+                      <p className="truncate text-xs text-muted-foreground">{rule.page.name}</p>
+                    </div>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <span className={`text-xs font-semibold ${enabled ? "text-green-700" : "text-muted-foreground"}`}>
+                      {enabled ? "تدخل في التدفق" : "لا تدخل"}
+                    </span>
+                    <Switch
+                      checked={enabled}
+                      onCheckedChange={(checked) =>
+                        setEnabledByPageId((previous) => ({ ...previous, [rule.pageId]: checked }))
+                      }
+                    />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              className="h-8 bg-sidebar-primary text-sidebar-primary-foreground"
+              onClick={() => saveMutation.mutate()}
+              disabled={saveMutation.isPending}
+            >
+              {saveMutation.isPending ? <Loader2 className="ml-1 h-3 w-3 animate-spin" /> : <Save className="ml-1 h-3 w-3" />}
+              حفظ قواعد التدفق
+            </Button>
+            <span className="text-xs text-muted-foreground">{enabledCount} صفحة مفعلة</span>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function RecitersSection() {
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -718,6 +859,7 @@ export function RecitersSection() {
   const [editMosque, setEditMosque] = useState<"nabawi" | "haram">("nabawi");
   const [selectedReciterIds, setSelectedReciterIds] = useState<Set<number>>(new Set());
   const [bulkReciterPending, setBulkReciterPending] = useState(false);
+  const [flowRulesOpenId, setFlowRulesOpenId] = useState<number | null>(null);
 
   const toggleReciterSel = (id: number) => setSelectedReciterIds((prev) => {
     const n = new Set(prev); n.has(id) ? n.delete(id) : n.add(id); return n;
@@ -813,6 +955,15 @@ export function RecitersSection() {
               <span className="font-semibold">{r.name}</span>
             </div>
             <div className="flex gap-1">
+              <Button
+                variant="ghost"
+                size="icon"
+                className={`h-8 w-8 ${flowRulesOpenId === r.id ? "text-sidebar-primary bg-sidebar-primary/10" : "text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10"}`}
+                title="قواعد تدفق المهام"
+                onClick={() => setFlowRulesOpenId((current) => (current === r.id ? null : r.id))}
+              >
+                <Layers className="h-3.5 w-3.5" />
+              </Button>
               <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-blue-600 hover:bg-blue-50" onClick={() => startEdit(r)}>
                 <Pencil className="h-3.5 w-3.5" />
               </Button>
@@ -822,6 +973,7 @@ export function RecitersSection() {
             </div>
           </div>
         )}
+        {flowRulesOpenId === r.id && <ReciterTaskFlowRulesPanel reciterId={r.id} />}
       </li>
     );
   };

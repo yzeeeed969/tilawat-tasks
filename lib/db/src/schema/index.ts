@@ -2,6 +2,7 @@ export * from "./members";
 export * from "./platforms";
 export * from "./platform-pages";
 export * from "./reciters";
+export * from "./reciter-task-flow-rules";
 export * from "./task-series";
 export * from "./tasks";
 export * from "./task-dependencies";
