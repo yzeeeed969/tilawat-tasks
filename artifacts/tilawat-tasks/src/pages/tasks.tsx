@@ -3926,8 +3926,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
         const enabledRules = (rulesPayload.rules ?? []).filter((rule) =>
           rule.enabled &&
-          rule.platform.id !== sourcePlatformId &&
-          !isApplicationPlatformName(rule.platform.name)
+          rule.platform.id !== sourcePlatformId
         );
 
         for (const rule of enabledRules) {
