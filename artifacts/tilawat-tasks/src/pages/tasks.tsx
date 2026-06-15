@@ -3900,10 +3900,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         existingTaskId: duplicateTask?.id,
       } satisfies TaskFlowPreviewItem;
     };
-    const targetPlatforms = (platforms ?? []).filter(
-      (platform) => platform.id !== sourcePlatformId && !isApplicationPlatformName(platform.name)
-    );
-
     setTaskFlowPreviewLoading(true);
     setTaskFlowPreviewError(null);
 
@@ -3911,7 +3907,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       const previewItems: TaskFlowPreviewItem[] = [];
       const rulesResponse = await fetch(`/api/reciters/${reciterId}/task-flow-rules`, { credentials: "include" });
       if (!rulesResponse.ok) throw new Error("Failed to load reciter task flow rules");
-      if (rulesResponse.ok) {
+      {
         const rulesPayload = (await rulesResponse.json()) as {
           configured?: boolean;
           rules?: Array<{
@@ -3945,80 +3941,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         return;
       }
 
-      for (const platform of targetPlatforms) {
-        const pagesResponse = await fetch(`/api/platforms/${platform.id}/pages`, { credentials: "include" });
-        if (!pagesResponse.ok) continue;
-
-        const pages = (await pagesResponse.json()) as Array<{
-          id: number;
-          name?: string | null;
-          title?: string | null;
-          pageName?: string | null;
-          reciterId?: number | null;
-        }>;
-        const reciterPages = pages.filter((page) => page.reciterId === reciterId);
-
-        for (const page of reciterPages) {
-          let memberIds: number[] = [];
-          const membersResponse = await fetch(`/api/platforms/${platform.id}/pages/${page.id}/members`, {
-            credentials: "include",
-          });
-          if (membersResponse.ok) {
-            const linkedMembers = await membersResponse.json();
-            if (Array.isArray(linkedMembers)) {
-              memberIds = linkedMembers
-                .map((memberId) => Number(memberId))
-                .filter((memberId) => Number.isFinite(memberId));
-            }
-          }
-
-          const memberNames = (members ?? [])
-            .filter((member) => memberIds.includes(member.id))
-            .map((member) => member.name);
-          const title = `${platform.name} — ${createSelectedReciter.name}`;
-          const normalizedTitle = normalizeTaskPreviewTitle(title);
-          const duplicateTask = loadedTasks.find((task) => {
-            const taskPlatform = taskPlatformId(task);
-            const taskReciter = taskReciterId(task);
-            const taskDate = taskDateKey((task as any).startDate ?? (task as any).dueDate);
-            const taskTitle = normalizeTaskPreviewTitle((task as any).title);
-            const titleMatches =
-              taskTitle === normalizedTitle ||
-              (taskTitle.length > 0 && normalizedTitle.includes(taskTitle)) ||
-              (normalizedTitle.length > 0 && taskTitle.includes(normalizedTitle));
-
-            return (
-              taskPlatform === platform.id &&
-              taskReciter === reciterId &&
-              taskDate === dueDate &&
-              titleMatches
-            );
-          });
-          const warnings: string[] = [];
-          if (memberIds.length === 0) warnings.push("تحذير: لا يوجد مسؤول مرتبط بهذه الصفحة.");
-          if (duplicateTask) warnings.push(`تحذير: توجد مهمة مشابهة مسبقًا #${duplicateTask.id}.`);
-
-          previewItems.push({
-            key: `${platform.id}-${page.id}`,
-            platformId: platform.id,
-            platformName: platform.name,
-            pageId: page.id,
-            pageName: page.name ?? page.pageName ?? page.title ?? `صفحة #${page.id}`,
-            reciterName: createSelectedReciter.name,
-            memberIds,
-            memberNames,
-            dueDate,
-            title,
-            warnings,
-            existingTaskId: duplicateTask?.id,
-          });
-        }
-      }
-
-      setTaskFlowPreview(previewItems);
-      if (previewItems.length === 0) {
-        setTaskFlowPreviewError("لا توجد صفحات تابعة لهذا القارئ على منصات أخرى.");
-      }
     } catch (error) {
       console.error("[task-flow-preview] failed to generate preview", error);
       setTaskFlowPreview(null);
