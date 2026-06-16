@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, reciterTaskFlowRulesTable, taskFlowLinksTable } from "@workspace/db";
+import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, reciterTaskFlowRuleAssigneesTable, reciterTaskFlowRulesTable, taskFlowLinksTable } from "@workspace/db";
 import { eq, and, inArray, isNull, isNotNull, ilike, or, sql } from "drizzle-orm";
 import {
   CreateTaskBody,
@@ -910,6 +910,20 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
+  const assignmentInput = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
+  const requestedAssigneesByPageId = new Map<number, number[]>();
+  for (const item of assignmentInput) {
+    const pageId = Number(item?.pageId);
+    const rawMemberIds = Array.isArray(item?.memberIds) ? item.memberIds : [];
+    const memberIds: number[] = [...new Set<number>(
+      rawMemberIds
+        .map((memberId: unknown) => Number(memberId))
+        .filter((memberId: number) => Number.isInteger(memberId) && memberId > 0),
+    )];
+    if (Number.isInteger(pageId) && pageId > 0) {
+      requestedAssigneesByPageId.set(pageId, memberIds);
+    }
+  }
 
   const [parent] = await db
     .select({
@@ -954,6 +968,7 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
 
   const rules = await db
     .select({
+      ruleId: reciterTaskFlowRulesTable.id,
       pageId: reciterTaskFlowRulesTable.pageId,
       enabled: reciterTaskFlowRulesTable.enabled,
       pageName: platformPagesTable.name,
@@ -975,6 +990,21 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
   const created: Array<{ taskId: number; platformName: string; pageName: string }> = [];
   const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }> = [];
   const batchKey = `task-flow-${parent.id}-${Date.now()}`;
+  const enabledRuleIds = enabledRules.map((rule) => rule.ruleId);
+  const defaultAssigneeRows = enabledRuleIds.length > 0
+    ? await db
+      .select({
+        ruleId: reciterTaskFlowRuleAssigneesTable.ruleId,
+        memberId: reciterTaskFlowRuleAssigneesTable.memberId,
+      })
+      .from(reciterTaskFlowRuleAssigneesTable)
+      .where(inArray(reciterTaskFlowRuleAssigneesTable.ruleId, enabledRuleIds))
+    : [];
+  const defaultAssigneesByRuleId = new Map<number, number[]>();
+  for (const row of defaultAssigneeRows) {
+    if (!defaultAssigneesByRuleId.has(row.ruleId)) defaultAssigneesByRuleId.set(row.ruleId, []);
+    defaultAssigneesByRuleId.get(row.ruleId)!.push(row.memberId);
+  }
 
   for (const rule of enabledRules) {
     if (rule.pageReciterId !== parent.reciterId) {
@@ -986,7 +1016,15 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       .select({ memberId: pageMembersTable.memberId })
       .from(pageMembersTable)
       .where(eq(pageMembersTable.pageId, rule.pageId));
-    const memberIds = [...new Set(assignedRows.map((row) => Number(row.memberId)).filter((memberId) => Number.isInteger(memberId) && memberId > 0))];
+    const allowedMemberIds = new Set(assignedRows.map((row) => Number(row.memberId)).filter((memberId) => Number.isInteger(memberId) && memberId > 0));
+    const requestedMemberIds = requestedAssigneesByPageId.has(rule.pageId)
+      ? requestedAssigneesByPageId.get(rule.pageId) ?? []
+      : defaultAssigneesByRuleId.get(rule.ruleId) ?? [];
+    const memberIds = [...new Set(requestedMemberIds)];
+    if (memberIds.some((memberId) => !allowedMemberIds.has(memberId))) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "invalid_assignee" });
+      continue;
+    }
     if (memberIds.length === 0) {
       skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "no_assignee" });
       continue;

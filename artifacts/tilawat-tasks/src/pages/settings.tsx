@@ -101,6 +101,8 @@ interface ReciterTaskFlowRuleItem {
     color?: string | null;
     isMain?: boolean | null;
   };
+  defaultAssigneeIds: number[];
+  pageMembers: Array<{ id: number; name: string }>;
 }
 
 interface ReciterTaskFlowRulesResponse {
@@ -735,6 +737,7 @@ function ReciterTaskFlowRulesPanel({ reciterId }: { reciterId: number }) {
   const queryClient = useQueryClient();
   const { toast } = useToast();
   const [enabledByPageId, setEnabledByPageId] = useState<Record<number, boolean>>({});
+  const [assigneesByPageId, setAssigneesByPageId] = useState<Record<number, number[]>>({});
 
   const queryKey = ["reciter-task-flow-rules", reciterId];
   const { data, isLoading, isError } = useQuery<ReciterTaskFlowRulesResponse>({
@@ -749,6 +752,7 @@ function ReciterTaskFlowRulesPanel({ reciterId }: { reciterId: number }) {
   useEffect(() => {
     if (!data) return;
     setEnabledByPageId(Object.fromEntries(data.rules.map((rule) => [rule.pageId, rule.enabled])));
+    setAssigneesByPageId(Object.fromEntries(data.rules.map((rule) => [rule.pageId, rule.defaultAssigneeIds ?? []])));
   }, [data]);
 
   const saveMutation = useMutation({
@@ -761,6 +765,7 @@ function ReciterTaskFlowRulesPanel({ reciterId }: { reciterId: number }) {
           rules: (data?.rules ?? []).map((rule) => ({
             pageId: rule.pageId,
             enabled: Boolean(enabledByPageId[rule.pageId]),
+            defaultAssigneeIds: assigneesByPageId[rule.pageId] ?? [],
           })),
         }),
       });
@@ -775,6 +780,13 @@ function ReciterTaskFlowRulesPanel({ reciterId }: { reciterId: number }) {
   });
 
   const enabledCount = Object.values(enabledByPageId).filter(Boolean).length;
+  const toggleAssignee = (pageId: number, memberId: number, checked: boolean) => {
+    setAssigneesByPageId((previous) => {
+      const current = new Set(previous[pageId] ?? []);
+      checked ? current.add(memberId) : current.delete(memberId);
+      return { ...previous, [pageId]: [...current] };
+    });
+  };
 
   return (
     <div className="border-t border-border bg-muted/10 p-3 space-y-3">
@@ -804,8 +816,10 @@ function ReciterTaskFlowRulesPanel({ reciterId }: { reciterId: number }) {
           <div className="space-y-2">
             {data.rules.map((rule) => {
               const enabled = Boolean(enabledByPageId[rule.pageId]);
+              const selectedAssignees = new Set(assigneesByPageId[rule.pageId] ?? []);
               return (
-                <div key={rule.pageId} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2">
+                <div key={rule.pageId} className="space-y-3 rounded-md border bg-background px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
                   <div className="flex min-w-0 items-center gap-2">
                     <PlatformIcon name={rule.platform.name} className="h-4 w-4 shrink-0" />
                     <div className="min-w-0">
@@ -824,6 +838,27 @@ function ReciterTaskFlowRulesPanel({ reciterId }: { reciterId: number }) {
                       }
                     />
                   </div>
+                  </div>
+                  {enabled && (
+                    <div className="rounded-md border bg-muted/20 px-3 py-2">
+                      <p className="mb-2 text-xs font-semibold text-foreground">المسؤول الافتراضي للتدفق</p>
+                      {rule.pageMembers.length === 0 ? (
+                        <p className="text-xs text-amber-700">لا يوجد أعضاء مرتبطون بهذه الصفحة.</p>
+                      ) : (
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {rule.pageMembers.map((member) => (
+                            <label key={member.id} className="flex items-center gap-2 text-xs">
+                              <Checkbox
+                                checked={selectedAssignees.has(member.id)}
+                                onCheckedChange={(checked) => toggleAssignee(rule.pageId, member.id, Boolean(checked))}
+                              />
+                              <span>{member.name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               );
             })}

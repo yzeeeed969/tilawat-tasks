@@ -28,6 +28,26 @@ async function runTaskFlowLinksSchemaEnsure() {
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_task_flow_links_parent_task ON task_flow_links(parent_task_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_task_flow_links_child_task ON task_flow_links(child_task_id)`);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS reciter_task_flow_rules (
+      id serial PRIMARY KEY,
+      reciter_id integer NOT NULL REFERENCES reciters(id) ON DELETE CASCADE,
+      page_id integer NOT NULL REFERENCES platform_pages(id) ON DELETE CASCADE,
+      enabled boolean NOT NULL DEFAULT false,
+      created_at timestamptz NOT NULL DEFAULT now(),
+      updated_at timestamptz NOT NULL DEFAULT now(),
+      CONSTRAINT reciter_task_flow_rules_reciter_page_unique UNIQUE (reciter_id, page_id)
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS reciter_task_flow_rules_reciter_idx ON reciter_task_flow_rules (reciter_id)`);
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS reciter_task_flow_rule_assignees (
+      rule_id integer NOT NULL REFERENCES reciter_task_flow_rules(id) ON DELETE CASCADE,
+      member_id integer NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+      created_at timestamp NOT NULL DEFAULT now(),
+      PRIMARY KEY (rule_id, member_id)
+    )
+  `);
 }
 
 export async function ensureTaskFlowLinksSchema() {

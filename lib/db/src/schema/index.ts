@@ -3,6 +3,7 @@ export * from "./platforms";
 export * from "./platform-pages";
 export * from "./reciters";
 export * from "./reciter-task-flow-rules";
+export * from "./reciter-task-flow-rule-assignees";
 export * from "./task-series";
 export * from "./tasks";
 export * from "./task-flow-links";

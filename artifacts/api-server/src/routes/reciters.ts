@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, platformPagesTable, platformsTable, reciterTaskFlowRulesTable, recitersTable } from "@workspace/db";
+import { db, membersTable, pageMembersTable, platformPagesTable, platformsTable, reciterTaskFlowRuleAssigneesTable, reciterTaskFlowRulesTable, recitersTable } from "@workspace/db";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import {
   CreateReciterBody,
@@ -29,6 +29,14 @@ async function ensureTaskFlowRulesSchema() {
       )
     `)
       .then(() => db.execute(sql`CREATE INDEX IF NOT EXISTS reciter_task_flow_rules_reciter_idx ON reciter_task_flow_rules (reciter_id)`))
+      .then(() => db.execute(sql`
+        CREATE TABLE IF NOT EXISTS reciter_task_flow_rule_assignees (
+          rule_id integer NOT NULL REFERENCES reciter_task_flow_rules(id) ON DELETE CASCADE,
+          member_id integer NOT NULL REFERENCES members(id) ON DELETE CASCADE,
+          created_at timestamp NOT NULL DEFAULT now(),
+          PRIMARY KEY (rule_id, member_id)
+        )
+      `))
       .then(() => {
         taskFlowRulesSchemaEnsured = true;
       })
@@ -97,6 +105,21 @@ router.get("/reciters/:id/task-flow-rules", async (req, res) => {
     .from(reciterTaskFlowRulesTable)
     .where(eq(reciterTaskFlowRulesTable.reciterId, id));
   const ruleByPageId = new Map(existingRules.map((rule) => [rule.pageId, rule]));
+  const ruleIds = existingRules.map((rule) => rule.id);
+  const assigneeRows = ruleIds.length > 0
+    ? await db
+      .select({
+        ruleId: reciterTaskFlowRuleAssigneesTable.ruleId,
+        memberId: reciterTaskFlowRuleAssigneesTable.memberId,
+      })
+      .from(reciterTaskFlowRuleAssigneesTable)
+      .where(inArray(reciterTaskFlowRuleAssigneesTable.ruleId, ruleIds))
+    : [];
+  const assigneeIdsByRuleId = new Map<number, number[]>();
+  for (const row of assigneeRows) {
+    if (!assigneeIdsByRuleId.has(row.ruleId)) assigneeIdsByRuleId.set(row.ruleId, []);
+    assigneeIdsByRuleId.get(row.ruleId)!.push(row.memberId);
+  }
   const pages = await db
     .select({
       pageId: platformPagesTable.id,
@@ -113,6 +136,23 @@ router.get("/reciters/:id/task-flow-rules", async (req, res) => {
     .innerJoin(platformsTable, eq(platformPagesTable.platformId, platformsTable.id))
     .where(eq(platformPagesTable.reciterId, id))
     .orderBy(platformsTable.name, platformPagesTable.name);
+  const pageIds = pages.map((page) => page.pageId);
+  const pageMemberRows = pageIds.length > 0
+    ? await db
+      .select({
+        pageId: pageMembersTable.pageId,
+        memberId: membersTable.id,
+        memberName: membersTable.name,
+      })
+      .from(pageMembersTable)
+      .innerJoin(membersTable, eq(pageMembersTable.memberId, membersTable.id))
+      .where(inArray(pageMembersTable.pageId, pageIds))
+    : [];
+  const membersByPageId = new Map<number, Array<{ id: number; name: string }>>();
+  for (const row of pageMemberRows) {
+    if (!membersByPageId.has(row.pageId)) membersByPageId.set(row.pageId, []);
+    membersByPageId.get(row.pageId)!.push({ id: row.memberId, name: row.memberName });
+  }
 
   res.json({
     reciter,
@@ -124,6 +164,8 @@ router.get("/reciters/:id/task-flow-rules", async (req, res) => {
         reciterId: id,
         pageId: page.pageId,
         enabled: rule?.enabled ?? false,
+        defaultAssigneeIds: rule ? assigneeIdsByRuleId.get(rule.id) ?? [] : [],
+        pageMembers: membersByPageId.get(page.pageId) ?? [],
         createdAt: rule?.createdAt ?? null,
         updatedAt: rule?.updatedAt ?? null,
         page: {
@@ -154,11 +196,14 @@ router.put("/reciters/:id/task-flow-rules", async (req, res) => {
     return;
   }
 
-  const inputRules: Array<{ pageId?: unknown; enabled?: unknown }> = Array.isArray(req.body?.rules) ? req.body.rules : [];
-  const normalizedRules: Array<{ pageId: number; enabled: boolean }> = inputRules
-    .map((rule: { pageId?: unknown; enabled?: unknown }) => ({
+  const inputRules: Array<{ pageId?: unknown; enabled?: unknown; defaultAssigneeIds?: unknown }> = Array.isArray(req.body?.rules) ? req.body.rules : [];
+  const normalizedRules: Array<{ pageId: number; enabled: boolean; defaultAssigneeIds: number[] }> = inputRules
+    .map((rule: { pageId?: unknown; enabled?: unknown; defaultAssigneeIds?: unknown }) => ({
       pageId: Number(rule.pageId),
       enabled: Boolean(rule.enabled),
+      defaultAssigneeIds: Array.isArray(rule.defaultAssigneeIds)
+        ? [...new Set(rule.defaultAssigneeIds.map((memberId) => Number(memberId)).filter((memberId) => Number.isSafeInteger(memberId) && memberId > 0))]
+        : [],
     }))
     .filter((rule) => Number.isSafeInteger(rule.pageId) && rule.pageId > 0);
   const pageIds: number[] = [...new Set(normalizedRules.map((rule) => rule.pageId))];
@@ -169,6 +214,17 @@ router.put("/reciters/:id/task-flow-rules", async (req, res) => {
       .where(and(eq(platformPagesTable.reciterId, id), inArray(platformPagesTable.id, pageIds)))
     : [];
   const validPageIds = new Set(validPages.map((page) => page.id));
+  const allowedRows = pageIds.length > 0
+    ? await db
+      .select({ pageId: pageMembersTable.pageId, memberId: pageMembersTable.memberId })
+      .from(pageMembersTable)
+      .where(inArray(pageMembersTable.pageId, pageIds))
+    : [];
+  const allowedByPageId = new Map<number, Set<number>>();
+  for (const row of allowedRows) {
+    if (!allowedByPageId.has(row.pageId)) allowedByPageId.set(row.pageId, new Set());
+    allowedByPageId.get(row.pageId)!.add(row.memberId);
+  }
   const values = normalizedRules
     .filter((rule) => validPageIds.has(rule.pageId))
     .map((rule) => ({
@@ -180,7 +236,19 @@ router.put("/reciters/:id/task-flow-rules", async (req, res) => {
 
   await db.delete(reciterTaskFlowRulesTable).where(eq(reciterTaskFlowRulesTable.reciterId, id));
   if (values.length > 0) {
-    await db.insert(reciterTaskFlowRulesTable).values(values);
+    const insertedRules = await db.insert(reciterTaskFlowRulesTable).values(values).returning();
+    const insertedRuleByPageId = new Map(insertedRules.map((rule) => [rule.pageId, rule]));
+    const assigneeValues = normalizedRules.flatMap((rule) => {
+      const insertedRule = insertedRuleByPageId.get(rule.pageId);
+      const allowedMemberIds = allowedByPageId.get(rule.pageId) ?? new Set<number>();
+      if (!insertedRule) return [];
+      return rule.defaultAssigneeIds
+        .filter((memberId) => allowedMemberIds.has(memberId))
+        .map((memberId) => ({ ruleId: insertedRule.id, memberId }));
+    });
+    if (assigneeValues.length > 0) {
+      await db.insert(reciterTaskFlowRuleAssigneesTable).values(assigneeValues);
+    }
   }
 
   res.json({ ok: true, saved: values.length });

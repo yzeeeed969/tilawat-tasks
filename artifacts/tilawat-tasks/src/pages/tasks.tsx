@@ -664,6 +664,7 @@ type TaskFlowPreviewItem = {
   reciterName: string;
   memberIds: number[];
   memberNames: string[];
+  pageMemberOptions: Array<{ id: number; name: string }>;
   dueDate: string;
   title: string;
   warnings: string[];
@@ -874,6 +875,7 @@ function TaskFlowPreviewPanel({
   creating,
   createResult,
   onCreateChildren,
+  onAssigneesChange,
 }: {
   canPreview: boolean;
   loading: boolean;
@@ -883,6 +885,7 @@ function TaskFlowPreviewPanel({
   creating: boolean;
   createResult: TaskFlowCreateResult | null;
   onCreateChildren: () => void;
+  onAssigneesChange: (pageId: number, memberIds: number[]) => void;
 }) {
   if (!canPreview) return null;
   const readyItemsCount = items?.filter((item) => item.warnings.length === 0).length ?? 0;
@@ -940,6 +943,30 @@ function TaskFlowPreviewPanel({
                       {item.memberNames.length > 0 ? item.memberNames.join("، ") : "لا يوجد مسؤول"}
                     </div>
                   </div>
+
+                  {item.pageMemberOptions.length > 0 && !createResult && (
+                    <div className="mt-2 rounded-md border bg-muted/20 px-2 py-2">
+                      <p className="mb-2 text-xs font-semibold text-foreground">تعديل مسؤولي هذه المهمة فقط</p>
+                      <div className="grid gap-2 sm:grid-cols-2">
+                        {item.pageMemberOptions.map((member) => {
+                          const selected = item.memberIds.includes(member.id);
+                          return (
+                            <label key={member.id} className="flex items-center gap-2 text-xs">
+                              <Checkbox
+                                checked={selected}
+                                onCheckedChange={(checked) => {
+                                  const nextIds = new Set(item.memberIds);
+                                  Boolean(checked) ? nextIds.add(member.id) : nextIds.delete(member.id);
+                                  onAssigneesChange(item.pageId, [...nextIds]);
+                                }}
+                              />
+                              <span>{member.name}</span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
 
                   {item.warnings.length > 0 && (
                     <div className="mt-2 space-y-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs leading-5 text-amber-800">
@@ -3894,21 +3921,15 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     const reciterId = Number(values.reciterId);
     const dueDate = taskDateKey(values.startDate || values.dueDate || new Date());
     const loadedTasks = dependencyCandidateTasks ?? rawTasks ?? [];
-    const buildPreviewItem = async (platform: { id: number; name: string }, page: { id: number; name?: string | null }) => {
-      let memberIds: number[] = [];
-      const membersResponse = await fetch(`/api/platforms/${platform.id}/pages/${page.id}/members`, {
-        credentials: "include",
-      });
-      if (membersResponse.ok) {
-        const linkedMembers = await membersResponse.json();
-        if (Array.isArray(linkedMembers)) {
-          memberIds = linkedMembers
-            .map((memberId) => Number(memberId))
-            .filter((memberId) => Number.isFinite(memberId));
-        }
-      }
-
-      const memberNames = (members ?? [])
+    const buildPreviewItem = async (
+      platform: { id: number; name: string },
+      page: { id: number; name?: string | null },
+      defaultAssigneeIds: number[] = [],
+      pageMemberOptions: Array<{ id: number; name: string }> = [],
+    ) => {
+      const allowedMemberIds = new Set(pageMemberOptions.map((member) => member.id));
+      const memberIds = [...new Set(defaultAssigneeIds)].filter((memberId) => allowedMemberIds.has(memberId));
+      const memberNames = pageMemberOptions
         .filter((member) => memberIds.includes(member.id))
         .map((member) => member.name);
       const title = `${platform.name} — ${createSelectedReciter.name}`;
@@ -3926,6 +3947,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         return taskPlatform === platform.id && taskReciter === reciterId && taskDate === dueDate && titleMatches;
       });
       const warnings: string[] = [];
+      if (pageMemberOptions.length === 0) warnings.push("تحذير: لا يوجد أعضاء مرتبطون بهذه الصفحة.");
+      if (memberIds.length === 0) warnings.push("تحذير: لم يتم اختيار مسؤول لهذه المهمة.");
       if (memberIds.length === 0) warnings.push("تحذير: لا يوجد مسؤول مرتبط بهذه الصفحة.");
       if (duplicateTask) warnings.push(`تحذير: توجد مهمة مشابهة مسبقًا #${duplicateTask.id}.`);
 
@@ -3938,6 +3961,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         reciterName: createSelectedReciter.name,
         memberIds,
         memberNames,
+        pageMemberOptions,
         dueDate,
         title,
         warnings,
@@ -3958,6 +3982,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           rules?: Array<{
             pageId: number;
             enabled: boolean;
+            defaultAssigneeIds?: number[];
+            pageMembers?: Array<{ id: number; name: string }>;
             page: { id: number; name?: string | null; platformId: number };
             platform: { id: number; name: string };
           }>;
@@ -3975,7 +4001,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         );
 
         for (const rule of enabledRules) {
-          previewItems.push(await buildPreviewItem(rule.platform, rule.page));
+          previewItems.push(await buildPreviewItem(
+            rule.platform,
+            rule.page,
+            rule.defaultAssigneeIds ?? [],
+            rule.pageMembers ?? [],
+          ));
         }
 
         setTaskFlowPreview(previewItems);
@@ -3992,6 +4023,31 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     } finally {
       setTaskFlowPreviewLoading(false);
     }
+  };
+
+  const handleTaskFlowAssigneesChange = (pageId: number, memberIds: number[]) => {
+    setTaskFlowPreview((previous) => previous?.map((item) => {
+      if (item.pageId !== pageId) return item;
+      const allowedIds = new Set(item.pageMemberOptions.map((member) => member.id));
+      const nextMemberIds = [...new Set(memberIds)].filter((memberId) => allowedIds.has(memberId));
+      const nextMemberNames = item.pageMemberOptions
+        .filter((member) => nextMemberIds.includes(member.id))
+        .map((member) => member.name);
+      const warnings = item.warnings.filter((warning) =>
+        !warning.includes("مسؤول") &&
+        !warning.includes("أعضاء مرتبطون") &&
+        !warning.includes("ظ…ط³ط¤ظˆظ„")
+      );
+      if (item.pageMemberOptions.length === 0) warnings.push("تحذير: لا يوجد أعضاء مرتبطون بهذه الصفحة.");
+      if (nextMemberIds.length === 0) warnings.push("تحذير: لم يتم اختيار مسؤول لهذه المهمة.");
+      return {
+        ...item,
+        memberIds: nextMemberIds,
+        memberNames: nextMemberNames,
+        warnings,
+      };
+    }) ?? null);
+    setTaskFlowCreateResult(null);
   };
 
   const handleCreateTaskFlowChildren = async (data: TaskFormValues) => {
@@ -4051,6 +4107,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          assignments: taskFlowPreview.map((item) => ({
+            pageId: item.pageId,
+            memberIds: item.memberIds,
+          })),
+        }),
       });
       if (!response.ok) {
         throw new Error(`Flow children request failed: ${response.status}`);
@@ -4873,6 +4935,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                   creating={taskFlowCreatePending}
                                   createResult={taskFlowCreateResult}
                                   onCreateChildren={createForm.handleSubmit(handleCreateTaskFlowChildren)}
+                                  onAssigneesChange={handleTaskFlowAssigneesChange}
                                 />
                               ) : null
                             }
