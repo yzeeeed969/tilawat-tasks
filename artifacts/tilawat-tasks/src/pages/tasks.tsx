@@ -3704,14 +3704,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       return true;
     });
 
-    const recentCreatedCutoff = Date.now() - 30 * 60 * 1000;
     return [...filtered].sort((a, b) => {
-      const aCreatedAt = new Date(((a as any).createdAt ?? 0) as any).getTime();
-      const bCreatedAt = new Date(((b as any).createdAt ?? 0) as any).getTime();
-      const aIsRecent = Number.isFinite(aCreatedAt) && aCreatedAt >= recentCreatedCutoff;
-      const bIsRecent = Number.isFinite(bCreatedAt) && bCreatedAt >= recentCreatedCutoff;
-      if (aIsRecent !== bIsRecent) return aIsRecent ? -1 : 1;
-      if (aIsRecent && bIsRecent && aCreatedAt !== bCreatedAt) return bCreatedAt - aCreatedAt;
       const aTime = a.dueDate ? new Date(a.dueDate).getTime() : Number.POSITIVE_INFINITY;
       const bTime = b.dueDate ? new Date(b.dueDate).getTime() : Number.POSITIVE_INFINITY;
       if (aTime !== bTime) return aTime - bTime;

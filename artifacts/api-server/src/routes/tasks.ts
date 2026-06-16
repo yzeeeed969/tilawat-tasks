@@ -621,6 +621,24 @@ function isSafeFlowChild(row: Awaited<ReturnType<typeof flowChildRows>>[number])
   );
 }
 
+async function findExistingFlowLink(parentTaskId: number, targetPageId: number, flowDate: Date) {
+  const [existingLink] = await db
+    .select({
+      id: taskFlowLinksTable.id,
+      childTaskId: taskFlowLinksTable.childTaskId,
+      childDeletedAt: tasksTable.deletedAt,
+    })
+    .from(taskFlowLinksTable)
+    .leftJoin(tasksTable, eq(taskFlowLinksTable.childTaskId, tasksTable.id))
+    .where(and(
+      eq(taskFlowLinksTable.parentTaskId, parentTaskId),
+      eq(taskFlowLinksTable.targetPageId, targetPageId),
+      eq(taskFlowLinksTable.flowDate, flowDate),
+    ))
+    .limit(1);
+  return existingLink ?? null;
+}
+
 async function buildFlowChangeImpact(parentTaskId: number, newReciterId: number) {
   const [parent] = await db
     .select({
@@ -766,16 +784,9 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
       skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "no_assignee" });
       continue;
     }
-    const [existingLink] = await db
-      .select({ id: taskFlowLinksTable.id, childTaskId: taskFlowLinksTable.childTaskId })
-      .from(taskFlowLinksTable)
-      .where(and(
-        eq(taskFlowLinksTable.parentTaskId, parent.id),
-        eq(taskFlowLinksTable.targetPageId, rule.pageId),
-        eq(taskFlowLinksTable.flowDate, flowDate),
-      ))
-      .limit(1);
-    if (existingLink) {
+    const existingLink = await findExistingFlowLink(parent.id, rule.pageId, flowDate);
+    const canReplaceExistingLink = Boolean(existingLink?.childDeletedAt);
+    if (existingLink && !canReplaceExistingLink) {
       skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
       continue;
     }
@@ -821,17 +832,31 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
           pageId: rule.pageId,
         }).returning();
         await syncTaskMembersUsing(tx, newTask.id, memberIds);
-        await tx.insert(taskFlowLinksTable).values({
-          parentTaskId: parent.id,
-          childTaskId: newTask.id,
-          reciterId: parent.reciterId!,
-          sourcePageId: parent.pageId ?? null,
-          targetPageId: rule.pageId,
-          targetPlatformId: rule.platformId,
-          flowDate,
-          batchKey,
-          createdByUserId: currentUser?.id ?? null,
-        });
+        if (canReplaceExistingLink && existingLink) {
+          await tx.update(taskFlowLinksTable)
+            .set({
+              childTaskId: newTask.id,
+              reciterId: parent.reciterId!,
+              sourcePageId: parent.pageId ?? null,
+              targetPlatformId: rule.platformId,
+              batchKey,
+              createdByUserId: currentUser?.id ?? null,
+              createdAt: new Date(),
+            })
+            .where(eq(taskFlowLinksTable.id, existingLink.id));
+        } else {
+          await tx.insert(taskFlowLinksTable).values({
+            parentTaskId: parent.id,
+            childTaskId: newTask.id,
+            reciterId: parent.reciterId!,
+            sourcePageId: parent.pageId ?? null,
+            targetPageId: rule.pageId,
+            targetPlatformId: rule.platformId,
+            flowDate,
+            batchKey,
+            createdByUserId: currentUser?.id ?? null,
+          });
+        }
         return newTask;
       });
       created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName });
@@ -1386,16 +1411,9 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       continue;
     }
 
-    const [existingLink] = await db
-      .select({ id: taskFlowLinksTable.id, childTaskId: taskFlowLinksTable.childTaskId })
-      .from(taskFlowLinksTable)
-      .where(and(
-        eq(taskFlowLinksTable.parentTaskId, parent.id),
-        eq(taskFlowLinksTable.targetPageId, rule.pageId),
-        eq(taskFlowLinksTable.flowDate, flowDate),
-      ))
-      .limit(1);
-    if (existingLink) {
+    const existingLink = await findExistingFlowLink(parent.id, rule.pageId, flowDate);
+    const canReplaceExistingLink = Boolean(existingLink?.childDeletedAt);
+    if (existingLink && !canReplaceExistingLink) {
       skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
       continue;
     }
@@ -1443,17 +1461,31 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
         }).returning();
 
         await syncTaskMembersUsing(tx, newTask.id, memberIds);
-        await tx.insert(taskFlowLinksTable).values({
-          parentTaskId: parent.id,
-          childTaskId: newTask.id,
-          reciterId: parent.reciterId!,
-          sourcePageId: parent.pageId ?? null,
-          targetPageId: rule.pageId,
-          targetPlatformId: rule.platformId,
-          flowDate,
-          batchKey,
-          createdByUserId: currentUser.id ?? null,
-        });
+        if (canReplaceExistingLink && existingLink) {
+          await tx.update(taskFlowLinksTable)
+            .set({
+              childTaskId: newTask.id,
+              reciterId: parent.reciterId!,
+              sourcePageId: parent.pageId ?? null,
+              targetPlatformId: rule.platformId,
+              batchKey,
+              createdByUserId: currentUser.id ?? null,
+              createdAt: new Date(),
+            })
+            .where(eq(taskFlowLinksTable.id, existingLink.id));
+        } else {
+          await tx.insert(taskFlowLinksTable).values({
+            parentTaskId: parent.id,
+            childTaskId: newTask.id,
+            reciterId: parent.reciterId!,
+            sourcePageId: parent.pageId ?? null,
+            targetPageId: rule.pageId,
+            targetPlatformId: rule.platformId,
+            flowDate,
+            batchKey,
+            createdByUserId: currentUser.id ?? null,
+          });
+        }
         return newTask;
       });
 
