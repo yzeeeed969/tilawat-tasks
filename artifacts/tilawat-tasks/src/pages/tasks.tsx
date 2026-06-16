@@ -675,6 +675,19 @@ type TaskFlowCreateResult = {
   created: Array<{ taskId: number; platformName: string; pageName: string }>;
   skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }>;
 };
+type FlowChangeAction = "delete_safe_children" | "delete_safe_and_regenerate" | "keep_children";
+type FlowChangeImpact = {
+  parentTaskId: number;
+  currentReciterId: number | null;
+  newReciterId: number;
+  totalChildren: number;
+  deletableChildren: number;
+  protectedChildren: number;
+  newReciterRulesConfigured: boolean;
+  enabledPagesCount: number;
+  pagesWithoutAssigneesCount: number;
+  pagesWithoutAssignees: Array<{ pageId: number; pageName: string; platformName: string }>;
+};
 type UrlDialogState = {
   taskId: number;
   currentUrl: string;
@@ -4248,6 +4261,74 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     } finally { setBulkPending(false); }
   };
 
+  const chooseFlowChangeAction = (impact: FlowChangeImpact): FlowChangeAction | null => {
+    const warnings = [
+      `تم العثور على ${impact.totalChildren} مهام متدفقة مرتبطة بالقارئ السابق.`,
+      `القابلة للحذف: ${impact.deletableChildren}`,
+      `المحمية ولن تمس: ${impact.protectedChildren}`,
+      impact.newReciterRulesConfigured
+        ? `القارئ الجديد لديه ${impact.enabledPagesCount} صفحات مفعلة في التدفق.`
+        : "القارئ الجديد لا يملك قواعد تدفق مهيأة.",
+      impact.pagesWithoutAssigneesCount > 0
+        ? `تنبيه: ${impact.pagesWithoutAssigneesCount} صفحة مفعلة بلا مسؤول افتراضي.`
+        : null,
+      "",
+      "اختر الإجراء:",
+      "1 = حذف التوابع غير المكتملة وغير الموثقة فقط",
+      "2 = حذف الآمن ثم إعادة توليد توابع للقارئ الجديد",
+      "3 = الإبقاء على التوابع الحالية",
+    ].filter(Boolean).join("\n");
+    const choice = window.prompt(warnings, "3");
+    if (choice === null) return null;
+    if (choice.trim() === "1") return "delete_safe_children";
+    if (choice.trim() === "2") return "delete_safe_and_regenerate";
+    return "keep_children";
+  };
+
+  const fetchFlowChangeImpact = async (taskId: number, newReciterId: number) => {
+    const response = await fetch(`/api/tasks/${taskId}/flow-change-impact?newReciterId=${newReciterId}`, {
+      credentials: "include",
+    });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error("Failed to load flow change impact");
+    const impact = (await response.json()) as FlowChangeImpact;
+    return impact.totalChildren > 0 ? impact : null;
+  };
+
+  const runFlowChangeAction = async (taskId: number, newReciterId: number, action: FlowChangeAction) => {
+    const response = await fetch(`/api/tasks/${taskId}/flow-change-action`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ newReciterId, action }),
+    });
+    if (!response.ok) throw new Error("Failed to apply flow change action");
+    return response.json() as Promise<{
+      deletedChildIds: number[];
+      protectedChildIds: number[];
+      regenerated: { created: unknown[]; skipped: unknown[] };
+    }>;
+  };
+
+  const prepareFlowReciterChange = async (task: TaskWithDetails, newReciterId: number | null) => {
+    const oldReciterId = taskReciterId(task);
+    if (!isAdmin || !oldReciterId || !newReciterId || oldReciterId === newReciterId) {
+      return false;
+    }
+    const impact = await fetchFlowChangeImpact(task.id, newReciterId);
+    if (!impact) return false;
+    const action = chooseFlowChangeAction(impact);
+    if (!action) throw new Error("FLOW_CHANGE_CANCELLED");
+    if (action !== "keep_children") {
+      const result = await runFlowChangeAction(task.id, newReciterId, action);
+      toast({
+        title: "تم تنفيذ قرار التوابع المتدفقة",
+        description: `حذف آمن: ${result.deletedChildIds.length}، محمي: ${result.protectedChildIds.length}، جديد: ${result.regenerated.created.length}`,
+      });
+    }
+    return true;
+  };
+
   const onCreateSubmit = async (data: TaskFormValues) => {
     const isMemberSelfTask = ENABLE_MEMBER_CREATED_TASKS && !isAdmin;
     if (isMemberSelfTask && !user?.memberId) {
@@ -4390,7 +4471,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     }
   };
 
-  const onEditSubmit = (data: TaskFormValues) => {
+  const onEditSubmit = async (data: TaskFormValues) => {
     if (!editingTask) return;
     if (TASK_FORM_STABILITY_MODE) {
       if (!data.platformId) {
@@ -4412,6 +4493,16 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       const taskTitle = explicitTitle || [selectedReciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || "مهمة جديدة";
       const taskDate = new Date(data.startDate).toISOString();
 
+      let flowChangeAcknowledged = false;
+      try {
+        flowChangeAcknowledged = await prepareFlowReciterChange(editingTask, data.reciterId ?? null);
+      } catch (error) {
+        if ((error as Error).message !== "FLOW_CHANGE_CANCELLED") {
+          toast({ title: "تعذر فحص أثر تغيير القارئ", variant: "destructive" });
+        }
+        return;
+      }
+
       updateTask.mutate(
         {
           id: editingTask.id,
@@ -4424,6 +4515,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             startDate: taskDate,
             dueDate: taskDate,
             updateScope: "single",
+            flowChangeAcknowledged,
           } as any,
         },
         {
@@ -4453,6 +4545,15 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       ? data.recurrenceDays ?? null
       : null;
     const memberIdsForUpdate = data.memberIds?.length ? data.memberIds : taskAssignedMemberIds(editingTask);
+    let flowChangeAcknowledged = false;
+    try {
+      flowChangeAcknowledged = await prepareFlowReciterChange(editingTask, data.reciterId ?? null);
+    } catch (error) {
+      if ((error as Error).message !== "FLOW_CHANGE_CANCELLED") {
+        toast({ title: "تعذر فحص أثر تغيير القارئ", variant: "destructive" });
+      }
+      return;
+    }
     updateTask.mutate(
       {
         id: editingTask.id,
@@ -4476,6 +4577,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           pageId: data.pageId ?? null,
           updateScope: effectiveEditScope,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : undefined,
+          flowChangeAcknowledged,
         } as any,
       },
       {
@@ -4609,7 +4711,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
     try {
       setQuickReciterSaving(true);
-      const response = await fetch(`/api/tasks/${quickReciterTask.id}/quick-reciter`, {
+      let response = await fetch(`/api/tasks/${quickReciterTask.id}/quick-reciter`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
@@ -4617,6 +4719,25 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       });
       if (!response.ok) {
         const error = await response.json().catch(() => null);
+        if (response.status === 409 && error?.error === "flow_change_required" && error?.impact) {
+          const action = chooseFlowChangeAction(error.impact as FlowChangeImpact);
+          if (!action) return;
+          if (action !== "keep_children") {
+            await runFlowChangeAction(quickReciterTask.id, reciterId, action);
+          }
+          response = await fetch(`/api/tasks/${quickReciterTask.id}/quick-reciter`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            credentials: "include",
+            body: JSON.stringify({ reciterId, memberId, flowChangeAcknowledged: true }),
+          });
+          if (response.ok) {
+            await invalidateTasks();
+            toast({ title: "تم تغيير القارئ وتنفيذ قرار التوابع" });
+            closeQuickReciterDialog();
+            return;
+          }
+        }
         throw new Error(error?.error ?? "Failed to change reciter");
       }
       await invalidateTasks();

@@ -368,6 +368,7 @@ const TASK_SELECT = {
 type SeriesType = "temporary" | "operational";
 type SeriesRecurrenceType = "none" | "weekly" | "monthly";
 type TaskUpdateScope = "single" | "future" | "series";
+type FlowChangeAction = "delete_safe_children" | "delete_safe_and_regenerate" | "keep_children";
 
 const STATE_UPDATE_KEYS = new Set(["status", "completedAt", "progress", "submissionUrl"]);
 const DATE_UPDATE_KEYS = new Set(["startDate", "endDate", "dueDate"]);
@@ -576,6 +577,277 @@ async function validateMemberIds(memberIds: unknown): Promise<number[]> {
     throw new Error("INVALID_MEMBER_IDS");
   }
   return uniqueIds;
+}
+
+function rowsFromExecute<T>(result: unknown): T[] {
+  if (Array.isArray(result)) return result as T[];
+  const rows = (result as { rows?: T[] } | null)?.rows;
+  return Array.isArray(rows) ? rows : [];
+}
+
+async function flowChildRows(parentTaskId: number) {
+  const result = await db.execute(sql`
+    SELECT
+      l.child_task_id AS "childTaskId",
+      t.status AS "status",
+      t.completed_at AS "completedAt",
+      t.submission_url AS "submissionUrl",
+      t.deleted_at AS "deletedAt",
+      count(p.id)::int AS "proofCount"
+    FROM task_flow_links l
+    INNER JOIN tasks t ON t.id = l.child_task_id
+    LEFT JOIN task_proofs p ON p.task_id = t.id AND p.deleted_at IS NULL
+    WHERE l.parent_task_id = ${parentTaskId}
+    GROUP BY l.child_task_id, t.status, t.completed_at, t.submission_url, t.deleted_at
+  `);
+
+  return rowsFromExecute<{
+    childTaskId: number;
+    status: string | null;
+    completedAt: Date | string | null;
+    submissionUrl: string | null;
+    deletedAt: Date | string | null;
+    proofCount: number;
+  }>(result);
+}
+
+function isSafeFlowChild(row: Awaited<ReturnType<typeof flowChildRows>>[number]) {
+  return (
+    !row.deletedAt &&
+    row.status !== "completed" &&
+    !row.completedAt &&
+    !row.submissionUrl &&
+    Number(row.proofCount ?? 0) === 0
+  );
+}
+
+async function buildFlowChangeImpact(parentTaskId: number, newReciterId: number) {
+  const [parent] = await db
+    .select({
+      id: tasksTable.id,
+      platformId: tasksTable.platformId,
+      platformName: platformsTable.name,
+      reciterId: tasksTable.reciterId,
+    })
+    .from(tasksTable)
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .where(and(eq(tasksTable.id, parentTaskId), isNull(tasksTable.deletedAt)))
+    .limit(1);
+
+  if (!parent || !isApplicationPlatformName(parent.platformName)) {
+    return null;
+  }
+
+  const children = await flowChildRows(parentTaskId);
+  const safeChildren = children.filter(isSafeFlowChild);
+  const protectedChildren = children.filter((child) => !isSafeFlowChild(child));
+
+  const rules = await db
+    .select({
+      ruleId: reciterTaskFlowRulesTable.id,
+      pageId: reciterTaskFlowRulesTable.pageId,
+      enabled: reciterTaskFlowRulesTable.enabled,
+      platformId: platformPagesTable.platformId,
+      pageName: platformPagesTable.name,
+      platformName: platformsTable.name,
+    })
+    .from(reciterTaskFlowRulesTable)
+    .innerJoin(platformPagesTable, eq(reciterTaskFlowRulesTable.pageId, platformPagesTable.id))
+    .innerJoin(platformsTable, eq(platformPagesTable.platformId, platformsTable.id))
+    .where(eq(reciterTaskFlowRulesTable.reciterId, newReciterId));
+  const enabledRules = rules.filter((rule) => rule.enabled && rule.platformId !== parent.platformId);
+  const ruleIds = enabledRules.map((rule) => rule.ruleId);
+  const assigneeRows = ruleIds.length > 0
+    ? await db
+      .select({
+        ruleId: reciterTaskFlowRuleAssigneesTable.ruleId,
+        memberId: reciterTaskFlowRuleAssigneesTable.memberId,
+      })
+      .from(reciterTaskFlowRuleAssigneesTable)
+      .where(inArray(reciterTaskFlowRuleAssigneesTable.ruleId, ruleIds))
+    : [];
+  const assigneeRuleIds = new Set(assigneeRows.map((row) => row.ruleId));
+  const pagesWithoutAssignees = enabledRules
+    .filter((rule) => !assigneeRuleIds.has(rule.ruleId))
+    .map((rule) => ({
+      pageId: rule.pageId,
+      pageName: rule.pageName,
+      platformName: rule.platformName,
+    }));
+
+  return {
+    parentTaskId,
+    currentReciterId: parent.reciterId,
+    newReciterId,
+    totalChildren: children.length,
+    deletableChildren: safeChildren.length,
+    protectedChildren: protectedChildren.length,
+    deletableChildIds: safeChildren.map((child) => Number(child.childTaskId)),
+    protectedChildIds: protectedChildren.map((child) => Number(child.childTaskId)),
+    newReciterRulesConfigured: rules.length > 0,
+    enabledPagesCount: enabledRules.length,
+    pagesWithoutAssignees,
+    pagesWithoutAssigneesCount: pagesWithoutAssignees.length,
+  };
+}
+
+async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentUser: any, req: any) {
+  const [parent] = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      description: tasksTable.description,
+      platformId: tasksTable.platformId,
+      platformName: platformsTable.name,
+      reciterId: tasksTable.reciterId,
+      reciterName: recitersTable.name,
+      priority: tasksTable.priority,
+      startDate: tasksTable.startDate,
+      dueDate: tasksTable.dueDate,
+      pageId: tasksTable.pageId,
+    })
+    .from(tasksTable)
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(and(eq(tasksTable.id, parentTaskId), isNull(tasksTable.deletedAt)))
+    .limit(1);
+
+  if (!parent?.reciterId || !parent.reciterName || !isApplicationPlatformName(parent.platformName)) {
+    return { created: [], skipped: [{ reason: "invalid_parent" }] };
+  }
+  const flowDate = normalizeDate(parent.dueDate ?? parent.startDate);
+  const flowDateKey = taskDateKey(flowDate);
+  if (!flowDate || !flowDateKey) return { created: [], skipped: [{ reason: "invalid_date" }] };
+
+  const rules = await db
+    .select({
+      ruleId: reciterTaskFlowRulesTable.id,
+      pageId: reciterTaskFlowRulesTable.pageId,
+      enabled: reciterTaskFlowRulesTable.enabled,
+      pageName: platformPagesTable.name,
+      pageReciterId: platformPagesTable.reciterId,
+      platformId: platformPagesTable.platformId,
+      platformName: platformsTable.name,
+    })
+    .from(reciterTaskFlowRulesTable)
+    .innerJoin(platformPagesTable, eq(reciterTaskFlowRulesTable.pageId, platformPagesTable.id))
+    .innerJoin(platformsTable, eq(platformPagesTable.platformId, platformsTable.id))
+    .where(eq(reciterTaskFlowRulesTable.reciterId, parent.reciterId));
+  const enabledRules = rules.filter((rule) => rule.enabled && rule.platformId !== parent.platformId);
+  if (rules.length === 0) return { created: [], skipped: [{ reason: "rules_not_configured" }] };
+
+  const defaultRows = enabledRules.length > 0
+    ? await db
+      .select({
+        ruleId: reciterTaskFlowRuleAssigneesTable.ruleId,
+        memberId: reciterTaskFlowRuleAssigneesTable.memberId,
+      })
+      .from(reciterTaskFlowRuleAssigneesTable)
+      .where(inArray(reciterTaskFlowRuleAssigneesTable.ruleId, enabledRules.map((rule) => rule.ruleId)))
+    : [];
+  const defaultAssigneesByRuleId = new Map<number, number[]>();
+  for (const row of defaultRows) {
+    if (!defaultAssigneesByRuleId.has(row.ruleId)) defaultAssigneesByRuleId.set(row.ruleId, []);
+    defaultAssigneesByRuleId.get(row.ruleId)!.push(row.memberId);
+  }
+
+  const created: Array<{ taskId: number; platformName: string; pageName: string }> = [];
+  const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }> = [];
+  const batchKey = `task-flow-change-${parent.id}-${Date.now()}`;
+  for (const rule of enabledRules) {
+    if (rule.pageReciterId !== parent.reciterId) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "invalid_page" });
+      continue;
+    }
+    const allowedRows = await db.select({ memberId: pageMembersTable.memberId }).from(pageMembersTable).where(eq(pageMembersTable.pageId, rule.pageId));
+    const allowedMemberIds = new Set(allowedRows.map((row) => row.memberId));
+    const memberIds = [...new Set(defaultAssigneesByRuleId.get(rule.ruleId) ?? [])].filter((memberId) => allowedMemberIds.has(memberId));
+    if (memberIds.length === 0) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "no_assignee" });
+      continue;
+    }
+    const [existingLink] = await db
+      .select({ id: taskFlowLinksTable.id, childTaskId: taskFlowLinksTable.childTaskId })
+      .from(taskFlowLinksTable)
+      .where(and(
+        eq(taskFlowLinksTable.parentTaskId, parent.id),
+        eq(taskFlowLinksTable.targetPageId, rule.pageId),
+        eq(taskFlowLinksTable.flowDate, flowDate),
+      ))
+      .limit(1);
+    if (existingLink) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
+      continue;
+    }
+    const childTitle = `${rule.platformName} — ${parent.reciterName}`;
+    const similarTasks = await db
+      .select({ id: tasksTable.id, title: tasksTable.title })
+      .from(tasksTable)
+      .where(and(
+        isNull(tasksTable.deletedAt),
+        eq(tasksTable.reciterId, parent.reciterId),
+        eq(tasksTable.platformId, rule.platformId),
+        eq(tasksTable.pageId, rule.pageId),
+        sql`${tasksTable.dueDate}::date = ${flowDateKey}::date`,
+      ));
+    const duplicateTask = similarTasks.find((task) => taskFlowTitleMatches(task.title, childTitle));
+    if (duplicateTask) {
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate", existingTaskId: duplicateTask.id });
+      continue;
+    }
+
+    try {
+      const childTask = await db.transaction(async (tx) => {
+        const [newTask] = await tx.insert(tasksTable).values({
+          source: "admin_created",
+          title: childTitle,
+          description: parent.description,
+          platformId: rule.platformId,
+          memberId: memberIds[0],
+          reciterId: parent.reciterId,
+          status: "pending",
+          priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
+          progress: 0,
+          startDate: flowDate,
+          endDate: null,
+          dueDate: flowDate,
+          recurrence: "none",
+          recurrenceIntervalDays: null,
+          recurrenceDurationDays: null,
+          recurrenceDays: null,
+          weeklyQuotaRequired: null,
+          weeklyQuotaPeriodStart: null,
+          weeklyQuotaPeriodEnd: null,
+          pageId: rule.pageId,
+        }).returning();
+        await syncTaskMembersUsing(tx, newTask.id, memberIds);
+        await tx.insert(taskFlowLinksTable).values({
+          parentTaskId: parent.id,
+          childTaskId: newTask.id,
+          reciterId: parent.reciterId!,
+          sourcePageId: parent.pageId ?? null,
+          targetPageId: rule.pageId,
+          targetPlatformId: rule.platformId,
+          flowDate,
+          batchKey,
+          createdByUserId: currentUser?.id ?? null,
+        });
+        return newTask;
+      });
+      created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName });
+      await logActivity(req, "task_flow_child_created", "task", childTask.id, childTask.title, {
+        parentTaskId: parent.id,
+        targetPageId: rule.pageId,
+        targetPlatformId: rule.platformId,
+        flowChangeRegeneration: true,
+      });
+      await notifyTaskAssigned(childTask.id, childTask.title, memberIds).catch(() => {});
+    } catch (error: any) {
+      const code = String(error?.code ?? "");
+      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: code === "23505" ? "duplicate" : "create_failed" });
+    }
+  }
+  return { created, skipped };
 }
 
 async function fetchTaskForPermission(taskId: number) {
@@ -896,6 +1168,90 @@ router.get("/tasks", async (req, res) => {
   }));
 
   res.json(result);
+});
+
+router.get("/tasks/:id/flow-change-impact", async (req, res) => {
+  const id = Number(req.params.id);
+  const newReciterId = Number(req.query.newReciterId);
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(newReciterId) || newReciterId <= 0) {
+    res.status(400).json({ error: "Invalid task id or reciter id" });
+    return;
+  }
+  const currentUser = (req as any).currentUser;
+  if (currentUser?.role !== "admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  const impact = await buildFlowChangeImpact(id, newReciterId);
+  if (!impact) {
+    res.status(404).json({ error: "Task not found or not an application task" });
+    return;
+  }
+  res.json(impact);
+});
+
+router.post("/tasks/:id/flow-change-action", async (req, res) => {
+  const id = Number(req.params.id);
+  const newReciterId = Number(req.body?.newReciterId);
+  const action = req.body?.action as FlowChangeAction | undefined;
+  if (!Number.isInteger(id) || id <= 0 || !Number.isInteger(newReciterId) || newReciterId <= 0) {
+    res.status(400).json({ error: "Invalid task id or reciter id" });
+    return;
+  }
+  if (action !== "delete_safe_children" && action !== "delete_safe_and_regenerate" && action !== "keep_children") {
+    res.status(400).json({ error: "Invalid flow change action" });
+    return;
+  }
+  const currentUser = (req as any).currentUser;
+  if (currentUser?.role !== "admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const [reciter] = await db.select({ id: recitersTable.id }).from(recitersTable).where(eq(recitersTable.id, newReciterId)).limit(1);
+  if (!reciter) {
+    res.status(400).json({ error: "Invalid reciterId" });
+    return;
+  }
+
+  const impact = await buildFlowChangeImpact(id, newReciterId);
+  if (!impact) {
+    res.status(404).json({ error: "Task not found or not an application task" });
+    return;
+  }
+
+  if (action === "delete_safe_children" || action === "delete_safe_and_regenerate") {
+    if (impact.deletableChildIds.length > 0) {
+      await db.update(tasksTable)
+        .set({ deletedAt: new Date() })
+        .where(inArray(tasksTable.id, impact.deletableChildIds));
+    }
+  }
+
+  await db.update(tasksTable)
+    .set({ reciterId: newReciterId })
+    .where(eq(tasksTable.id, id));
+
+  const regenerated = action === "delete_safe_and_regenerate"
+    ? await createFlowChildrenFromDefaultRules(id, currentUser, req)
+    : { created: [], skipped: [] };
+
+  await logActivity(req, "task_flow_change_action", "task", id, null, {
+    action,
+    newReciterId,
+    deletedChildren: action === "keep_children" ? 0 : impact.deletableChildIds.length,
+    protectedChildren: impact.protectedChildren,
+    regeneratedCreated: regenerated.created.length,
+    regeneratedSkipped: regenerated.skipped.length,
+  });
+
+  res.json({
+    action,
+    deletedChildIds: action === "keep_children" ? [] : impact.deletableChildIds,
+    protectedChildIds: impact.protectedChildIds,
+    regenerated,
+    impact,
+  });
 });
 
 router.post("/tasks/:id/flow-children", async (req, res) => {
@@ -1508,6 +1864,13 @@ router.patch("/tasks/:id/quick-reciter", async (req, res) => {
     res.status(404).json({ error: "Member not found" });
     return;
   }
+  if ((req.body as any).flowChangeAcknowledged !== true) {
+    const impact = await buildFlowChangeImpact(id, reciterId);
+    if (impact && impact.totalChildren > 0) {
+      res.status(409).json({ error: "flow_change_required", impact });
+      return;
+    }
+  }
 
   const oldMemberIds = currentTask.memberIds ?? [currentTask.memberId];
   const oldMemberRows = oldMemberIds.length > 0
@@ -1640,6 +2003,20 @@ router.put("/tasks/:id", async (req, res) => {
   }
   const canApplySeriesScope = currentUser?.role === "admin" && Boolean(currentTask.seriesId);
   const updateScope: TaskUpdateScope = canApplySeriesScope ? requestedUpdateScope : "single";
+  const requestedReciterId = "reciterId" in body ? body.reciterId ?? null : currentTask.reciterId ?? null;
+  if (
+    currentUser?.role === "admin" &&
+    "reciterId" in body &&
+    requestedReciterId &&
+    requestedReciterId !== currentTask.reciterId &&
+    (req.body as any).flowChangeAcknowledged !== true
+  ) {
+    const impact = await buildFlowChangeImpact(id, requestedReciterId);
+    if (impact && impact.totalChildren > 0) {
+      res.status(409).json({ error: "flow_change_required", impact });
+      return;
+    }
+  }
 
   const updateData: Record<string, unknown> = {};
   let weeklyQuotaRequired: number | null | undefined;
