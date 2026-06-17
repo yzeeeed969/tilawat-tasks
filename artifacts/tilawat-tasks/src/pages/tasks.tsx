@@ -672,6 +672,7 @@ type TaskFlowPreviewItem = {
 };
 type TaskFlowCreateResult = {
   parentTaskId?: number;
+  traceId?: string;
   created: Array<{ taskId: number; platformName: string; pageName: string }>;
   skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }>;
 };
@@ -4116,21 +4117,45 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         } as any,
       });
 
+      const traceId = `task-flow-${parentTask.id}-${Date.now()}`;
+      const assignments = taskFlowPreview.map((item) => ({
+        pageId: item.pageId,
+        memberIds: item.memberIds,
+      }));
+      console.info("[task-flow-create] flow-children request", {
+        traceId,
+        parentTaskId: parentTask.id,
+        assignments,
+      });
       const response = await fetch(`/api/tasks/${parentTask.id}/flow-children`, {
         method: "POST",
         credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          assignments: taskFlowPreview.map((item) => ({
-            pageId: item.pageId,
-            memberIds: item.memberIds,
-          })),
-        }),
+        headers: { "Content-Type": "application/json", "X-Task-Flow-Trace-Id": traceId },
+        body: JSON.stringify({ assignments }),
+      });
+      const responseText = await response.text();
+      let result: TaskFlowCreateResult;
+      try {
+        result = responseText ? JSON.parse(responseText) : { created: [], skipped: [] };
+      } catch (parseError) {
+        console.error("[task-flow-create] flow-children non-json response", {
+          traceId,
+          parentTaskId: parentTask.id,
+          status: response.status,
+          responseText,
+          parseError,
+        });
+        throw parseError;
+      }
+      console.info("[task-flow-create] flow-children response", {
+        traceId,
+        parentTaskId: parentTask.id,
+        status: response.status,
+        result,
       });
       if (!response.ok) {
         throw new Error(`Flow children request failed: ${response.status}`);
       }
-      const result = (await response.json()) as TaskFlowCreateResult;
       setTaskFlowCreateResult({ ...result, parentTaskId: parentTask.id });
       invalidateTasks();
       queryClient.invalidateQueries({ queryKey: ["page-members"] });

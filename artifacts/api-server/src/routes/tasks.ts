@@ -1281,17 +1281,28 @@ router.post("/tasks/:id/flow-change-action", async (req, res) => {
 
 router.post("/tasks/:id/flow-children", async (req, res) => {
   const id = Number(req.params.id);
+  const traceIdHeader = req.headers["x-task-flow-trace-id"];
+  const traceId = typeof traceIdHeader === "string" && traceIdHeader.trim()
+    ? traceIdHeader.trim()
+    : `task-flow-${id || "invalid"}-${Date.now()}`;
   if (!Number.isInteger(id) || id <= 0) {
+    req.log?.warn?.({ traceId, parentTaskId: req.params.id }, "task_flow_children_invalid_task_id");
     res.status(400).json({ error: "Invalid task id" });
     return;
   }
 
   const currentUser = (req as any).currentUser;
   if (currentUser?.role !== "admin") {
+    req.log?.warn?.({ traceId, parentTaskId: id, role: currentUser?.role ?? null }, "task_flow_children_forbidden");
     res.status(403).json({ error: "Forbidden" });
     return;
   }
   const assignmentInput = Array.isArray(req.body?.assignments) ? req.body.assignments : [];
+  req.log?.info?.({
+    traceId,
+    parentTaskId: id,
+    assignmentInputCount: assignmentInput.length,
+  }, "task_flow_children_start");
   const requestedAssigneesByPageId = new Map<number, number[]>();
   for (const item of assignmentInput) {
     const pageId = Number(item?.pageId);
@@ -1328,14 +1339,22 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     .limit(1);
 
   if (!parent) {
+    req.log?.warn?.({ traceId, parentTaskId: id }, "task_flow_children_parent_not_found");
     res.status(404).json({ error: "Task not found" });
     return;
   }
   if (!isApplicationPlatformName(parent.platformName)) {
+    req.log?.warn?.({
+      traceId,
+      parentTaskId: parent.id,
+      platformId: parent.platformId,
+      platformName: parent.platformName,
+    }, "task_flow_children_parent_not_application");
     res.status(400).json({ error: "Task flow can only start from the application platform" });
     return;
   }
   if (!parent.reciterId || !parent.reciterName) {
+    req.log?.warn?.({ traceId, parentTaskId: parent.id, reciterId: parent.reciterId }, "task_flow_children_parent_missing_reciter");
     res.status(400).json({ error: "Parent task must have a reciter" });
     return;
   }
@@ -1343,6 +1362,12 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
   const flowDate = normalizeDate(parent.dueDate ?? parent.startDate);
   const flowDateKey = taskDateKey(flowDate);
   if (!flowDate || !flowDateKey) {
+    req.log?.warn?.({
+      traceId,
+      parentTaskId: parent.id,
+      dueDate: parent.dueDate,
+      startDate: parent.startDate,
+    }, "task_flow_children_parent_invalid_date");
     res.status(400).json({ error: "Parent task must have a valid date" });
     return;
   }
@@ -1364,12 +1389,26 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
 
   const enabledRules = rules.filter((rule) => rule.enabled && rule.platformId !== parent.platformId);
   if (rules.length === 0) {
-    res.json({ created: [], skipped: [{ reason: "rules_not_configured" }] });
+    const skipped = [{ reason: "rules_not_configured" }];
+    req.log?.info?.({
+      traceId,
+      parentTaskId: parent.id,
+      reciterId: parent.reciterId,
+      rulesCount: 0,
+      enabledRulesCount: 0,
+      createdCount: 0,
+      skipped,
+    }, "task_flow_children_response");
+    res.json({ traceId, created: [], skipped });
     return;
   }
 
   const created: Array<{ taskId: number; platformName: string; pageName: string }> = [];
   const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }> = [];
+  const pushSkipped = (entry: { pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }) => {
+    skipped.push(entry);
+    req.log?.info?.({ traceId, parentTaskId: parent.id, ...entry }, "task_flow_child_skipped");
+  };
   const batchKey = `task-flow-${parent.id}-${Date.now()}`;
   const enabledRuleIds = enabledRules.map((rule) => rule.ruleId);
   const defaultAssigneeRows = enabledRuleIds.length > 0
@@ -1386,10 +1425,20 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     if (!defaultAssigneesByRuleId.has(row.ruleId)) defaultAssigneesByRuleId.set(row.ruleId, []);
     defaultAssigneesByRuleId.get(row.ruleId)!.push(row.memberId);
   }
+  req.log?.info?.({
+    traceId,
+    parentTaskId: parent.id,
+    reciterId: parent.reciterId,
+    flowDate: flowDate.toISOString(),
+    requestedAssignmentPagesCount: requestedAssigneesByPageId.size,
+    rulesCount: rules.length,
+    enabledRulesCount: enabledRules.length,
+    defaultAssigneeRowsCount: defaultAssigneeRows.length,
+  }, "task_flow_children_rules_loaded");
 
   for (const rule of enabledRules) {
     if (rule.pageReciterId !== parent.reciterId) {
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "invalid_page" });
+      pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "invalid_page" });
       continue;
     }
 
@@ -1402,20 +1451,40 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       ? requestedAssigneesByPageId.get(rule.pageId) ?? []
       : defaultAssigneesByRuleId.get(rule.ruleId) ?? [];
     const memberIds = [...new Set(requestedMemberIds)];
+    req.log?.info?.({
+      traceId,
+      parentTaskId: parent.id,
+      pageId: rule.pageId,
+      pageName: rule.pageName,
+      platformId: rule.platformId,
+      platformName: rule.platformName,
+      allowedMemberIds: [...allowedMemberIds],
+      requestedMemberIds,
+      memberIds,
+      assignmentSource: requestedAssigneesByPageId.has(rule.pageId) ? "request" : "default_rule",
+    }, "task_flow_child_candidate");
     if (memberIds.some((memberId) => !allowedMemberIds.has(memberId))) {
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "invalid_assignee" });
+      pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "invalid_assignee" });
       continue;
     }
     if (memberIds.length === 0) {
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "no_assignee" });
+      pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "no_assignee" });
       continue;
     }
 
     const existingLink = await findExistingFlowLink(parent.id, rule.pageId, flowDate);
     const canReplaceExistingLink = Boolean(existingLink?.childDeletedAt);
     if (existingLink && !canReplaceExistingLink) {
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
+      pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
       continue;
+    }
+    if (existingLink && canReplaceExistingLink) {
+      req.log?.info?.({
+        traceId,
+        parentTaskId: parent.id,
+        pageId: rule.pageId,
+        existingTaskId: existingLink.childTaskId,
+      }, "task_flow_child_replacing_deleted_link");
     }
 
     const childTitle = `${rule.platformName} — ${parent.reciterName}`;
@@ -1431,11 +1500,19 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       ));
     const duplicateTask = similarTasks.find((task) => taskFlowTitleMatches(task.title, childTitle));
     if (duplicateTask) {
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate", existingTaskId: duplicateTask.id });
+      pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate", existingTaskId: duplicateTask.id });
       continue;
     }
 
     try {
+      req.log?.info?.({
+        traceId,
+        parentTaskId: parent.id,
+        pageId: rule.pageId,
+        platformId: rule.platformId,
+        memberIds,
+        childTitle,
+      }, "task_flow_child_create_attempt");
       const childTask = await db.transaction(async (tx) => {
         const [newTask] = await tx.insert(tasksTable).values({
           source: "admin_created",
@@ -1490,15 +1567,64 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       });
 
       created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName });
+      const taskMemberRows = await db
+        .select({ memberId: taskMembersTable.memberId })
+        .from(taskMembersTable)
+        .where(eq(taskMembersTable.taskId, childTask.id));
+      const [taskRow] = await db
+        .select({
+          id: tasksTable.id,
+          deletedAt: tasksTable.deletedAt,
+          status: tasksTable.status,
+          dueDate: tasksTable.dueDate,
+          platformId: tasksTable.platformId,
+          pageId: tasksTable.pageId,
+          reciterId: tasksTable.reciterId,
+          memberId: tasksTable.memberId,
+        })
+        .from(tasksTable)
+        .where(eq(tasksTable.id, childTask.id))
+        .limit(1);
+      req.log?.info?.({
+        traceId,
+        parentTaskId: parent.id,
+        taskId: childTask.id,
+        taskRow,
+        taskMemberIds: taskMemberRows.map((row) => row.memberId),
+      }, "task_flow_child_created_verified");
       await logActivity(req, "task_flow_child_created", "task", childTask.id, childTask.title, {
         parentTaskId: parent.id,
         targetPageId: rule.pageId,
         targetPlatformId: rule.platformId,
       });
-      await notifyTaskAssigned(childTask.id, childTask.title, memberIds).catch(() => {});
+      try {
+        await notifyTaskAssigned(childTask.id, childTask.title, memberIds);
+        req.log?.info?.({
+          traceId,
+          parentTaskId: parent.id,
+          taskId: childTask.id,
+          memberIds,
+        }, "task_flow_child_notification_attempted");
+      } catch (notifyError: any) {
+        req.log?.warn?.({
+          traceId,
+          parentTaskId: parent.id,
+          taskId: childTask.id,
+          memberIds,
+          message: notifyError?.message,
+        }, "task_flow_child_notification_failed");
+      }
     } catch (error: any) {
       const code = String(error?.code ?? "");
-      skipped.push({
+      req.log?.error?.({
+        traceId,
+        parentTaskId: parent.id,
+        pageId: rule.pageId,
+        platformName: rule.platformName,
+        code,
+        message: error?.message,
+      }, "task_flow_child_create_failed");
+      pushSkipped({
         pageId: rule.pageId,
         platformName: rule.platformName,
         pageName: rule.pageName,
@@ -1507,7 +1633,15 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     }
   }
 
-  res.status(201).json({ created, skipped });
+  req.log?.info?.({
+    traceId,
+    parentTaskId: parent.id,
+    createdCount: created.length,
+    skippedCount: skipped.length,
+    created,
+    skipped,
+  }, "task_flow_children_response");
+  res.status(201).json({ traceId, created, skipped });
 });
 
 router.post("/tasks", async (req, res) => {
