@@ -674,6 +674,7 @@ const TASK_FORM_STABILITY_MODE = false;
 const USE_SAFE_PHASE_ONE_TASK_FORM = true;
 const ENABLE_MEMBER_CREATED_TASKS = true;
 const ENABLE_TASK_DEPENDENCIES = true;
+const TASK_FLOW_DIAGNOSTIC_VERSION = "70004571-menu";
 type TaskFlowPreviewItem = {
   key: string;
   platformId: number;
@@ -1526,6 +1527,13 @@ function TaskFlowActionMenuItems({
 
   return (
     <>
+      <DropdownMenuItem disabled className="whitespace-normal opacity-100">
+        <span className="flex min-w-0 flex-col gap-1 text-xs leading-4">
+          <span className="font-semibold text-foreground">تشخيص المهام التابعة</span>
+          <span className="text-muted-foreground">{reasonText}</span>
+          <span dir="ltr" className="text-[10px] text-muted-foreground">{debugText}</span>
+        </span>
+      </DropdownMenuItem>
       <DropdownMenuItem
         disabled={!eligibility.canShow}
         onClick={eligibility.canShow ? onOpen : undefined}
@@ -1539,11 +1547,6 @@ function TaskFlowActionMenuItems({
           )}
         </span>
       </DropdownMenuItem>
-      {!eligibility.canShow && (
-        <DropdownMenuItem disabled className="whitespace-normal text-[10px] leading-4 text-muted-foreground opacity-100">
-          <span dir="ltr">{debugText}</span>
-        </DropdownMenuItem>
-      )}
     </>
   );
 }
@@ -5337,6 +5340,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               <div className="min-w-0">
                 <h2 className="text-2xl font-bold tracking-tight text-foreground">المهام</h2>
                 <p className="mt-1 text-sm text-muted-foreground">إدارة ومتابعة مهام الفريق</p>
+                <p className="mt-1 text-[11px] font-semibold text-amber-700">نسخة تشخيص المهام التابعة: {TASK_FLOW_DIAGNOSTIC_VERSION}</p>
                 {view === "list" && activeTab === "active" && (
                   <p className="mt-2 inline-flex rounded-full border border-sidebar-primary/20 bg-sidebar-primary/5 px-2.5 py-1 text-xs font-semibold text-sidebar-primary">
                     يعرض {adminListShown} من {adminListTotal} مهمة
@@ -5439,6 +5443,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           <p className="text-muted-foreground mt-2">
             {!isAdmin ? "مهامك المسندة إليك — ضع علامة ✓ عند إتمام كل مهمة" : "إدارة ومتابعة مهام الفريق"}
           </p>
+          {isAdmin && (
+            <p className="mt-1 text-xs font-semibold text-amber-700">نسخة تشخيص المهام التابعة: {TASK_FLOW_DIAGNOSTIC_VERSION}</p>
+          )}
         </div>
 
         {/* View toggle + create */}
