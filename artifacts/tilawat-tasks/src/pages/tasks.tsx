@@ -698,6 +698,22 @@ type TaskFlowCreateResult = {
   created: Array<{ taskId: number; platformName: string; pageName: string; memberIds?: number[]; memberNames?: string[] }>;
   skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; memberIds?: number[]; memberNames?: string[] }>;
 };
+type TaskFlowActionEligibility = {
+  canShow: boolean;
+  reasons: string[];
+  debug: {
+    taskId: number | null;
+    isAdmin: boolean;
+    deletedAt: unknown;
+    platformId: number | null;
+    platformName: string | null;
+    platformNameFallback: string | null;
+    sourcePlatformId: number | null;
+    sourcePlatformName: string | null;
+    reciterId: number | null;
+    reciterName: string | null;
+  };
+};
 type FlowChangeAction = "delete_safe_children" | "delete_safe_and_regenerate" | "keep_children";
 type FlowChangeImpact = {
   parentTaskId: number;
@@ -1356,7 +1372,7 @@ function AdminTaskMobileCard({
   onManageProofs,
   onDuplicate,
   onFlowChildren,
-  canFlowChildren,
+  flowEligibility,
   onStatusChange,
   onDelete,
 }: {
@@ -1372,7 +1388,7 @@ function AdminTaskMobileCard({
   onManageProofs: () => void;
   onDuplicate: () => void;
   onFlowChildren: () => void;
-  canFlowChildren: boolean;
+  flowEligibility: TaskFlowActionEligibility;
   onStatusChange: (status: TaskStatus) => void;
   onDelete: () => void;
 }) {
@@ -1467,11 +1483,7 @@ function AdminTaskMobileCard({
             <DropdownMenuItem onClick={onDuplicate} className="cursor-pointer flex items-center gap-2">
               <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
             </DropdownMenuItem>
-            {canFlowChildren && (
-              <DropdownMenuItem onClick={onFlowChildren} className="cursor-pointer flex items-center gap-2">
-                <Layers className="h-4 w-4 text-sidebar-primary" />المهام التابعة
-              </DropdownMenuItem>
-            )}
+            <TaskFlowActionMenuItems eligibility={flowEligibility} onOpen={onFlowChildren} />
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onStatusChange("pending")} className="cursor-pointer flex items-center gap-2">
               <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
@@ -1487,6 +1499,52 @@ function AdminTaskMobileCard({
         </DropdownMenu>
       </div>
     </div>
+  );
+}
+
+function TaskFlowActionMenuItems({
+  eligibility,
+  onOpen,
+}: {
+  eligibility: TaskFlowActionEligibility;
+  onOpen: () => void;
+}) {
+  const reasonText = eligibility.reasons.join("، ") || "جاهزة";
+  const debug = eligibility.debug;
+  const debugText = [
+    `taskId=${debug.taskId ?? "null"}`,
+    `isAdmin=${debug.isAdmin}`,
+    `deletedAt=${debug.deletedAt ? String(debug.deletedAt) : "null"}`,
+    `platformId=${debug.platformId ?? "null"}`,
+    `platform.name=${debug.platformName ?? "null"}`,
+    `platformName=${debug.platformNameFallback ?? "null"}`,
+    `sourcePlatformId=${debug.sourcePlatformId ?? "null"}`,
+    `sourcePlatformName=${debug.sourcePlatformName ?? "null"}`,
+    `reciterId=${debug.reciterId ?? "null"}`,
+    `reciter.name=${debug.reciterName ?? "null"}`,
+  ].join(" | ");
+
+  return (
+    <>
+      <DropdownMenuItem
+        disabled={!eligibility.canShow}
+        onClick={eligibility.canShow ? onOpen : undefined}
+        className="cursor-pointer flex items-start gap-2"
+      >
+        <Layers className="mt-0.5 h-4 w-4 text-sidebar-primary" />
+        <span className="flex min-w-0 flex-col">
+          <span>المهام التابعة</span>
+          {!eligibility.canShow && (
+            <span className="text-[10px] leading-4 text-muted-foreground">{reasonText}</span>
+          )}
+        </span>
+      </DropdownMenuItem>
+      {!eligibility.canShow && (
+        <DropdownMenuItem disabled className="whitespace-normal text-[10px] leading-4 text-muted-foreground opacity-100">
+          <span dir="ltr">{debugText}</span>
+        </DropdownMenuItem>
+      )}
+    </>
   );
 }
 
@@ -3370,7 +3428,7 @@ function ReciterGroupedView({
   filterMosque,
   onEdit,
   onFlowChildren,
-  canFlowChildren,
+  getFlowEligibility,
   onDelete,
   onStatusChange,
   updateTaskPending,
@@ -3381,7 +3439,7 @@ function ReciterGroupedView({
   filterMosque: string;
   onEdit: (t: TaskWithDetails) => void;
   onFlowChildren: (t: TaskWithDetails) => void;
-  canFlowChildren: (t: TaskWithDetails) => boolean;
+  getFlowEligibility: (t: TaskWithDetails) => TaskFlowActionEligibility;
   onDelete: (id: number) => void;
   onStatusChange: (id: number, status: TaskStatus) => void;
   updateTaskPending: boolean;
@@ -3465,7 +3523,7 @@ function ReciterGroupedView({
                     tasks={reciterTasks}
                     onEdit={onEdit}
                     onFlowChildren={onFlowChildren}
-                    canFlowChildren={canFlowChildren}
+                    getFlowEligibility={getFlowEligibility}
                     onDelete={onDelete}
                     onStatusChange={onStatusChange}
                     updateTaskPending={updateTaskPending}
@@ -3491,7 +3549,7 @@ function ReciterGroupedView({
               tasks={grouped["none"]["none"]}
               onEdit={onEdit}
               onFlowChildren={onFlowChildren}
-              canFlowChildren={canFlowChildren}
+              getFlowEligibility={getFlowEligibility}
               onDelete={onDelete}
               onStatusChange={onStatusChange}
               updateTaskPending={updateTaskPending}
@@ -3508,7 +3566,7 @@ function ReciterTaskCard({
   tasks,
   onEdit,
   onFlowChildren,
-  canFlowChildren,
+  getFlowEligibility,
   onDelete,
   onStatusChange,
   updateTaskPending,
@@ -3517,7 +3575,7 @@ function ReciterTaskCard({
   tasks: TaskWithDetails[];
   onEdit: (t: TaskWithDetails) => void;
   onFlowChildren: (t: TaskWithDetails) => void;
-  canFlowChildren: (t: TaskWithDetails) => boolean;
+  getFlowEligibility: (t: TaskWithDetails) => TaskFlowActionEligibility;
   onDelete: (id: number) => void;
   onStatusChange: (id: number, status: TaskStatus) => void;
   updateTaskPending: boolean;
@@ -3613,11 +3671,7 @@ function ReciterTaskCard({
                           <DropdownMenuItem onClick={() => onEdit(task)} className="cursor-pointer flex items-center gap-2">
                             <Pencil className="h-4 w-4 text-sidebar-primary" />تعديل
                           </DropdownMenuItem>
-                          {canFlowChildren(task) && (
-                            <DropdownMenuItem onClick={() => onFlowChildren(task)} className="cursor-pointer flex items-center gap-2">
-                              <Layers className="h-4 w-4 text-sidebar-primary" />المهام التابعة
-                            </DropdownMenuItem>
-                          )}
+                          <TaskFlowActionMenuItems eligibility={getFlowEligibility(task)} onOpen={() => onFlowChildren(task)} />
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => onStatusChange(task.id, "pending")} className="cursor-pointer flex items-center gap-2">
                             <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
@@ -4047,6 +4101,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     () => new Set((platforms ?? []).filter((platform) => isTaskFlowSourcePlatformName((platform as any).name)).map((platform) => platform.id)),
     [platforms]
   );
+  const taskFlowSourcePlatform = useMemo(
+    () => (platforms ?? []).find((platform) => isTaskFlowSourcePlatformName((platform as any).name)) ?? null,
+    [platforms]
+  );
 
   const isTaskFlowSourceTask = (task: TaskWithDetails | null | undefined) => {
     const platformId = taskPlatformId(task);
@@ -4205,15 +4263,48 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     setTaskFlowCreateResult(null);
   };
 
+  const getTaskFlowActionEligibility = (task: TaskWithDetails | null | undefined): TaskFlowActionEligibility => {
+    const taskId = toPositiveNumber((task as any)?.id);
+    const platformId = taskPlatformId(task);
+    const platformName = ((task as any)?.platform?.name ?? null) as string | null;
+    const platformNameFallback = ((task as any)?.platformName ?? null) as string | null;
+    const reciterId = taskReciterId(task);
+    const reciterName = ((task as any)?.reciter?.name ?? (task as any)?.reciterName ?? null) as string | null;
+    const deletedAt = (task as any)?.deletedAt ?? null;
+    const sourcePlatformId = taskFlowSourcePlatform?.id ?? null;
+    const sourcePlatformName = taskFlowSourcePlatform?.name ?? null;
+    const isSourcePlatform = isTaskFlowSourceTask(task);
+    const reasons: string[] = [];
+
+    if (!isAdmin) reasons.push("المستخدم ليس مديرًا");
+    if (!taskId) reasons.push("لا يوجد taskId");
+    if (deletedAt) reasons.push("المهمة محذوفة");
+    if (!platformId && !platformName && !platformNameFallback) reasons.push("لا توجد بيانات منصة على المهمة");
+    if (!isSourcePlatform) {
+      reasons.push(sourcePlatformId ? "platformId غير مطابق لمنصة تطبيق تلاوات الحرمين" : "لم يتم العثور على منصة تطبيق تلاوات الحرمين في قائمة المنصات");
+    }
+    if (!reciterId) reasons.push("لا يوجد قارئ");
+
+    return {
+      canShow: reasons.length === 0,
+      reasons,
+      debug: {
+        taskId,
+        isAdmin,
+        deletedAt,
+        platformId,
+        platformName,
+        platformNameFallback,
+        sourcePlatformId,
+        sourcePlatformName,
+        reciterId,
+        reciterName,
+      },
+    };
+  };
+
   const canShowTaskFlowAction = (task: TaskWithDetails | null | undefined) => {
-    return Boolean(
-      isAdmin &&
-      task &&
-      toPositiveNumber((task as any).id) &&
-      !(task as any).deletedAt &&
-      isTaskFlowSourceTask(task) &&
-      taskReciterId(task)
-    );
+    return getTaskFlowActionEligibility(task).canShow;
   };
 
   const canUseSavedTaskFlow = canShowTaskFlowAction;
@@ -6582,7 +6673,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           filterMosque={filterMosque}
           onEdit={openEditDialog}
           onFlowChildren={openFlowChildrenDialog}
-          canFlowChildren={canShowTaskFlowAction}
+          getFlowEligibility={getTaskFlowActionEligibility}
           onDelete={handleDelete}
           onStatusChange={handleStatusChange}
           updateTaskPending={updateTask.isPending}
@@ -6770,7 +6861,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     onManageProofs={() => openProofsDialog(task)}
                     onDuplicate={() => handleDuplicate(task.id)}
                     onFlowChildren={() => openFlowChildrenDialog(task)}
-                    canFlowChildren={canShowTaskFlowAction(task)}
+                    flowEligibility={getTaskFlowActionEligibility(task)}
                     onStatusChange={(status) => handleStatusChange(task.id, status)}
                     onDelete={() => handleDelete(task.id)}
                   />
@@ -6914,11 +7005,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               <DropdownMenuItem onClick={() => handleDuplicate(task.id)} className="cursor-pointer flex items-center gap-2">
                                 <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
                               </DropdownMenuItem>
-                              {canShowTaskFlowAction(task) && (
-                                <DropdownMenuItem onClick={() => openFlowChildrenDialog(task)} className="cursor-pointer flex items-center gap-2">
-                                  <Layers className="h-4 w-4 text-sidebar-primary" />المهام التابعة
-                                </DropdownMenuItem>
-                              )}
+                              <TaskFlowActionMenuItems eligibility={getTaskFlowActionEligibility(task)} onOpen={() => openFlowChildrenDialog(task)} />
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => handleStatusChange(task.id, "pending")} className="cursor-pointer flex items-center gap-2">
                                 <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
