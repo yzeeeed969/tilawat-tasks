@@ -922,14 +922,17 @@ function TaskFlowPreviewPanel({
 }) {
   if (!canPreview) return null;
   const readyItemsCount = items?.filter((item) => item.warnings.length === 0).length ?? 0;
+  const parentTaskMembers = parentTask
+    ? ((parentTask.members && parentTask.members.length > 0 ? parentTask.members : [parentTask.member]).filter(Boolean) as Array<{ id: number; name: string }>)
+    : [];
 
   return (
     <div className="space-y-3 rounded-md border border-dashed border-sidebar-primary/30 bg-sidebar-primary/5 p-3">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="space-y-1">
-          <p className="text-sm font-semibold text-foreground">تدفق بيانات إضافة المهام</p>
+          <p className="text-sm font-semibold text-foreground">إنشاء المهام التابعة</p>
           <p className="text-xs leading-5 text-muted-foreground">
-            معاينة فقط للمنصات التابعة لهذا القارئ، دون إنشاء أو حفظ أي مهمة.
+            اقترح مهام المنصات التابعة من المهمة الأصلية المحفوظة، ثم اعتمد إنشاء العناصر الجاهزة فقط.
           </p>
         </div>
         <Button type="button" variant="outline" size="sm" onClick={onPreview} disabled={loading}>
@@ -948,6 +951,7 @@ function TaskFlowPreviewPanel({
           <div><span className="font-medium text-foreground">تاريخ الاستحقاق: </span>{taskDateKey((parentTask as any).dueDate) || "غير محدد"}</div>
           <div><span className="font-medium text-foreground">تاريخ البداية: </span>{taskDateKey((parentTask as any).startDate) || "غير محدد"}</div>
           <div><span className="font-medium text-foreground">تاريخ النهاية: </span>{taskDateKey((parentTask as any).endDate) || "غير محدد"}</div>
+          <div><span className="font-medium text-foreground">المسؤولون الحاليون: </span>{parentTaskMembers.map((member) => member.name).join("، ") || "غير محدد"}</div>
         </div>
       )}
 
@@ -1332,6 +1336,8 @@ function AdminTaskMobileCard({
   onProof,
   onManageProofs,
   onDuplicate,
+  onFlowChildren,
+  canFlowChildren,
   onStatusChange,
   onDelete,
 }: {
@@ -1346,6 +1352,8 @@ function AdminTaskMobileCard({
   onProof: () => void;
   onManageProofs: () => void;
   onDuplicate: () => void;
+  onFlowChildren: () => void;
+  canFlowChildren: boolean;
   onStatusChange: (status: TaskStatus) => void;
   onDelete: () => void;
 }) {
@@ -1440,6 +1448,11 @@ function AdminTaskMobileCard({
             <DropdownMenuItem onClick={onDuplicate} className="cursor-pointer flex items-center gap-2">
               <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
             </DropdownMenuItem>
+            {canFlowChildren && (
+              <DropdownMenuItem onClick={onFlowChildren} className="cursor-pointer flex items-center gap-2">
+                <Layers className="h-4 w-4 text-sidebar-primary" />المهام التابعة
+              </DropdownMenuItem>
+            )}
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onStatusChange("pending")} className="cursor-pointer flex items-center gap-2">
               <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
@@ -3337,6 +3350,8 @@ function ReciterGroupedView({
   filterPlatform,
   filterMosque,
   onEdit,
+  onFlowChildren,
+  canFlowChildren,
   onDelete,
   onStatusChange,
   updateTaskPending,
@@ -3346,6 +3361,8 @@ function ReciterGroupedView({
   filterPlatform: string;
   filterMosque: string;
   onEdit: (t: TaskWithDetails) => void;
+  onFlowChildren: (t: TaskWithDetails) => void;
+  canFlowChildren: (t: TaskWithDetails) => boolean;
   onDelete: (id: number) => void;
   onStatusChange: (id: number, status: TaskStatus) => void;
   updateTaskPending: boolean;
@@ -3428,6 +3445,8 @@ function ReciterGroupedView({
                     reciter={reciter}
                     tasks={reciterTasks}
                     onEdit={onEdit}
+                    onFlowChildren={onFlowChildren}
+                    canFlowChildren={canFlowChildren}
                     onDelete={onDelete}
                     onStatusChange={onStatusChange}
                     updateTaskPending={updateTaskPending}
@@ -3452,6 +3471,8 @@ function ReciterGroupedView({
               reciter={undefined}
               tasks={grouped["none"]["none"]}
               onEdit={onEdit}
+              onFlowChildren={onFlowChildren}
+              canFlowChildren={canFlowChildren}
               onDelete={onDelete}
               onStatusChange={onStatusChange}
               updateTaskPending={updateTaskPending}
@@ -3467,6 +3488,8 @@ function ReciterTaskCard({
   reciter,
   tasks,
   onEdit,
+  onFlowChildren,
+  canFlowChildren,
   onDelete,
   onStatusChange,
   updateTaskPending,
@@ -3474,6 +3497,8 @@ function ReciterTaskCard({
   reciter: Reciter | undefined;
   tasks: TaskWithDetails[];
   onEdit: (t: TaskWithDetails) => void;
+  onFlowChildren: (t: TaskWithDetails) => void;
+  canFlowChildren: (t: TaskWithDetails) => boolean;
   onDelete: (id: number) => void;
   onStatusChange: (id: number, status: TaskStatus) => void;
   updateTaskPending: boolean;
@@ -3569,6 +3594,11 @@ function ReciterTaskCard({
                           <DropdownMenuItem onClick={() => onEdit(task)} className="cursor-pointer flex items-center gap-2">
                             <Pencil className="h-4 w-4 text-sidebar-primary" />تعديل
                           </DropdownMenuItem>
+                          {canFlowChildren(task) && (
+                            <DropdownMenuItem onClick={() => onFlowChildren(task)} className="cursor-pointer flex items-center gap-2">
+                              <Layers className="h-4 w-4 text-sidebar-primary" />المهام التابعة
+                            </DropdownMenuItem>
+                          )}
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => onStatusChange(task.id, "pending")} className="cursor-pointer flex items-center gap-2">
                             <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
@@ -3642,6 +3672,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [activeTab, setActiveTab] = useState<"active" | "trash">("active");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskWithDetails | null>(null);
+  const [flowDialogTask, setFlowDialogTask] = useState<TaskWithDetails | null>(null);
   const [editTaskScope, setEditTaskScope] = useState<EditTaskScope>("series");
   const [urlDialog, setUrlDialog] = useState<UrlDialogState | null>(null);
   const [proofsDialogTaskId, setProofsDialogTaskId] = useState<number | null>(null);
@@ -4154,6 +4185,14 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       isApplicationPlatformName(task.platform?.name) &&
       taskReciterId(task)
     );
+  };
+
+  const openFlowChildrenDialog = (task: TaskWithDetails) => {
+    if (!canUseSavedTaskFlow(task)) return;
+    setTaskFlowPreview(null);
+    setTaskFlowPreviewError(null);
+    setTaskFlowCreateResult(null);
+    setFlowDialogTask(task);
   };
 
   const handlePreviewSavedTaskFlow = async (task: TaskWithDetails) => {
@@ -5695,6 +5734,59 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         </DialogContent>
       </Dialog>
 
+      {/* Task flow children dialog */}
+      {isAdmin && (
+        <Dialog open={!!flowDialogTask} onOpenChange={(open) => {
+          if (!open) {
+            setFlowDialogTask(null);
+            setTaskFlowPreview(null);
+            setTaskFlowPreviewError(null);
+            setTaskFlowCreateResult(null);
+          }
+        }}>
+          <DialogContent className="sm:max-w-[640px] flex flex-col max-h-[90vh] p-0" dir="rtl">
+            <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
+              <DialogTitle className="text-xl font-bold">المهام التابعة</DialogTitle>
+            </DialogHeader>
+            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
+              {flowDialogTask && (
+                <>
+                  <div className="rounded-lg border bg-muted/30 p-3 text-sm leading-6">
+                    <div className="mb-2 font-bold text-foreground">المهمة الأصلية</div>
+                    <div><span className="font-medium">العنوان: </span>{flowDialogTask.title}</div>
+                    <div><span className="font-medium">المنصة الأصلية: </span>{flowDialogTask.platform?.name ?? "غير محددة"}</div>
+                    <div><span className="font-medium">القارئ: </span>{(flowDialogTask as any).reciter?.name ?? "غير محدد"}</div>
+                    <div><span className="font-medium">تاريخ الاستحقاق: </span>{taskDateKey((flowDialogTask as any).dueDate) || "غير محدد"}</div>
+                    <div><span className="font-medium">تاريخ البداية: </span>{taskDateKey((flowDialogTask as any).startDate) || "غير محدد"}</div>
+                    <div><span className="font-medium">تاريخ النهاية: </span>{taskDateKey((flowDialogTask as any).endDate) || "غير محدد"}</div>
+                    <div><span className="font-medium">الصلاة: </span>{extractAppPrayerFromTitle(flowDialogTask.title) ?? "غير محددة في العنوان"}</div>
+                    <div>
+                      <span className="font-medium">المسؤولون الحاليون: </span>
+                      {((flowDialogTask.members && flowDialogTask.members.length > 0 ? flowDialogTask.members : [flowDialogTask.member]).filter(Boolean) as Array<{ id: number; name: string }>)
+                        .map((member) => member.name)
+                        .join("، ") || "غير محدد"}
+                    </div>
+                  </div>
+
+                  <TaskFlowPreviewPanel
+                    canPreview={canUseSavedTaskFlow(flowDialogTask)}
+                    loading={taskFlowPreviewLoading}
+                    error={taskFlowPreviewError}
+                    items={taskFlowPreview}
+                    parentTask={flowDialogTask}
+                    onPreview={() => handlePreviewSavedTaskFlow(flowDialogTask)}
+                    creating={taskFlowCreatePending}
+                    createResult={taskFlowCreateResult}
+                    onCreateChildren={() => handleCreateSavedTaskFlowChildren(flowDialogTask)}
+                    onAssigneesChange={handleTaskFlowAssigneesChange}
+                  />
+                </>
+              )}
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
       {/* Edit dialog — مدير فقط */}
       {isAdmin && (
         <Dialog open={!!editingTask} onOpenChange={(open) => {
@@ -5758,28 +5850,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                         excludeTaskId={editingTask?.id}
                       />
-                    )}
-                    {canUseSavedTaskFlow(editingTask) && (
-                      <div className="space-y-2 rounded-lg border border-sidebar-primary/20 bg-sidebar-primary/5 p-3">
-                        <div>
-                          <h3 className="text-sm font-bold text-sidebar-foreground">المهام التابعة</h3>
-                          <p className="text-xs leading-5 text-muted-foreground">
-                            تظهر هذه الخيارات بعد حفظ المهمة الأصلية فقط، وتستخدم رقم المهمة المحفوظ عند إنشاء التوابع.
-                          </p>
-                        </div>
-                        <TaskFlowPreviewPanel
-                          canPreview
-                          loading={taskFlowPreviewLoading}
-                          error={taskFlowPreviewError}
-                          items={taskFlowPreview}
-                          parentTask={editingTask}
-                          onPreview={() => editingTask && handlePreviewSavedTaskFlow(editingTask)}
-                          creating={taskFlowCreatePending}
-                          createResult={taskFlowCreateResult}
-                          onCreateChildren={() => editingTask && handleCreateSavedTaskFlowChildren(editingTask)}
-                          onAssigneesChange={handleTaskFlowAssigneesChange}
-                        />
-                      </div>
                     )}
                   </form>
                 </Form>
@@ -6480,6 +6550,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           filterPlatform={filterPlatform}
           filterMosque={filterMosque}
           onEdit={openEditDialog}
+          onFlowChildren={openFlowChildrenDialog}
+          canFlowChildren={canUseSavedTaskFlow}
           onDelete={handleDelete}
           onStatusChange={handleStatusChange}
           updateTaskPending={updateTask.isPending}
@@ -6666,6 +6738,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     onProof={() => openUrlDialog(task)}
                     onManageProofs={() => openProofsDialog(task)}
                     onDuplicate={() => handleDuplicate(task.id)}
+                    onFlowChildren={() => openFlowChildrenDialog(task)}
+                    canFlowChildren={canUseSavedTaskFlow(task)}
                     onStatusChange={(status) => handleStatusChange(task.id, status)}
                     onDelete={() => handleDelete(task.id)}
                   />
@@ -6809,6 +6883,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               <DropdownMenuItem onClick={() => handleDuplicate(task.id)} className="cursor-pointer flex items-center gap-2">
                                 <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
                               </DropdownMenuItem>
+                              {canUseSavedTaskFlow(task) && (
+                                <DropdownMenuItem onClick={() => openFlowChildrenDialog(task)} className="cursor-pointer flex items-center gap-2">
+                                  <Layers className="h-4 w-4 text-sidebar-primary" />المهام التابعة
+                                </DropdownMenuItem>
+                              )}
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => handleStatusChange(task.id, "pending")} className="cursor-pointer flex items-center gap-2">
                                 <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
