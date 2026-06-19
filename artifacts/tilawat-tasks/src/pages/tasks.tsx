@@ -673,8 +673,11 @@ type TaskFlowPreviewItem = {
 type TaskFlowCreateResult = {
   parentTaskId?: number;
   traceId?: string;
-  created: Array<{ taskId: number; platformName: string; pageName: string }>;
-  skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }>;
+  apiCalled?: boolean;
+  requestStatus?: number;
+  error?: string;
+  created: Array<{ taskId: number; platformName: string; pageName: string; memberIds?: number[]; memberNames?: string[] }>;
+  skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; memberIds?: number[]; memberNames?: string[] }>;
 };
 type FlowChangeAction = "delete_safe_children" | "delete_safe_and_regenerate" | "keep_children";
 type FlowChangeImpact = {
@@ -995,6 +998,55 @@ function TaskFlowPreviewPanel({
                 </div>
               );
             })
+          )}
+
+          {createResult && (
+            <div className={cn(
+              "space-y-2 rounded-md border px-3 py-2 text-xs leading-5",
+              createResult.apiCalled === false
+                ? "border-red-200 bg-red-50 text-red-900"
+                : "border-green-200 bg-green-50 text-green-900"
+            )}>
+              <div className="font-semibold">
+                {createResult.apiCalled === false ? "لم يتم إرسال طلب إنشاء المهام التابعة." : "تم استدعاء API بنجاح."}
+              </div>
+              {createResult.error && (
+                <div><span className="font-medium">السبب: </span>{createResult.error}</div>
+              )}
+              {createResult.traceId && (
+                <div className="break-all"><span className="font-medium">traceId: </span><code>{createResult.traceId}</code></div>
+              )}
+              {createResult.requestStatus !== undefined && (
+                <div><span className="font-medium">HTTP status: </span>{createResult.requestStatus}</div>
+              )}
+              <div className="font-semibold">المهام المنشأة: {createResult.created.length}</div>
+              <div className="font-semibold">العناصر المتخطاة: {createResult.skipped.length}</div>
+              {createResult.created.length > 0 && (
+                <div className="space-y-1">
+                  <div className="font-medium">المهام المنشأة:</div>
+                  {createResult.created.map((item) => (
+                    <div key={item.taskId} className="rounded border border-green-200 bg-white/60 px-2 py-1">
+                      <div>{item.platformName} - {item.pageName}</div>
+                      <div>taskId: {item.taskId}</div>
+                      <div>المسؤولون: {item.memberNames?.length ? item.memberNames.join("، ") : item.memberIds?.length ? item.memberIds.join(", ") : "غير معروف"}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+              {createResult.skipped.length > 0 && (
+                <div className="space-y-1">
+                  <div className="font-medium">العناصر المتخطاة:</div>
+                  {createResult.skipped.map((item, index) => (
+                    <div key={`${item.pageId ?? item.platformName ?? "skipped"}-${index}`} className="rounded border border-amber-200 bg-white/60 px-2 py-1">
+                      <div>{item.platformName ?? "منصة غير معروفة"} - {item.pageName ?? "صفحة غير معروفة"}</div>
+                      <div>السبب: {item.reason}</div>
+                      {item.existingTaskId && <div>existingTaskId: {item.existingTaskId}</div>}
+                      <div>المسؤولون: {item.memberNames?.length ? item.memberNames.join("، ") : item.memberIds?.length ? item.memberIds.join(", ") : "غير معروف"}</div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           )}
 
           {createResult && (
@@ -4065,28 +4117,58 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const handleCreateTaskFlowChildren = async (data: TaskFormValues) => {
-    if (!canPreviewTaskFlow || !taskFlowPreview?.some((item) => item.warnings.length === 0)) return;
+    const showTaskFlowNotSent = (error: string) => {
+      setTaskFlowCreateResult({
+        apiCalled: false,
+        error,
+        created: [],
+        skipped: [],
+      });
+      toast({ title: "لم يتم إرسال طلب إنشاء المهام التابعة", description: error, variant: "destructive" });
+    };
+
+    if (!canPreviewTaskFlow) {
+      showTaskFlowNotSent("الزر غير جاهز: منصة التطبيق أو القارئ غير محددين، أو المستخدم ليس مديرًا.");
+      return;
+    }
+    if (!taskFlowPreview || taskFlowPreview.length === 0) {
+      showTaskFlowNotSent("لا توجد عناصر معاينة جاهزة لإرسالها.");
+      return;
+    }
+    if (!taskFlowPreview.some((item) => item.warnings.length === 0)) {
+      showTaskFlowNotSent("لا توجد عناصر جاهزة للإنشاء؛ كل عناصر المعاينة تحتوي تحذيرات.");
+      return;
+    }
     if ((data.seriesType && data.seriesType !== "temporary") || (data.recurrence && data.recurrence !== "none") || data.endDate) {
+      showTaskFlowNotSent("اعتماد التدفق متاح للمهمة الحالية فقط، وليس للنطاقات أو السلاسل.");
       toast({ title: "اعتماد التدفق متاح للمهمة الحالية فقط، وليس للنطاقات أو السلاسل.", variant: "destructive" });
       return;
     }
     if (!data.platformId || !data.memberIds?.length || !data.startDate || Number.isNaN(new Date(data.startDate).getTime())) {
+      showTaskFlowNotSent("بيانات المهمة الأصلية غير مكتملة: المنصة أو المسؤول أو التاريخ ناقص.");
       toast({ title: "أكمل بيانات المهمة الأصلية قبل الاعتماد", variant: "destructive" });
       return;
     }
     const confirmed = window.confirm("سيتم إنشاء المهمة الأصلية أولًا، ثم إنشاء المهام التابعة الجاهزة فقط. هل تريد المتابعة؟");
-    if (!confirmed) return;
+    if (!confirmed) {
+      showTaskFlowNotSent("تم إلغاء التأكيد قبل إرسال الطلب.");
+      return;
+    }
 
     const selectedPlatform = platforms?.find((p) => p.id === data.platformId);
     const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
     const reciter = reciters?.find((r) => r.id === data.reciterId);
     if (!isApplicationPlatform || !data.reciterId || !data.appPrayer) {
+      showTaskFlowNotSent("يجب اختيار تطبيق تلاوات الحرمين والقارئ والصلاة قبل الاعتماد.");
       toast({ title: "اختر تطبيق تلاوات الحرمين والقارئ والصلاة قبل الاعتماد", variant: "destructive" });
       return;
     }
 
     setTaskFlowCreatePending(true);
     setIsCreateSubmitting(true);
+    let apiRequestStarted = false;
+    let activeTraceId: string | undefined;
+    let activeRequestStatus: number | undefined;
     try {
       const pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, data.memberIds);
       const taskDate = new Date(data.startDate).toISOString();
@@ -4118,6 +4200,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       });
 
       const traceId = `task-flow-${parentTask.id}-${Date.now()}`;
+      activeTraceId = traceId;
       const assignments = taskFlowPreview.map((item) => ({
         pageId: item.pageId,
         memberIds: item.memberIds,
@@ -4127,12 +4210,14 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         parentTaskId: parentTask.id,
         assignments,
       });
+      apiRequestStarted = true;
       const response = await fetch(`/api/tasks/${parentTask.id}/flow-children`, {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json", "X-Task-Flow-Trace-Id": traceId },
         body: JSON.stringify({ assignments }),
       });
+      activeRequestStatus = response.status;
       const responseText = await response.text();
       let result: TaskFlowCreateResult;
       try {
@@ -4156,7 +4241,34 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       if (!response.ok) {
         throw new Error(`Flow children request failed: ${response.status}`);
       }
-      setTaskFlowCreateResult({ ...result, parentTaskId: parentTask.id });
+      const previewForResult = (entry: { pageId?: number; platformName?: string; pageName?: string }) =>
+        taskFlowPreview.find((item) =>
+          (entry.pageId && item.pageId === entry.pageId) ||
+          (item.platformName === entry.platformName && item.pageName === entry.pageName)
+        );
+      setTaskFlowCreateResult({
+        ...result,
+        apiCalled: true,
+        requestStatus: response.status,
+        traceId: result.traceId ?? traceId,
+        parentTaskId: parentTask.id,
+        created: result.created.map((item) => {
+          const previewItem = previewForResult(item);
+          return {
+            ...item,
+            memberIds: previewItem?.memberIds,
+            memberNames: previewItem?.memberNames,
+          };
+        }),
+        skipped: result.skipped.map((item) => {
+          const previewItem = previewForResult(item);
+          return {
+            ...item,
+            memberIds: previewItem?.memberIds,
+            memberNames: previewItem?.memberNames,
+          };
+        }),
+      });
       invalidateTasks();
       queryClient.invalidateQueries({ queryKey: ["page-members"] });
       toast({
@@ -4165,6 +4277,14 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       });
     } catch (error) {
       console.error("[task-flow-create] failed to create flow children", { error, data });
+      setTaskFlowCreateResult({
+        apiCalled: apiRequestStarted,
+        traceId: activeTraceId,
+        requestStatus: activeRequestStatus,
+        error: error instanceof Error ? error.message : "حدث خطأ غير معروف أثناء اعتماد التدفق.",
+        created: [],
+        skipped: [],
+      });
       toast({ title: "تعذر اعتماد وإنشاء المهام التابعة", variant: "destructive" });
     } finally {
       setTaskFlowCreatePending(false);
