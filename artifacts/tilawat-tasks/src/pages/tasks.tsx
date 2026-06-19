@@ -883,11 +883,26 @@ function taskDateKey(value: unknown) {
   return format(date, "yyyy-MM-dd");
 }
 
+function buildFlowChildPreviewTitle(parentTask: TaskWithDetails, targetPlatformName: string) {
+  const sourcePlatformName = parentTask.platform?.name;
+  const title = String(parentTask.title ?? "").trim();
+  if (title) {
+    if (sourcePlatformName && title.includes(sourcePlatformName)) {
+      return title.replace(sourcePlatformName, targetPlatformName);
+    }
+    const parts = title.split(/\s+—\s+/).map((part) => part.trim()).filter(Boolean);
+    if (parts.length >= 2) return [...parts.slice(0, -1), targetPlatformName].join(" — ");
+  }
+  const reciterName = (parentTask as any).reciter?.name;
+  return [extractAppPrayerFromTitle(parentTask.title), reciterName, targetPlatformName].filter(Boolean).join(" — ") || targetPlatformName;
+}
+
 function TaskFlowPreviewPanel({
   canPreview,
   loading,
   error,
   items,
+  parentTask,
   onPreview,
   creating,
   createResult,
@@ -898,6 +913,7 @@ function TaskFlowPreviewPanel({
   loading: boolean;
   error: string | null;
   items: TaskFlowPreviewItem[] | null;
+  parentTask?: TaskWithDetails | null;
   onPreview: () => void;
   creating: boolean;
   createResult: TaskFlowCreateResult | null;
@@ -921,6 +937,19 @@ function TaskFlowPreviewPanel({
           اقتراح مهام المنصات التابعة لهذا القارئ
         </Button>
       </div>
+
+      {parentTask && (
+        <div className="rounded-md border bg-background px-3 py-2 text-xs leading-5 text-muted-foreground">
+          <div className="font-semibold text-foreground">بيانات المهمة الأصلية المحفوظة</div>
+          <div><span className="font-medium text-foreground">العنوان: </span>{parentTask.title}</div>
+          <div><span className="font-medium text-foreground">المنصة الأصلية: </span>{parentTask.platform?.name ?? "غير محددة"}</div>
+          <div><span className="font-medium text-foreground">القارئ: </span>{(parentTask as any).reciter?.name ?? "غير محدد"}</div>
+          <div><span className="font-medium text-foreground">الصلاة: </span>{extractAppPrayerFromTitle(parentTask.title) ?? "غير محددة في العنوان"}</div>
+          <div><span className="font-medium text-foreground">تاريخ الاستحقاق: </span>{taskDateKey((parentTask as any).dueDate) || "غير محدد"}</div>
+          <div><span className="font-medium text-foreground">تاريخ البداية: </span>{taskDateKey((parentTask as any).startDate) || "غير محدد"}</div>
+          <div><span className="font-medium text-foreground">تاريخ النهاية: </span>{taskDateKey((parentTask as any).endDate) || "غير محدد"}</div>
+        </div>
+      )}
 
       {error && (
         <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
@@ -4116,6 +4145,188 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     setTaskFlowCreateResult(null);
   };
 
+  const canUseSavedTaskFlow = (task: TaskWithDetails | null | undefined) => {
+    return Boolean(
+      isAdmin &&
+      !isAdminMemberPreview &&
+      task &&
+      !(task as any).deletedAt &&
+      isApplicationPlatformName(task.platform?.name) &&
+      taskReciterId(task)
+    );
+  };
+
+  const handlePreviewSavedTaskFlow = async (task: TaskWithDetails) => {
+    if (!canUseSavedTaskFlow(task)) return;
+    const sourcePlatformId = taskPlatformId(task);
+    const reciterId = taskReciterId(task);
+    const reciterName = (task as any).reciter?.name ?? "";
+    const dueDate = taskDateKey((task as any).dueDate ?? (task as any).startDate);
+    if (!sourcePlatformId || !reciterId || !dueDate) {
+      setTaskFlowPreview([]);
+      setTaskFlowPreviewError("المهمة الأصلية المحفوظة لا تحتوي منصة أو قارئًا أو تاريخ استحقاق صالحًا.");
+      return;
+    }
+
+    setTaskFlowPreviewLoading(true);
+    setTaskFlowPreviewError(null);
+    setTaskFlowCreateResult(null);
+
+    try {
+      const rulesResponse = await fetch(`/api/reciters/${reciterId}/task-flow-rules`, { credentials: "include" });
+      if (!rulesResponse.ok) throw new Error("Failed to load reciter task flow rules");
+      const rulesPayload = (await rulesResponse.json()) as {
+        configured?: boolean;
+        rules?: Array<{
+          pageId: number;
+          enabled: boolean;
+          defaultAssigneeIds?: number[];
+          pageMembers?: Array<{ id: number; name: string }>;
+          page: { id: number; name?: string | null; platformId: number };
+          platform: { id: number; name: string };
+        }>;
+      };
+
+      if (!rulesPayload.configured) {
+        setTaskFlowPreview([]);
+        setTaskFlowPreviewError("قواعد تدفق المهام لهذا القارئ غير مهيأة. اضبطها من صفحة القراء أولًا.");
+        return;
+      }
+
+      const loadedTasks = (dependencyCandidateTasks ?? rawTasks ?? []).filter((item) => item.id !== task.id);
+      const previewItems: TaskFlowPreviewItem[] = [];
+      const enabledRules = (rulesPayload.rules ?? []).filter((rule) =>
+        rule.enabled &&
+        rule.platform.id !== sourcePlatformId
+      );
+
+      for (const rule of enabledRules) {
+        const pageMemberOptions = rule.pageMembers ?? [];
+        const allowedMemberIds = new Set(pageMemberOptions.map((member) => member.id));
+        const memberIds = [...new Set(rule.defaultAssigneeIds ?? [])].filter((memberId) => allowedMemberIds.has(memberId));
+        const memberNames = pageMemberOptions
+          .filter((member) => memberIds.includes(member.id))
+          .map((member) => member.name);
+        const title = buildFlowChildPreviewTitle(task, rule.platform.name);
+        const normalizedTitle = normalizeTaskPreviewTitle(title);
+        const duplicateTask = loadedTasks.find((candidate) => {
+          const candidateDate = taskDateKey((candidate as any).dueDate ?? (candidate as any).startDate);
+          const candidateTitle = normalizeTaskPreviewTitle((candidate as any).title);
+          const titleMatches =
+            candidateTitle === normalizedTitle ||
+            (candidateTitle.length > 0 && normalizedTitle.includes(candidateTitle)) ||
+            (normalizedTitle.length > 0 && candidateTitle.includes(normalizedTitle));
+          return (
+            taskPlatformId(candidate) === rule.platform.id &&
+            taskReciterId(candidate) === reciterId &&
+            taskPageId(candidate) === rule.page.id &&
+            candidateDate === dueDate &&
+            titleMatches
+          );
+        });
+        const warnings: string[] = [];
+        if (pageMemberOptions.length === 0) warnings.push("تحذير: لا يوجد أعضاء مرتبطون بهذه الصفحة.");
+        if (memberIds.length === 0) warnings.push("تحذير: لم يتم اختيار مسؤول لهذه المهمة.");
+        if (duplicateTask) warnings.push(`تحذير: توجد مهمة مشابهة مسبقًا #${duplicateTask.id}.`);
+
+        previewItems.push({
+          key: `${rule.platform.id}-${rule.page.id}`,
+          platformId: rule.platform.id,
+          platformName: rule.platform.name,
+          pageId: rule.page.id,
+          pageName: rule.page.name ?? `صفحة #${rule.page.id}`,
+          reciterName,
+          memberIds,
+          memberNames,
+          pageMemberOptions,
+          dueDate,
+          title,
+          warnings,
+          existingTaskId: duplicateTask?.id,
+        });
+      }
+
+      setTaskFlowPreview(previewItems);
+      if (previewItems.length === 0) {
+        setTaskFlowPreviewError("لا توجد صفحات مفعلة في قواعد تدفق المهام لهذا القارئ.");
+      }
+    } catch (error) {
+      console.error("[task-flow-preview] failed to generate saved-task preview", error);
+      setTaskFlowPreview(null);
+      setTaskFlowPreviewError("تعذر توليد معاينة مهام المنصات التابعة. حدث الصفحة ثم حاول مرة أخرى.");
+    } finally {
+      setTaskFlowPreviewLoading(false);
+    }
+  };
+
+  const handleCreateSavedTaskFlowChildren = async (task: TaskWithDetails) => {
+    if (!canUseSavedTaskFlow(task)) {
+      setTaskFlowCreateResult({ apiCalled: false, error: "هذه الميزة متاحة للمدير فقط ولمهام تطبيق تلاوات الحرمين المحفوظة التي لها قارئ.", created: [], skipped: [] });
+      return;
+    }
+    if (!taskFlowPreview || taskFlowPreview.length === 0) {
+      setTaskFlowCreateResult({ apiCalled: false, error: "لا توجد عناصر معاينة جاهزة لإرسالها.", created: [], skipped: [] });
+      return;
+    }
+    if (!taskFlowPreview.some((item) => item.warnings.length === 0)) {
+      setTaskFlowCreateResult({ apiCalled: false, error: "لا توجد عناصر جاهزة للإنشاء؛ كل عناصر المعاينة تحتوي تحذيرات.", created: [], skipped: [] });
+      return;
+    }
+
+    setTaskFlowCreatePending(true);
+    const traceId = `task-flow-${task.id}-${Date.now()}`;
+    try {
+      const assignments = taskFlowPreview.map((item) => ({ pageId: item.pageId, memberIds: item.memberIds }));
+      const response = await fetch(`/api/tasks/${task.id}/flow-children`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json", "X-Task-Flow-Trace-Id": traceId },
+        body: JSON.stringify({ assignments }),
+      });
+      const responseText = await response.text();
+      const result = responseText ? JSON.parse(responseText) as TaskFlowCreateResult : { created: [], skipped: [] };
+      if (!response.ok) throw new Error(`Flow children request failed: ${response.status}`);
+
+      const previewForResult = (entry: { pageId?: number; platformName?: string; pageName?: string }) =>
+        taskFlowPreview.find((item) =>
+          (entry.pageId && item.pageId === entry.pageId) ||
+          (item.platformName === entry.platformName && item.pageName === entry.pageName)
+        );
+
+      setTaskFlowCreateResult({
+        ...result,
+        apiCalled: true,
+        requestStatus: response.status,
+        traceId: result.traceId ?? traceId,
+        parentTaskId: task.id,
+        created: result.created.map((item) => {
+          const previewItem = previewForResult(item);
+          return { ...item, memberIds: previewItem?.memberIds, memberNames: previewItem?.memberNames };
+        }),
+        skipped: result.skipped.map((item) => {
+          const previewItem = previewForResult(item);
+          return { ...item, memberIds: previewItem?.memberIds, memberNames: previewItem?.memberNames };
+        }),
+      });
+      await invalidateTasks();
+      toast({
+        title: `تم إنشاء ${result.created.length} مهمة تابعة`,
+        description: result.skipped.length > 0 ? `تم تخطي ${result.skipped.length} عنصر.` : undefined,
+      });
+    } catch (error) {
+      console.error("[task-flow-create] failed to create saved-task flow children", { error, taskId: task.id });
+      setTaskFlowCreateResult({
+        apiCalled: true,
+        traceId,
+        error: error instanceof Error ? error.message : "حدث خطأ غير معروف أثناء اعتماد التدفق.",
+        created: [],
+        skipped: [],
+      });
+    } finally {
+      setTaskFlowCreatePending(false);
+    }
+  };
+
   const handleCreateTaskFlowChildren = async (data: TaskFormValues) => {
     const showTaskFlowNotSent = (error: string) => {
       setTaskFlowCreateResult({
@@ -4333,6 +4544,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       console.info("[tasks-dialog] edit defaults", defaultValues);
       editForm.reset(defaultValues);
       setEditTaskScope((task as any).seriesId ? "series" : "single");
+      setTaskFlowPreview(null);
+      setTaskFlowPreviewError(null);
+      setTaskFlowCreateResult(null);
       setEditingTask(task);
     } catch (error) {
       console.error("[tasks-dialog] failed to prepare edit form", {
@@ -5190,21 +5404,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             reciters={reciters}
                             allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                             showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
-                            taskFlowPreviewSlot={
-                              isAdmin ? (
-                                <TaskFlowPreviewPanel
-                                  canPreview={canPreviewTaskFlow}
-                                  loading={taskFlowPreviewLoading}
-                                  error={taskFlowPreviewError}
-                                  items={taskFlowPreview}
-                                  onPreview={handlePreviewTaskFlow}
-                                  creating={taskFlowCreatePending}
-                                  createResult={taskFlowCreateResult}
-                                  onCreateChildren={createForm.handleSubmit(handleCreateTaskFlowChildren)}
-                                  onAssigneesChange={handleTaskFlowAssigneesChange}
-                                />
-                              ) : null
-                            }
                           />
                         ) : (
                           <TaskFormFields
@@ -5225,9 +5424,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                       type="button"
                       onClick={createForm.handleSubmit(onCreateSubmit)}
                       className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
-                      disabled={isCreateSubmitting || createTask.isPending || taskFlowCreatePending || Boolean(taskFlowCreateResult)}
+                      disabled={isCreateSubmitting || createTask.isPending}
                     >
-                      {(isCreateSubmitting || createTask.isPending || taskFlowCreatePending) && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                      {(isCreateSubmitting || createTask.isPending) && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
                       حفظ المهمة
                     </Button>
                   </div>
@@ -5498,7 +5697,14 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
       {/* Edit dialog — مدير فقط */}
       {isAdmin && (
-        <Dialog open={!!editingTask} onOpenChange={(open) => { if (!open) setEditingTask(null); }}>
+        <Dialog open={!!editingTask} onOpenChange={(open) => {
+          if (!open) {
+            setEditingTask(null);
+            setTaskFlowPreview(null);
+            setTaskFlowPreviewError(null);
+            setTaskFlowCreateResult(null);
+          }
+        }}>
           <DialogContent className="sm:max-w-[480px] flex flex-col max-h-[90vh] p-0" dir="rtl">
             <TaskDialogErrorBoundary
               dialogName="تعديل المهمة"
@@ -5552,6 +5758,28 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                         excludeTaskId={editingTask?.id}
                       />
+                    )}
+                    {canUseSavedTaskFlow(editingTask) && (
+                      <div className="space-y-2 rounded-lg border border-sidebar-primary/20 bg-sidebar-primary/5 p-3">
+                        <div>
+                          <h3 className="text-sm font-bold text-sidebar-foreground">المهام التابعة</h3>
+                          <p className="text-xs leading-5 text-muted-foreground">
+                            تظهر هذه الخيارات بعد حفظ المهمة الأصلية فقط، وتستخدم رقم المهمة المحفوظ عند إنشاء التوابع.
+                          </p>
+                        </div>
+                        <TaskFlowPreviewPanel
+                          canPreview
+                          loading={taskFlowPreviewLoading}
+                          error={taskFlowPreviewError}
+                          items={taskFlowPreview}
+                          parentTask={editingTask}
+                          onPreview={() => editingTask && handlePreviewSavedTaskFlow(editingTask)}
+                          creating={taskFlowCreatePending}
+                          createResult={taskFlowCreateResult}
+                          onCreateChildren={() => editingTask && handleCreateSavedTaskFlowChildren(editingTask)}
+                          onAssigneesChange={handleTaskFlowAssigneesChange}
+                        />
+                      </div>
                     )}
                   </form>
                 </Form>
