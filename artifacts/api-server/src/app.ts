@@ -9,7 +9,7 @@ import { logger } from "./lib/logger";
 const app: Express = express();
 const clientDistDir = path.resolve(process.cwd(), "artifacts/tilawat-tasks/dist/public");
 const clientIndexPath = path.join(clientDistDir, "index.html");
-// Railway watches the API service, so this marker forces rebuilds that include frontend assets. task-flow-app-pages-deploy-20260615
+// Railway watches the API service, so this marker forces rebuilds that include frontend assets. task-flow-cache-diagnostic-deploy-20260619
 const SESSION_COOKIE_NAME = "sid";
 const SESSION_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
 

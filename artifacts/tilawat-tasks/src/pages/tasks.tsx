@@ -674,7 +674,7 @@ const TASK_FORM_STABILITY_MODE = false;
 const USE_SAFE_PHASE_ONE_TASK_FORM = true;
 const ENABLE_MEMBER_CREATED_TASKS = true;
 const ENABLE_TASK_DEPENDENCIES = true;
-const TASK_FLOW_DIAGNOSTIC_VERSION = "70004571-menu";
+const TASK_FLOW_DIAGNOSTIC_VERSION = "cache-fix-20260619";
 type TaskFlowPreviewItem = {
   key: string;
   platformId: number;
