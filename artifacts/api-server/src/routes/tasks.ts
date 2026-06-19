@@ -436,6 +436,22 @@ function taskFlowTitleMatches(a: string, b: string) {
   return Boolean(left && right && (left === right || left.includes(right) || right.includes(left)));
 }
 
+function buildFlowChildTitle(parentTitle: string | null | undefined, sourcePlatformName: string | null | undefined, targetPlatformName: string, reciterName: string) {
+  const title = String(parentTitle ?? "").trim();
+  if (title) {
+    if (sourcePlatformName && title.includes(sourcePlatformName)) {
+      return title.replace(sourcePlatformName, targetPlatformName);
+    }
+
+    const titleParts = title.split(/\s+—\s+/).map((part) => part.trim()).filter(Boolean);
+    if (titleParts.length >= 2) {
+      return [...titleParts.slice(0, -1), targetPlatformName].join(" — ");
+    }
+  }
+
+  return [targetPlatformName, reciterName].filter(Boolean).join(" — ");
+}
+
 function isApplicationPlatformName(name?: string | null) {
   if (!name) return false;
   const normalized = name.trim().toLowerCase();
@@ -721,6 +737,7 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
       reciterName: recitersTable.name,
       priority: tasksTable.priority,
       startDate: tasksTable.startDate,
+      endDate: tasksTable.endDate,
       dueDate: tasksTable.dueDate,
       pageId: tasksTable.pageId,
     })
@@ -736,6 +753,8 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
   const flowDate = normalizeDate(parent.dueDate ?? parent.startDate);
   const flowDateKey = taskDateKey(flowDate);
   if (!flowDate || !flowDateKey) return { created: [], skipped: [{ reason: "invalid_date" }] };
+  const flowStartDate = normalizeDate(parent.startDate) ?? flowDate;
+  const flowEndDate = normalizeDate(parent.endDate);
 
   const rules = await db
     .select({
@@ -790,7 +809,7 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
       skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
       continue;
     }
-    const childTitle = `${rule.platformName} — ${parent.reciterName}`;
+    const childTitle = buildFlowChildTitle(parent.title, parent.platformName, rule.platformName, parent.reciterName);
     const similarTasks = await db
       .select({ id: tasksTable.id, title: tasksTable.title })
       .from(tasksTable)
@@ -819,8 +838,8 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
           status: "pending",
           priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
           progress: 0,
-          startDate: flowDate,
-          endDate: null,
+          startDate: flowStartDate,
+          endDate: flowEndDate,
           dueDate: flowDate,
           recurrence: "none",
           recurrenceIntervalDays: null,
@@ -1329,6 +1348,7 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       reciterName: recitersTable.name,
       priority: tasksTable.priority,
       startDate: tasksTable.startDate,
+      endDate: tasksTable.endDate,
       dueDate: tasksTable.dueDate,
       pageId: tasksTable.pageId,
     })
@@ -1371,6 +1391,8 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     res.status(400).json({ error: "Parent task must have a valid date" });
     return;
   }
+  const flowStartDate = normalizeDate(parent.startDate) ?? flowDate;
+  const flowEndDate = normalizeDate(parent.endDate);
 
   const rules = await db
     .select({
@@ -1487,7 +1509,7 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       }, "task_flow_child_replacing_deleted_link");
     }
 
-    const childTitle = `${rule.platformName} — ${parent.reciterName}`;
+    const childTitle = buildFlowChildTitle(parent.title, parent.platformName, rule.platformName, parent.reciterName);
     const similarTasks = await db
       .select({ id: tasksTable.id, title: tasksTable.title })
       .from(tasksTable)
@@ -1524,8 +1546,8 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
           status: "pending",
           priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
           progress: 0,
-          startDate: flowDate,
-          endDate: null,
+          startDate: flowStartDate,
+          endDate: flowEndDate,
           dueDate: flowDate,
           recurrence: "none",
           recurrenceIntervalDays: null,
@@ -1576,6 +1598,8 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
           id: tasksTable.id,
           deletedAt: tasksTable.deletedAt,
           status: tasksTable.status,
+          startDate: tasksTable.startDate,
+          endDate: tasksTable.endDate,
           dueDate: tasksTable.dueDate,
           platformId: tasksTable.platformId,
           pageId: tasksTable.pageId,
