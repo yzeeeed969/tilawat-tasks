@@ -144,6 +144,25 @@ function isApplicationPlatformName(name?: string | null) {
   );
 }
 
+function normalizePlatformLabel(value?: string | null) {
+  return String(value ?? "")
+    .normalize("NFKC")
+    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u200E\u200F\u202A-\u202E\u2066-\u2069ـ]/g, "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .toLowerCase();
+}
+
+function isTaskFlowSourcePlatformName(name?: string | null) {
+  const normalized = normalizePlatformLabel(name);
+  if (!normalized) return false;
+  return (
+    normalized.includes("تطبيق تلاوات الحرمين") ||
+    (normalized.includes("تلاوات") && normalized.includes("الحرمين")) ||
+    (/\b(app|application)\b/i.test(normalized) && /\b(tilawat|haramain)\b/i.test(normalized))
+  );
+}
+
 function isPlaceholderApplicationReciter(name?: string | null) {
   return Boolean(name && /تطبيق/.test(name));
 }
@@ -4024,6 +4043,16 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const createDueDate = createForm.watch("dueDate");
   const createSelectedPlatform = platforms?.find((platform) => platform.id === createPlatformId);
   const createSelectedReciter = reciters?.find((reciter) => reciter.id === createReciterId);
+  const taskFlowSourcePlatformIds = useMemo(
+    () => new Set((platforms ?? []).filter((platform) => isTaskFlowSourcePlatformName((platform as any).name)).map((platform) => platform.id)),
+    [platforms]
+  );
+
+  const isTaskFlowSourceTask = (task: TaskWithDetails | null | undefined) => {
+    const platformId = taskPlatformId(task);
+    if (platformId && taskFlowSourcePlatformIds.has(platformId)) return true;
+    return isTaskFlowSourcePlatformName((task as any)?.platform?.name ?? (task as any)?.platformName);
+  };
   const canPreviewTaskFlow = Boolean(
     isAdmin &&
     !isAdminMemberPreview &&
@@ -4176,16 +4205,18 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     setTaskFlowCreateResult(null);
   };
 
-  const canUseSavedTaskFlow = (task: TaskWithDetails | null | undefined) => {
+  const canShowTaskFlowAction = (task: TaskWithDetails | null | undefined) => {
     return Boolean(
       isAdmin &&
-      !isAdminMemberPreview &&
       task &&
+      toPositiveNumber((task as any).id) &&
       !(task as any).deletedAt &&
-      isApplicationPlatformName(task.platform?.name) &&
+      isTaskFlowSourceTask(task) &&
       taskReciterId(task)
     );
   };
+
+  const canUseSavedTaskFlow = canShowTaskFlowAction;
 
   const openFlowChildrenDialog = (task: TaskWithDetails) => {
     if (!canUseSavedTaskFlow(task)) return;
@@ -6551,7 +6582,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           filterMosque={filterMosque}
           onEdit={openEditDialog}
           onFlowChildren={openFlowChildrenDialog}
-          canFlowChildren={canUseSavedTaskFlow}
+          canFlowChildren={canShowTaskFlowAction}
           onDelete={handleDelete}
           onStatusChange={handleStatusChange}
           updateTaskPending={updateTask.isPending}
@@ -6739,7 +6770,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     onManageProofs={() => openProofsDialog(task)}
                     onDuplicate={() => handleDuplicate(task.id)}
                     onFlowChildren={() => openFlowChildrenDialog(task)}
-                    canFlowChildren={canUseSavedTaskFlow(task)}
+                    canFlowChildren={canShowTaskFlowAction(task)}
                     onStatusChange={(status) => handleStatusChange(task.id, status)}
                     onDelete={() => handleDelete(task.id)}
                   />
@@ -6883,7 +6914,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               <DropdownMenuItem onClick={() => handleDuplicate(task.id)} className="cursor-pointer flex items-center gap-2">
                                 <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
                               </DropdownMenuItem>
-                              {canUseSavedTaskFlow(task) && (
+                              {canShowTaskFlowAction(task) && (
                                 <DropdownMenuItem onClick={() => openFlowChildrenDialog(task)} className="cursor-pointer flex items-center gap-2">
                                   <Layers className="h-4 w-4 text-sidebar-primary" />المهام التابعة
                                 </DropdownMenuItem>
