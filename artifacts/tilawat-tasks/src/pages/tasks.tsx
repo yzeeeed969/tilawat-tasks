@@ -699,6 +699,15 @@ type TaskFlowCreateResult = {
   created: Array<{ taskId: number; platformName: string; pageName: string; memberIds?: number[]; memberNames?: string[] }>;
   skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; memberIds?: number[]; memberNames?: string[] }>;
 };
+type DeleteSeriesScope = "single" | "from_this_forward" | "entire_series";
+type DeleteSeriesPreview = {
+  total: number;
+  completedCount: number;
+  withProofsCount: number;
+  firstDate: string | null;
+  lastDate: string | null;
+  title: string;
+};
 type TaskFlowActionEligibility = {
   canShow: boolean;
   reasons: string[];
@@ -3760,6 +3769,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [quickReciterHasLinkedMembers, setQuickReciterHasLinkedMembers] = useState(false);
   const [quickReciterMembersLoading, setQuickReciterMembersLoading] = useState(false);
   const [quickReciterSaving, setQuickReciterSaving] = useState(false);
+  const [deleteSeriesTask, setDeleteSeriesTask] = useState<TaskWithDetails | null>(null);
+  const [deleteSeriesScope, setDeleteSeriesScope] = useState<DeleteSeriesScope>("single");
+  const [deleteSeriesPending, setDeleteSeriesPending] = useState(false);
+  const [deleteSeriesServerPreview, setDeleteSeriesServerPreview] = useState<DeleteSeriesPreview | null>(null);
+  const [deleteSeriesPreviewLoading, setDeleteSeriesPreviewLoading] = useState(false);
+  const [deleteSeriesPreviewError, setDeleteSeriesPreviewError] = useState<string | null>(null);
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [commentsTaskId, setCommentsTaskId] = useState<number | null>(null);
   const [commentsTaskTitle, setCommentsTaskTitle] = useState<string>("");
@@ -5114,6 +5129,94 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     );
   };
 
+  const allKnownTasks = useMemo(() => {
+    const map = new Map<number, TaskWithDetails>();
+    for (const task of rawTasks ?? []) map.set(task.id, task);
+    for (const task of dependencyCandidateTasks ?? []) map.set(task.id, task);
+    return [...map.values()];
+  }, [rawTasks, dependencyCandidateTasks]);
+
+  const taskSeriesDate = (task: TaskWithDetails | null | undefined) => {
+    const raw = (task as any)?.dueDate ?? (task as any)?.startDate ?? (task as any)?.createdAt;
+    if (!raw) return null;
+    const date = new Date(raw);
+    return Number.isNaN(date.getTime()) ? null : date;
+  };
+
+  const getDeleteSeriesTargets = (task: TaskWithDetails | null, scope: DeleteSeriesScope) => {
+    if (!task) return [];
+    if (scope === "single" || !(task as any).seriesId) {
+      return [task].filter((item) => !(item as any).deletedAt);
+    }
+    const seriesId = (task as any).seriesId;
+    const currentDate = taskSeriesDate(task);
+    return allKnownTasks
+      .filter((item) => (item as any).seriesId === seriesId && !(item as any).deletedAt)
+      .filter((item) => {
+        if (scope !== "from_this_forward") return true;
+        const itemDate = taskSeriesDate(item);
+        if (!currentDate || !itemDate) return item.id === task.id;
+        return itemDate.getTime() >= currentDate.getTime();
+      })
+      .sort((a, b) => (taskSeriesDate(a)?.getTime() ?? 0) - (taskSeriesDate(b)?.getTime() ?? 0));
+  };
+
+  const getDeleteSeriesPreview = (task: TaskWithDetails | null, scope: DeleteSeriesScope): DeleteSeriesPreview => {
+    const targets = getDeleteSeriesTargets(task, scope);
+    const dates = targets
+      .map(taskSeriesDate)
+      .filter((date): date is Date => Boolean(date))
+      .sort((a, b) => a.getTime() - b.getTime());
+    return {
+      total: targets.length,
+      completedCount: targets.filter((item) => item.status === "completed" || Boolean((item as any).completedAt)).length,
+      withProofsCount: targets.filter((item) => Boolean((item as any).submissionUrl) || taskProofs(item).length > 0).length,
+      firstDate: dates[0] ? taskDateKey(dates[0]) : null,
+      lastDate: dates[dates.length - 1] ? taskDateKey(dates[dates.length - 1]) : null,
+      title: task?.title ?? "مهمة من سلسلة",
+    };
+  };
+
+  useEffect(() => {
+    if (!deleteSeriesTask) {
+      setDeleteSeriesServerPreview(null);
+      setDeleteSeriesPreviewError(null);
+      setDeleteSeriesPreviewLoading(false);
+      return;
+    }
+
+    let cancelled = false;
+    setDeleteSeriesPreviewLoading(true);
+    setDeleteSeriesPreviewError(null);
+    fetch(`/api/tasks/${deleteSeriesTask.id}/delete-scope`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: deleteSeriesScope, preview: true }),
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(payload?.error ?? "Failed to preview task scope");
+        return payload?.summary as DeleteSeriesPreview | undefined;
+      })
+      .then((summary) => {
+        if (cancelled) return;
+        setDeleteSeriesServerPreview(summary ?? null);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        setDeleteSeriesServerPreview(null);
+        setDeleteSeriesPreviewError(error instanceof Error ? error.message : "تعذر تجهيز ملخص الحذف");
+      })
+      .finally(() => {
+        if (!cancelled) setDeleteSeriesPreviewLoading(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteSeriesTask?.id, deleteSeriesScope]);
+
   const handleStatusChange = (id: number, status: TaskStatus) => {
     if (status === "completed") {
       const task = tasks?.find((t) => t.id === id);
@@ -5139,10 +5242,49 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const handleDelete = (id: number) => {
+    const task = allKnownTasks.find((item) => item.id === id) ?? tasks?.find((item) => item.id === id);
+    if (isAdmin && task && (task as any).seriesId && !(task as any).deletedAt) {
+      setDeleteSeriesTask(task);
+      setDeleteSeriesScope("single");
+      return;
+    }
     deleteTask.mutate(
       { id },
       { onSuccess: () => { invalidateTasks(); toast({ title: "تم نقل المهمة إلى السلة" }); } }
     );
+  };
+
+  const executeDeleteSeriesScope = async () => {
+    if (!deleteSeriesTask) return;
+    setDeleteSeriesPending(true);
+    try {
+      const response = await fetch(`/api/tasks/${deleteSeriesTask.id}/delete-scope`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          scope: deleteSeriesScope,
+          confirmedProtected: deleteSeriesPreview.completedCount > 0 || deleteSeriesPreview.withProofsCount > 0,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? "Failed to delete task scope");
+      await invalidateTasks();
+      setDeleteSeriesTask(null);
+      toast({
+        title: "تم نقل المهام إلى السلة",
+        description: `تم نقل ${payload?.summary?.total ?? payload?.deletedTaskIds?.length ?? 0} مهمة إلى السلة.`,
+      });
+    } catch (error) {
+      setDeleteSeriesPreviewError(error instanceof Error ? error.message : "تعذر حذف نطاق السلسلة");
+      toast({
+        title: "تعذر حذف نطاق السلسلة",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteSeriesPending(false);
+    }
   };
 
   const handleDuplicate = (id: number) => {
@@ -5330,6 +5472,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       }
     );
   };
+
+  const deleteSeriesPreview = deleteSeriesServerPreview ?? getDeleteSeriesPreview(deleteSeriesTask, deleteSeriesScope);
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -5750,6 +5894,109 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               </div>
             )}
           </TaskDialogErrorBoundary>
+        </DialogContent>
+      </Dialog>
+
+      {/* Series delete scope dialog */}
+      <Dialog
+        open={!!deleteSeriesTask}
+        onOpenChange={(open) => {
+          if (!open && !deleteSeriesPending) setDeleteSeriesTask(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[520px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">حذف مهمة من سلسلة</DialogTitle>
+          </DialogHeader>
+          {deleteSeriesTask && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm leading-6">
+                <div className="font-semibold">{deleteSeriesPreview.title}</div>
+                <div>عدد المهام التي ستُنقل إلى السلة: {deleteSeriesPreview.total}</div>
+                <div>عدد المهام المكتملة ضمنها: {deleteSeriesPreview.completedCount}</div>
+                <div>عدد المهام التي لها شواهد: {deleteSeriesPreview.withProofsCount}</div>
+                <div>
+                  النطاق: {deleteSeriesPreview.firstDate ?? "غير محدد"} — {deleteSeriesPreview.lastDate ?? "غير محدد"}
+                </div>
+              </div>
+
+              {deleteSeriesPreviewLoading && (
+                <div className="flex items-center gap-2 rounded-md border border-border bg-muted/20 p-3 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  جارٍ جلب ملخص الحذف الفعلي من السيرفر...
+                </div>
+              )}
+
+              {deleteSeriesPreviewError && (
+                <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm font-medium text-destructive">
+                  {deleteSeriesPreviewError}
+                </div>
+              )}
+
+              {(deleteSeriesPreview.completedCount > 0 || deleteSeriesPreview.withProofsCount > 0) && (
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-sm font-medium text-amber-800">
+                  تنبيه: يوجد مهام مكتملة أو تحتوي على شواهد. سيتم نقلها إلى السلة فقط ولن تُحذف نهائيًا.
+                </div>
+              )}
+
+              <div className="grid gap-2">
+                {[
+                  {
+                    value: "single",
+                    label: "حذف هذه المهمة فقط",
+                    description: "ينقل المهمة الحالية فقط إلى السلة.",
+                  },
+                  {
+                    value: "from_this_forward",
+                    label: "حذف هذه المهمة وما بعدها",
+                    description: "ينقل مهام نفس السلسلة من تاريخ هذه المهمة حتى نهاية السلسلة.",
+                  },
+                  {
+                    value: "entire_series",
+                    label: "حذف السلسلة كاملة",
+                    description: "ينقل كل مهام نفس السلسلة إلى السلة.",
+                  },
+                ].map((option) => (
+                  <button
+                    key={option.value}
+                    type="button"
+                    onClick={() => setDeleteSeriesScope(option.value as DeleteSeriesScope)}
+                    className={cn(
+                      "rounded-lg border p-3 text-right text-sm transition-colors",
+                      deleteSeriesScope === option.value
+                        ? "border-sidebar-primary bg-sidebar-primary/10 text-sidebar-primary"
+                        : "border-border hover:bg-muted/40"
+                    )}
+                  >
+                    <span className="block font-semibold">{option.label}</span>
+                    <span className="mt-1 block text-xs text-muted-foreground">{option.description}</span>
+                  </button>
+                ))}
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="flex-1"
+                  onClick={() => setDeleteSeriesTask(null)}
+                  disabled={deleteSeriesPending}
+                >
+                  إلغاء
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="flex-1"
+                  onClick={executeDeleteSeriesScope}
+                  disabled={deleteSeriesPending || deleteSeriesPreviewLoading || Boolean(deleteSeriesPreviewError) || deleteSeriesPreview.total === 0}
+                >
+                  {deleteSeriesPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                  تأكيد النقل إلى السلة
+                </Button>
+              </div>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
 

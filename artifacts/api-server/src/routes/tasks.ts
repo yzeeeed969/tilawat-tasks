@@ -2565,6 +2565,150 @@ router.delete("/tasks/:id", async (req, res) => {
   res.status(204).end();
 });
 
+type DeleteTaskScope = "single" | "from_this_forward" | "entire_series";
+
+function parseDeleteTaskScope(value: unknown): DeleteTaskScope {
+  if (value === "single" || value === "from_this_forward" || value === "entire_series") return value;
+  throw new Error("INVALID_DELETE_SCOPE");
+}
+
+function taskDateValue(task: { dueDate: Date | null; startDate: Date | null; createdAt?: Date }) {
+  return task.dueDate ?? task.startDate ?? task.createdAt ?? new Date(0);
+}
+
+// Soft delete a task, future tasks in the same series, or the entire series.
+router.post("/tasks/:id/delete-scope", async (req, res) => {
+  const { id } = DeleteTaskParams.parse({ id: Number(req.params.id) });
+  const body = (req.body ?? {}) as { scope?: unknown; preview?: unknown; confirmedProtected?: unknown };
+  let scope: DeleteTaskScope;
+  try {
+    scope = parseDeleteTaskScope(body.scope);
+  } catch {
+    res.status(400).json({ error: "Invalid delete scope" });
+    return;
+  }
+
+  const currentUser = (req as any).currentUser;
+  const task = await fetchTaskForPermission(id);
+  if (!task) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+  if (scope !== "single" && currentUser?.role !== "admin") {
+    res.status(403).json({ error: "Only admins can delete a task series scope" });
+    return;
+  }
+  if (!canDeleteTask(currentUser, task)) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  if (scope !== "single" && !task.seriesId) {
+    res.status(400).json({ error: "Task is not part of a series" });
+    return;
+  }
+
+  const targetConditions: any[] = [isNull(tasksTable.deletedAt)];
+  if (scope === "single") {
+    targetConditions.push(eq(tasksTable.id, id));
+  } else {
+    targetConditions.push(eq(tasksTable.seriesId, task.seriesId!));
+    if (scope === "from_this_forward") {
+      const currentDate = taskDateValue(task);
+      targetConditions.push(sql`coalesce(${tasksTable.dueDate}, ${tasksTable.startDate}, ${tasksTable.createdAt}) >= ${currentDate}`);
+    }
+  }
+
+  const targetTasks = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      status: tasksTable.status,
+      completedAt: tasksTable.completedAt,
+      submissionUrl: tasksTable.submissionUrl,
+      dueDate: tasksTable.dueDate,
+      startDate: tasksTable.startDate,
+      createdAt: tasksTable.createdAt,
+    })
+    .from(tasksTable)
+    .where(and(...targetConditions));
+
+  if (targetTasks.length === 0) {
+    res.status(404).json({ error: "No tasks matched delete scope" });
+    return;
+  }
+
+  const targetIds = targetTasks.map((row) => row.id);
+  const proofRows = await db
+    .select({
+      taskId: taskProofsTable.taskId,
+      count: sql<number>`count(*)::int`,
+    })
+    .from(taskProofsTable)
+    .where(and(inArray(taskProofsTable.taskId, targetIds), isNull(taskProofsTable.deletedAt)))
+    .groupBy(taskProofsTable.taskId);
+  const proofCountByTask = new Map(proofRows.map((row) => [row.taskId, Number(row.count) || 0]));
+  const taskDates = targetTasks
+    .map((row) => taskDateValue(row))
+    .filter((date) => date instanceof Date && !Number.isNaN(date.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  const completedCount = targetTasks.filter((row) => row.status === "completed" || Boolean(row.completedAt)).length;
+  const withProofsCount = targetTasks.filter((row) => Boolean(row.submissionUrl) || (proofCountByTask.get(row.id) ?? 0) > 0).length;
+  const summary = {
+    total: targetIds.length,
+    completedCount,
+    withProofsCount,
+    firstDate: taskDates[0]?.toISOString() ?? null,
+    lastDate: taskDates[taskDates.length - 1]?.toISOString() ?? null,
+    title: task.title,
+    softDelete: true,
+  };
+
+  if (body.preview === true) {
+    res.json({
+      preview: true,
+      scope,
+      seriesId: task.seriesId ?? null,
+      deletedTaskIds: targetIds,
+      summary,
+    });
+    return;
+  }
+
+  if ((completedCount > 0 || withProofsCount > 0) && body.confirmedProtected !== true) {
+    res.status(409).json({
+      error: "Protected tasks require explicit confirmation",
+      requiresConfirmation: true,
+      scope,
+      seriesId: task.seriesId ?? null,
+      deletedTaskIds: targetIds,
+      summary,
+    });
+    return;
+  }
+
+  const deletedAt = new Date();
+
+  await db.update(tasksTable)
+    .set({ deletedAt })
+    .where(inArray(tasksTable.id, targetIds));
+
+  await logActivity(req, "task_delete_scope", "task", id, task.title, {
+    scope,
+    seriesId: task.seriesId ?? null,
+    deletedTaskIds: targetIds,
+    deletedCount: targetIds.length,
+    completedCount,
+    withProofsCount,
+  });
+
+  res.json({
+    scope,
+    seriesId: task.seriesId ?? null,
+    deletedTaskIds: targetIds,
+    summary,
+  });
+});
+
 // Duplicate task
 router.post("/tasks/:id/duplicate", async (req, res) => {
   const id = Number(req.params.id);
