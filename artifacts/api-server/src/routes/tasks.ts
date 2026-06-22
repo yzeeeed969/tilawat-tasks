@@ -577,6 +577,27 @@ function getDateRange(startDate: Date, endDate: Date): Date[] {
   return dates;
 }
 
+function getTaskFlowDateRange(parent: { startDate: Date | null; endDate: Date | null; dueDate: Date | null }) {
+  const singleDate = normalizeDate(parent.dueDate ?? parent.startDate);
+  const startDate = normalizeDate(parent.startDate);
+  const endDate = normalizeDate(parent.endDate);
+  if (startDate && endDate && endDate.getTime() >= startDate.getTime()) {
+    return getDateRange(startDate, endDate);
+  }
+  return singleDate ? [singleDate] : [];
+}
+
+function buildTaskFlowSummary(dates: Date[], enabledPagesCount: number) {
+  const sortedDates = [...dates].sort((a, b) => a.getTime() - b.getTime());
+  return {
+    firstDate: sortedDates[0] ? taskDateKey(sortedDates[0]) : null,
+    lastDate: sortedDates[sortedDates.length - 1] ? taskDateKey(sortedDates[sortedDates.length - 1]) : null,
+    daysCount: sortedDates.length,
+    enabledPagesCount,
+    expectedTasks: sortedDates.length * enabledPagesCount,
+  };
+}
+
 async function validateMemberIds(memberIds: unknown): Promise<number[]> {
   if (!Array.isArray(memberIds) || memberIds.length === 0) {
     throw new Error("INVALID_MEMBER_IDS");
@@ -750,11 +771,8 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
   if (!parent?.reciterId || !parent.reciterName || !isApplicationPlatformName(parent.platformName)) {
     return { created: [], skipped: [{ reason: "invalid_parent" }] };
   }
-  const flowDate = normalizeDate(parent.dueDate ?? parent.startDate);
-  const flowDateKey = taskDateKey(flowDate);
-  if (!flowDate || !flowDateKey) return { created: [], skipped: [{ reason: "invalid_date" }] };
-  const flowStartDate = normalizeDate(parent.startDate) ?? flowDate;
-  const flowEndDate = normalizeDate(parent.endDate);
+  const flowDates = getTaskFlowDateRange(parent);
+  if (flowDates.length === 0) return { created: [], skipped: [{ reason: "invalid_date" }] };
 
   const rules = await db
     .select({
@@ -788,8 +806,8 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
     defaultAssigneesByRuleId.get(row.ruleId)!.push(row.memberId);
   }
 
-  const created: Array<{ taskId: number; platformName: string; pageName: string }> = [];
-  const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }> = [];
+  const created: Array<{ taskId: number; platformName: string; pageName: string; dueDate?: string }> = [];
+  const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; dueDate?: string }> = [];
   const batchKey = `task-flow-change-${parent.id}-${Date.now()}`;
   for (const rule of enabledRules) {
     if (rule.pageReciterId !== parent.reciterId) {
@@ -803,95 +821,99 @@ async function createFlowChildrenFromDefaultRules(parentTaskId: number, currentU
       skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "no_assignee" });
       continue;
     }
-    const existingLink = await findExistingFlowLink(parent.id, rule.pageId, flowDate);
-    const canReplaceExistingLink = Boolean(existingLink?.childDeletedAt);
-    if (existingLink && !canReplaceExistingLink) {
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
-      continue;
-    }
     const childTitle = buildFlowChildTitle(parent.title, parent.platformName, rule.platformName, parent.reciterName);
-    const similarTasks = await db
-      .select({ id: tasksTable.id, title: tasksTable.title })
-      .from(tasksTable)
-      .where(and(
-        isNull(tasksTable.deletedAt),
-        eq(tasksTable.reciterId, parent.reciterId),
-        eq(tasksTable.platformId, rule.platformId),
-        eq(tasksTable.pageId, rule.pageId),
-        sql`${tasksTable.dueDate}::date = ${flowDateKey}::date`,
-      ));
-    const duplicateTask = similarTasks.find((task) => taskFlowTitleMatches(task.title, childTitle));
-    if (duplicateTask) {
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate", existingTaskId: duplicateTask.id });
-      continue;
-    }
+    for (const flowDate of flowDates) {
+      const flowDateKey = taskDateKey(flowDate);
+      const existingLink = await findExistingFlowLink(parent.id, rule.pageId, flowDate);
+      const canReplaceExistingLink = Boolean(existingLink?.childDeletedAt);
+      if (existingLink && !canReplaceExistingLink) {
+        skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_flow_child_for_date", existingTaskId: existingLink.childTaskId, dueDate: flowDateKey });
+        continue;
+      }
+      const similarTasks = await db
+        .select({ id: tasksTable.id, title: tasksTable.title })
+        .from(tasksTable)
+        .where(and(
+          isNull(tasksTable.deletedAt),
+          eq(tasksTable.reciterId, parent.reciterId),
+          eq(tasksTable.platformId, rule.platformId),
+          eq(tasksTable.pageId, rule.pageId),
+          sql`${tasksTable.dueDate}::date = ${flowDateKey}::date`,
+        ));
+      const duplicateTask = similarTasks.find((task) => taskFlowTitleMatches(task.title, childTitle));
+      if (duplicateTask) {
+        skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate_same_day", existingTaskId: duplicateTask.id, dueDate: flowDateKey });
+        continue;
+      }
 
-    try {
-      const childTask = await db.transaction(async (tx) => {
-        const [newTask] = await tx.insert(tasksTable).values({
-          source: "admin_created",
-          title: childTitle,
-          description: parent.description,
-          platformId: rule.platformId,
-          memberId: memberIds[0],
-          reciterId: parent.reciterId,
-          status: "pending",
-          priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
-          progress: 0,
-          startDate: flowStartDate,
-          endDate: flowEndDate,
-          dueDate: flowDate,
-          recurrence: "none",
-          recurrenceIntervalDays: null,
-          recurrenceDurationDays: null,
-          recurrenceDays: null,
-          weeklyQuotaRequired: null,
-          weeklyQuotaPeriodStart: null,
-          weeklyQuotaPeriodEnd: null,
-          pageId: rule.pageId,
-        }).returning();
-        await syncTaskMembersUsing(tx, newTask.id, memberIds);
-        if (canReplaceExistingLink && existingLink) {
-          await tx.update(taskFlowLinksTable)
-            .set({
+      try {
+        const childTask = await db.transaction(async (tx) => {
+          const [newTask] = await tx.insert(tasksTable).values({
+            source: "admin_created",
+            title: childTitle,
+            description: parent.description,
+            platformId: rule.platformId,
+            memberId: memberIds[0],
+            reciterId: parent.reciterId,
+            status: "pending",
+            priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
+            progress: 0,
+            startDate: flowDate,
+            endDate: flowDate,
+            dueDate: flowDate,
+            recurrence: "none",
+            recurrenceIntervalDays: null,
+            recurrenceDurationDays: null,
+            recurrenceDays: null,
+            weeklyQuotaRequired: null,
+            weeklyQuotaPeriodStart: null,
+            weeklyQuotaPeriodEnd: null,
+            pageId: rule.pageId,
+          }).returning();
+          await syncTaskMembersUsing(tx, newTask.id, memberIds);
+          if (canReplaceExistingLink && existingLink) {
+            await tx.update(taskFlowLinksTable)
+              .set({
+                childTaskId: newTask.id,
+                reciterId: parent.reciterId!,
+                sourcePageId: parent.pageId ?? null,
+                targetPlatformId: rule.platformId,
+                batchKey,
+                createdByUserId: currentUser?.id ?? null,
+                createdAt: new Date(),
+              })
+              .where(eq(taskFlowLinksTable.id, existingLink.id));
+          } else {
+            await tx.insert(taskFlowLinksTable).values({
+              parentTaskId: parent.id,
               childTaskId: newTask.id,
               reciterId: parent.reciterId!,
               sourcePageId: parent.pageId ?? null,
+              targetPageId: rule.pageId,
               targetPlatformId: rule.platformId,
+              flowDate,
               batchKey,
               createdByUserId: currentUser?.id ?? null,
-              createdAt: new Date(),
-            })
-            .where(eq(taskFlowLinksTable.id, existingLink.id));
-        } else {
-          await tx.insert(taskFlowLinksTable).values({
-            parentTaskId: parent.id,
-            childTaskId: newTask.id,
-            reciterId: parent.reciterId!,
-            sourcePageId: parent.pageId ?? null,
-            targetPageId: rule.pageId,
-            targetPlatformId: rule.platformId,
-            flowDate,
-            batchKey,
-            createdByUserId: currentUser?.id ?? null,
-          });
-        }
-        return newTask;
-      });
-      created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName });
-      await logActivity(req, "task_flow_child_created", "task", childTask.id, childTask.title, {
-        parentTaskId: parent.id,
-        targetPageId: rule.pageId,
-        targetPlatformId: rule.platformId,
-        flowChangeRegeneration: true,
-      });
-      await notifyTaskAssigned(childTask.id, childTask.title, memberIds).catch(() => {});
-    } catch (error: any) {
-      const code = String(error?.code ?? "");
-      skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: code === "23505" ? "duplicate" : "create_failed" });
+            });
+          }
+          return newTask;
+        });
+        created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName, dueDate: flowDateKey });
+        await logActivity(req, "task_flow_child_created", "task", childTask.id, childTask.title, {
+          parentTaskId: parent.id,
+          targetPageId: rule.pageId,
+          targetPlatformId: rule.platformId,
+          flowChangeRegeneration: true,
+          flowDate: flowDateKey,
+        });
+        await notifyTaskAssigned(childTask.id, childTask.title, memberIds).catch(() => {});
+      } catch (error: any) {
+        const code = String(error?.code ?? "");
+        skipped.push({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: code === "23505" ? "duplicate_same_day" : "create_failed", dueDate: flowDateKey });
+      }
     }
   }
-  return { created, skipped };
+  return { created, skipped, summary: buildTaskFlowSummary(flowDates, enabledRules.length) };
 }
 
 async function fetchTaskForPermission(taskId: number) {
@@ -1379,9 +1401,8 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     return;
   }
 
-  const flowDate = normalizeDate(parent.dueDate ?? parent.startDate);
-  const flowDateKey = taskDateKey(flowDate);
-  if (!flowDate || !flowDateKey) {
+  const flowDates = getTaskFlowDateRange(parent);
+  if (flowDates.length === 0) {
     req.log?.warn?.({
       traceId,
       parentTaskId: parent.id,
@@ -1391,8 +1412,6 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     res.status(400).json({ error: "Parent task must have a valid date" });
     return;
   }
-  const flowStartDate = normalizeDate(parent.startDate) ?? flowDate;
-  const flowEndDate = normalizeDate(parent.endDate);
 
   const rules = await db
     .select({
@@ -1425,9 +1444,9 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     return;
   }
 
-  const created: Array<{ taskId: number; platformName: string; pageName: string }> = [];
-  const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }> = [];
-  const pushSkipped = (entry: { pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number }) => {
+  const created: Array<{ taskId: number; platformName: string; pageName: string; dueDate?: string }> = [];
+  const skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; dueDate?: string }> = [];
+  const pushSkipped = (entry: { pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; dueDate?: string }) => {
     skipped.push(entry);
     req.log?.info?.({ traceId, parentTaskId: parent.id, ...entry }, "task_flow_child_skipped");
   };
@@ -1451,7 +1470,10 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     traceId,
     parentTaskId: parent.id,
     reciterId: parent.reciterId,
-    flowDate: flowDate.toISOString(),
+    flowFirstDate: taskDateKey(flowDates[0]),
+    flowLastDate: taskDateKey(flowDates[flowDates.length - 1]),
+    flowDaysCount: flowDates.length,
+    expectedTasks: flowDates.length * enabledRules.length,
     requestedAssignmentPagesCount: requestedAssigneesByPageId.size,
     rulesCount: rules.length,
     enabledRulesCount: enabledRules.length,
@@ -1494,166 +1516,178 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
       continue;
     }
 
-    const existingLink = await findExistingFlowLink(parent.id, rule.pageId, flowDate);
-    const canReplaceExistingLink = Boolean(existingLink?.childDeletedAt);
-    if (existingLink && !canReplaceExistingLink) {
-      pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_link", existingTaskId: existingLink.childTaskId });
-      continue;
-    }
-    if (existingLink && canReplaceExistingLink) {
-      req.log?.info?.({
-        traceId,
-        parentTaskId: parent.id,
-        pageId: rule.pageId,
-        existingTaskId: existingLink.childTaskId,
-      }, "task_flow_child_replacing_deleted_link");
-    }
-
     const childTitle = buildFlowChildTitle(parent.title, parent.platformName, rule.platformName, parent.reciterName);
-    const similarTasks = await db
-      .select({ id: tasksTable.id, title: tasksTable.title })
-      .from(tasksTable)
-      .where(and(
-        isNull(tasksTable.deletedAt),
-        eq(tasksTable.reciterId, parent.reciterId),
-        eq(tasksTable.platformId, rule.platformId),
-        eq(tasksTable.pageId, rule.pageId),
-        sql`${tasksTable.dueDate}::date = ${flowDateKey}::date`,
-      ));
-    const duplicateTask = similarTasks.find((task) => taskFlowTitleMatches(task.title, childTitle));
-    if (duplicateTask) {
-      pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate", existingTaskId: duplicateTask.id });
-      continue;
-    }
 
-    try {
-      req.log?.info?.({
-        traceId,
-        parentTaskId: parent.id,
-        pageId: rule.pageId,
-        platformId: rule.platformId,
-        memberIds,
-        childTitle,
-      }, "task_flow_child_create_attempt");
-      const childTask = await db.transaction(async (tx) => {
-        const [newTask] = await tx.insert(tasksTable).values({
-          source: "admin_created",
-          title: childTitle,
-          description: parent.description,
-          platformId: rule.platformId,
-          memberId: memberIds[0],
-          reciterId: parent.reciterId,
-          status: "pending",
-          priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
-          progress: 0,
-          startDate: flowStartDate,
-          endDate: flowEndDate,
-          dueDate: flowDate,
-          recurrence: "none",
-          recurrenceIntervalDays: null,
-          recurrenceDurationDays: null,
-          recurrenceDays: null,
-          weeklyQuotaRequired: null,
-          weeklyQuotaPeriodStart: null,
-          weeklyQuotaPeriodEnd: null,
+    for (const flowDate of flowDates) {
+      const flowDateKey = taskDateKey(flowDate);
+      const existingLink = await findExistingFlowLink(parent.id, rule.pageId, flowDate);
+      const canReplaceExistingLink = Boolean(existingLink?.childDeletedAt);
+      if (existingLink && !canReplaceExistingLink) {
+        pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "existing_flow_child_for_date", existingTaskId: existingLink.childTaskId, dueDate: flowDateKey });
+        continue;
+      }
+      if (existingLink && canReplaceExistingLink) {
+        req.log?.info?.({
+          traceId,
+          parentTaskId: parent.id,
           pageId: rule.pageId,
-        }).returning();
+          existingTaskId: existingLink.childTaskId,
+          flowDate: flowDateKey,
+        }, "task_flow_child_replacing_deleted_link");
+      }
 
-        await syncTaskMembersUsing(tx, newTask.id, memberIds);
-        if (canReplaceExistingLink && existingLink) {
-          await tx.update(taskFlowLinksTable)
-            .set({
+      const similarTasks = await db
+        .select({ id: tasksTable.id, title: tasksTable.title })
+        .from(tasksTable)
+        .where(and(
+          isNull(tasksTable.deletedAt),
+          eq(tasksTable.reciterId, parent.reciterId),
+          eq(tasksTable.platformId, rule.platformId),
+          eq(tasksTable.pageId, rule.pageId),
+          sql`${tasksTable.dueDate}::date = ${flowDateKey}::date`,
+        ));
+      const duplicateTask = similarTasks.find((task) => taskFlowTitleMatches(task.title, childTitle));
+      if (duplicateTask) {
+        pushSkipped({ pageId: rule.pageId, platformName: rule.platformName, pageName: rule.pageName, reason: "duplicate_same_day", existingTaskId: duplicateTask.id, dueDate: flowDateKey });
+        continue;
+      }
+
+      try {
+        req.log?.info?.({
+          traceId,
+          parentTaskId: parent.id,
+          pageId: rule.pageId,
+          platformId: rule.platformId,
+          memberIds,
+          childTitle,
+          flowDate: flowDateKey,
+        }, "task_flow_child_create_attempt");
+        const childTask = await db.transaction(async (tx) => {
+          const [newTask] = await tx.insert(tasksTable).values({
+            source: "admin_created",
+            title: childTitle,
+            description: parent.description,
+            platformId: rule.platformId,
+            memberId: memberIds[0],
+            reciterId: parent.reciterId,
+            status: "pending",
+            priority: (parent.priority ?? "normal") as "urgent" | "normal" | "low",
+            progress: 0,
+            startDate: flowDate,
+            endDate: flowDate,
+            dueDate: flowDate,
+            recurrence: "none",
+            recurrenceIntervalDays: null,
+            recurrenceDurationDays: null,
+            recurrenceDays: null,
+            weeklyQuotaRequired: null,
+            weeklyQuotaPeriodStart: null,
+            weeklyQuotaPeriodEnd: null,
+            pageId: rule.pageId,
+          }).returning();
+
+          await syncTaskMembersUsing(tx, newTask.id, memberIds);
+          if (canReplaceExistingLink && existingLink) {
+            await tx.update(taskFlowLinksTable)
+              .set({
+                childTaskId: newTask.id,
+                reciterId: parent.reciterId!,
+                sourcePageId: parent.pageId ?? null,
+                targetPlatformId: rule.platformId,
+                batchKey,
+                createdByUserId: currentUser.id ?? null,
+                createdAt: new Date(),
+              })
+              .where(eq(taskFlowLinksTable.id, existingLink.id));
+          } else {
+            await tx.insert(taskFlowLinksTable).values({
+              parentTaskId: parent.id,
               childTaskId: newTask.id,
               reciterId: parent.reciterId!,
               sourcePageId: parent.pageId ?? null,
+              targetPageId: rule.pageId,
               targetPlatformId: rule.platformId,
+              flowDate,
               batchKey,
               createdByUserId: currentUser.id ?? null,
-              createdAt: new Date(),
-            })
-            .where(eq(taskFlowLinksTable.id, existingLink.id));
-        } else {
-          await tx.insert(taskFlowLinksTable).values({
-            parentTaskId: parent.id,
-            childTaskId: newTask.id,
-            reciterId: parent.reciterId!,
-            sourcePageId: parent.pageId ?? null,
-            targetPageId: rule.pageId,
-            targetPlatformId: rule.platformId,
-            flowDate,
-            batchKey,
-            createdByUserId: currentUser.id ?? null,
-          });
-        }
-        return newTask;
-      });
+            });
+          }
+          return newTask;
+        });
 
-      created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName });
-      const taskMemberRows = await db
-        .select({ memberId: taskMembersTable.memberId })
-        .from(taskMembersTable)
-        .where(eq(taskMembersTable.taskId, childTask.id));
-      const [taskRow] = await db
-        .select({
-          id: tasksTable.id,
-          deletedAt: tasksTable.deletedAt,
-          status: tasksTable.status,
-          startDate: tasksTable.startDate,
-          endDate: tasksTable.endDate,
-          dueDate: tasksTable.dueDate,
-          platformId: tasksTable.platformId,
-          pageId: tasksTable.pageId,
-          reciterId: tasksTable.reciterId,
-          memberId: tasksTable.memberId,
-        })
-        .from(tasksTable)
-        .where(eq(tasksTable.id, childTask.id))
-        .limit(1);
-      req.log?.info?.({
-        traceId,
-        parentTaskId: parent.id,
-        taskId: childTask.id,
-        taskRow,
-        taskMemberIds: taskMemberRows.map((row) => row.memberId),
-      }, "task_flow_child_created_verified");
-      await logActivity(req, "task_flow_child_created", "task", childTask.id, childTask.title, {
-        parentTaskId: parent.id,
-        targetPageId: rule.pageId,
-        targetPlatformId: rule.platformId,
-      });
-      try {
-        await notifyTaskAssigned(childTask.id, childTask.title, memberIds);
+        created.push({ taskId: childTask.id, platformName: rule.platformName, pageName: rule.pageName, dueDate: flowDateKey });
+        const taskMemberRows = await db
+          .select({ memberId: taskMembersTable.memberId })
+          .from(taskMembersTable)
+          .where(eq(taskMembersTable.taskId, childTask.id));
+        const [taskRow] = await db
+          .select({
+            id: tasksTable.id,
+            deletedAt: tasksTable.deletedAt,
+            status: tasksTable.status,
+            startDate: tasksTable.startDate,
+            endDate: tasksTable.endDate,
+            dueDate: tasksTable.dueDate,
+            platformId: tasksTable.platformId,
+            pageId: tasksTable.pageId,
+            reciterId: tasksTable.reciterId,
+            memberId: tasksTable.memberId,
+          })
+          .from(tasksTable)
+          .where(eq(tasksTable.id, childTask.id))
+          .limit(1);
         req.log?.info?.({
           traceId,
           parentTaskId: parent.id,
           taskId: childTask.id,
-          memberIds,
-        }, "task_flow_child_notification_attempted");
-      } catch (notifyError: any) {
-        req.log?.warn?.({
+          taskRow,
+          taskMemberIds: taskMemberRows.map((row) => row.memberId),
+          flowDate: flowDateKey,
+        }, "task_flow_child_created_verified");
+        await logActivity(req, "task_flow_child_created", "task", childTask.id, childTask.title, {
+          parentTaskId: parent.id,
+          targetPageId: rule.pageId,
+          targetPlatformId: rule.platformId,
+          flowDate: flowDateKey,
+        });
+        try {
+          await notifyTaskAssigned(childTask.id, childTask.title, memberIds);
+          req.log?.info?.({
+            traceId,
+            parentTaskId: parent.id,
+            taskId: childTask.id,
+            memberIds,
+            flowDate: flowDateKey,
+          }, "task_flow_child_notification_attempted");
+        } catch (notifyError: any) {
+          req.log?.warn?.({
+            traceId,
+            parentTaskId: parent.id,
+            taskId: childTask.id,
+            memberIds,
+            message: notifyError?.message,
+            flowDate: flowDateKey,
+          }, "task_flow_child_notification_failed");
+        }
+      } catch (error: any) {
+        const code = String(error?.code ?? "");
+        req.log?.error?.({
           traceId,
           parentTaskId: parent.id,
-          taskId: childTask.id,
-          memberIds,
-          message: notifyError?.message,
-        }, "task_flow_child_notification_failed");
+          pageId: rule.pageId,
+          platformName: rule.platformName,
+          code,
+          message: error?.message,
+          flowDate: flowDateKey,
+        }, "task_flow_child_create_failed");
+        pushSkipped({
+          pageId: rule.pageId,
+          platformName: rule.platformName,
+          pageName: rule.pageName,
+          reason: code === "23505" ? "duplicate_same_day" : "create_failed",
+          dueDate: flowDateKey,
+        });
       }
-    } catch (error: any) {
-      const code = String(error?.code ?? "");
-      req.log?.error?.({
-        traceId,
-        parentTaskId: parent.id,
-        pageId: rule.pageId,
-        platformName: rule.platformName,
-        code,
-        message: error?.message,
-      }, "task_flow_child_create_failed");
-      pushSkipped({
-        pageId: rule.pageId,
-        platformName: rule.platformName,
-        pageName: rule.pageName,
-        reason: code === "23505" ? "duplicate" : "create_failed",
-      });
     }
   }
 
@@ -1665,7 +1699,7 @@ router.post("/tasks/:id/flow-children", async (req, res) => {
     created,
     skipped,
   }, "task_flow_children_response");
-  res.status(201).json({ traceId, created, skipped });
+  res.status(201).json({ traceId, created, skipped, summary: buildTaskFlowSummary(flowDates, enabledRules.length) });
 });
 
 router.post("/tasks", async (req, res) => {

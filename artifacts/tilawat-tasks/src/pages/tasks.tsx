@@ -696,8 +696,15 @@ type TaskFlowCreateResult = {
   apiCalled?: boolean;
   requestStatus?: number;
   error?: string;
-  created: Array<{ taskId: number; platformName: string; pageName: string; memberIds?: number[]; memberNames?: string[] }>;
-  skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; memberIds?: number[]; memberNames?: string[] }>;
+  summary?: {
+    firstDate: string | null;
+    lastDate: string | null;
+    daysCount: number;
+    enabledPagesCount: number;
+    expectedTasks: number;
+  };
+  created: Array<{ taskId: number; platformName: string; pageName: string; dueDate?: string; memberIds?: number[]; memberNames?: string[] }>;
+  skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; dueDate?: string; memberIds?: number[]; memberNames?: string[] }>;
 };
 type DeleteSeriesScope = "single" | "from_this_forward" | "entire_series";
 type DeleteSeriesPreview = {
@@ -928,6 +935,30 @@ function taskDateKey(value: unknown) {
   return format(date, "yyyy-MM-dd");
 }
 
+function normalizeTaskFlowDate(value: unknown) {
+  if (!value) return null;
+  const date = value instanceof Date ? new Date(value) : new Date(String(value));
+  if (Number.isNaN(date.getTime())) return null;
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+function taskFlowDateKeys(task: TaskWithDetails | null | undefined) {
+  const singleDate = normalizeTaskFlowDate((task as any)?.dueDate ?? (task as any)?.startDate);
+  const startDate = normalizeTaskFlowDate((task as any)?.startDate);
+  const endDate = normalizeTaskFlowDate((task as any)?.endDate);
+  if (startDate && endDate && endDate.getTime() >= startDate.getTime()) {
+    const dates: string[] = [];
+    let cursor = startDate;
+    while (cursor.getTime() <= endDate.getTime()) {
+      dates.push(taskDateKey(cursor));
+      cursor = addDays(cursor, 1);
+    }
+    return dates;
+  }
+  return singleDate ? [taskDateKey(singleDate)] : [];
+}
+
 function buildFlowChildPreviewTitle(parentTask: TaskWithDetails, targetPlatformName: string) {
   const sourcePlatformName = parentTask.platform?.name;
   const title = String(parentTask.title ?? "").trim();
@@ -970,6 +1001,20 @@ function TaskFlowPreviewPanel({
   const parentTaskMembers = parentTask
     ? ((parentTask.members && parentTask.members.length > 0 ? parentTask.members : [parentTask.member]).filter(Boolean) as Array<{ id: number; name: string }>)
     : [];
+  const flowDateKeys = taskFlowDateKeys(parentTask);
+  const flowFirstDate = flowDateKeys[0] || null;
+  const flowLastDate = flowDateKeys[flowDateKeys.length - 1] || null;
+  const expectedTasksCount = (items?.length ?? 0) * flowDateKeys.length;
+  const createdByPlatform = createResult?.created.reduce((map, item) => {
+    const key = item.platformName || "منصة غير معروفة";
+    map.set(key, (map.get(key) ?? 0) + 1);
+    return map;
+  }, new Map<string, number>());
+  const skippedByPlatform = createResult?.skipped.reduce((map, item) => {
+    const key = `${item.platformName ?? "منصة غير معروفة"} — ${item.reason}`;
+    map.set(key, (map.get(key) ?? 0) + 1);
+    return map;
+  }, new Map<string, number>());
 
   return (
     <div className="space-y-3 rounded-md border border-dashed border-sidebar-primary/30 bg-sidebar-primary/5 p-3">
@@ -1008,6 +1053,15 @@ function TaskFlowPreviewPanel({
 
       {items && (
         <div className="space-y-2">
+          {items.length > 0 && (
+            <div className="rounded-md border border-sidebar-primary/20 bg-background px-3 py-2 text-xs leading-5">
+              <div className="font-semibold text-foreground">ملخص النطاق المتوقع</div>
+              <div>من: {flowFirstDate ?? "غير محدد"} — إلى: {flowLastDate ?? "غير محدد"}</div>
+              <div>عدد الأيام: {flowDateKeys.length}</div>
+              <div>عدد المنصات التابعة: {items.length}</div>
+              <div className="font-semibold text-sidebar-primary">إجمالي المهام المتوقع: {expectedTasksCount}</div>
+            </div>
+          )}
           {items.length === 0 ? (
             <div className="rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
               لا توجد صفحات تابعة لهذا القارئ على منصات أخرى.
@@ -1031,7 +1085,8 @@ function TaskFlowPreviewPanel({
 
                   <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
                     <div><span className="font-medium text-foreground">القارئ: </span>{item.reciterName}</div>
-                    <div><span className="font-medium text-foreground">التاريخ: </span>{item.dueDate}</div>
+                    <div><span className="font-medium text-foreground">النطاق: </span>{flowFirstDate ?? item.dueDate} — {flowLastDate ?? item.dueDate}</div>
+                    <div><span className="font-medium text-foreground">عدد المهام لهذه المنصة: </span>{flowDateKeys.length}</div>
                     <div className="sm:col-span-2"><span className="font-medium text-foreground">اسم المهمة: </span>{item.title}</div>
                     <div className="sm:col-span-2">
                       <span className="font-medium text-foreground">المسؤولون: </span>
@@ -1099,12 +1154,37 @@ function TaskFlowPreviewPanel({
               )}
               <div className="font-semibold">المهام المنشأة: {createResult.created.length}</div>
               <div className="font-semibold">العناصر المتخطاة: {createResult.skipped.length}</div>
+              {createResult.summary && (
+                <div className="rounded border border-green-200 bg-white/60 px-2 py-1">
+                  <div>النطاق: {createResult.summary.firstDate ?? "غير محدد"} — {createResult.summary.lastDate ?? "غير محدد"}</div>
+                  <div>الأيام: {createResult.summary.daysCount}</div>
+                  <div>المنصات: {createResult.summary.enabledPagesCount}</div>
+                  <div>الإجمالي المتوقع: {createResult.summary.expectedTasks}</div>
+                </div>
+              )}
+              {createdByPlatform && createdByPlatform.size > 0 && (
+                <div className="space-y-1">
+                  <div className="font-medium">توزيع المنشأ حسب المنصة:</div>
+                  {[...createdByPlatform.entries()].map(([platformName, count]) => (
+                    <div key={platformName}>{platformName}: {count} مهمة</div>
+                  ))}
+                </div>
+              )}
+              {skippedByPlatform && skippedByPlatform.size > 0 && (
+                <div className="space-y-1">
+                  <div className="font-medium">أسباب التخطي حسب المنصة:</div>
+                  {[...skippedByPlatform.entries()].map(([label, count]) => (
+                    <div key={label}>{label}: {count}</div>
+                  ))}
+                </div>
+              )}
               {createResult.created.length > 0 && (
                 <div className="space-y-1">
                   <div className="font-medium">المهام المنشأة:</div>
                   {createResult.created.map((item) => (
                     <div key={item.taskId} className="rounded border border-green-200 bg-white/60 px-2 py-1">
                       <div>{item.platformName} - {item.pageName}</div>
+                      {item.dueDate && <div>التاريخ: {item.dueDate}</div>}
                       <div>taskId: {item.taskId}</div>
                       <div>المسؤولون: {item.memberNames?.length ? item.memberNames.join("، ") : item.memberIds?.length ? item.memberIds.join(", ") : "غير معروف"}</div>
                     </div>
@@ -1118,6 +1198,7 @@ function TaskFlowPreviewPanel({
                     <div key={`${item.pageId ?? item.platformName ?? "skipped"}-${index}`} className="rounded border border-amber-200 bg-white/60 px-2 py-1">
                       <div>{item.platformName ?? "منصة غير معروفة"} - {item.pageName ?? "صفحة غير معروفة"}</div>
                       <div>السبب: {item.reason}</div>
+                      {item.dueDate && <div>التاريخ: {item.dueDate}</div>}
                       {item.existingTaskId && <div>existingTaskId: {item.existingTaskId}</div>}
                       <div>المسؤولون: {item.memberNames?.length ? item.memberNames.join("، ") : item.memberIds?.length ? item.memberIds.join(", ") : "غير معروف"}</div>
                     </div>
@@ -4340,8 +4421,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     const sourcePlatformId = taskPlatformId(task);
     const reciterId = taskReciterId(task);
     const reciterName = (task as any).reciter?.name ?? "";
-    const dueDate = taskDateKey((task as any).dueDate ?? (task as any).startDate);
-    if (!sourcePlatformId || !reciterId || !dueDate) {
+    const flowDateKeys = taskFlowDateKeys(task);
+    const firstFlowDate = flowDateKeys[0] ?? "";
+    if (!sourcePlatformId || !reciterId || flowDateKeys.length === 0) {
       setTaskFlowPreview([]);
       setTaskFlowPreviewError("المهمة الأصلية المحفوظة لا تحتوي منصة أو قارئًا أو تاريخ استحقاق صالحًا.");
       return;
@@ -4388,7 +4470,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           .map((member) => member.name);
         const title = buildFlowChildPreviewTitle(task, rule.platform.name);
         const normalizedTitle = normalizeTaskPreviewTitle(title);
-        const duplicateTask = loadedTasks.find((candidate) => {
+        const duplicateTasks = loadedTasks.filter((candidate) => {
           const candidateDate = taskDateKey((candidate as any).dueDate ?? (candidate as any).startDate);
           const candidateTitle = normalizeTaskPreviewTitle((candidate as any).title);
           const titleMatches =
@@ -4399,14 +4481,15 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             taskPlatformId(candidate) === rule.platform.id &&
             taskReciterId(candidate) === reciterId &&
             taskPageId(candidate) === rule.page.id &&
-            candidateDate === dueDate &&
+            flowDateKeys.includes(candidateDate) &&
             titleMatches
           );
         });
+        const duplicateTask = duplicateTasks[0];
         const warnings: string[] = [];
         if (pageMemberOptions.length === 0) warnings.push("تحذير: لا يوجد أعضاء مرتبطون بهذه الصفحة.");
         if (memberIds.length === 0) warnings.push("تحذير: لم يتم اختيار مسؤول لهذه المهمة.");
-        if (duplicateTask) warnings.push(`تحذير: توجد مهمة مشابهة مسبقًا #${duplicateTask.id}.`);
+        if (duplicateTasks.length >= flowDateKeys.length) warnings.push("تحذير: توجد مهام مشابهة مسبقًا لكل أيام النطاق.");
 
         previewItems.push({
           key: `${rule.platform.id}-${rule.page.id}`,
@@ -4418,7 +4501,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           memberIds,
           memberNames,
           pageMemberOptions,
-          dueDate,
+          dueDate: firstFlowDate,
           title,
           warnings,
           existingTaskId: duplicateTask?.id,
