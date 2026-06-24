@@ -14,6 +14,7 @@ export * from "./comments";
 export * from "./users";
 export * from "./otp-codes";
 export * from "./notifications";
+export * from "./personal-reminders";
 export * from "./activity-log";
 export * from "./reset-tokens";
 export * from "./page-members";

@@ -18,6 +18,7 @@ import Settings, {
 import RecitersPage from "@/pages/reciters";
 import PlatformsPage from "@/pages/platforms";
 import Account from "@/pages/account";
+import Reminders from "@/pages/reminders";
 import Achievements from "@/pages/achievements";
 import SignInPage from "@/pages/sign-in";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -136,6 +137,11 @@ function AppRouter() {
       <Route path="/account">
         <ProtectedRoute>
           <AppLayout><Account /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/reminders">
+        <ProtectedRoute>
+          <AppLayout><Reminders /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/help">

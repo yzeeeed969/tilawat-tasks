@@ -23,6 +23,7 @@ import {
   ListTodo,
   RefreshCw,
   Bell,
+  AlarmClock,
   BookOpen,
   Layers,
 } from "lucide-react";
@@ -369,6 +370,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     { href: "/tasks", label: "المهام", icon: CheckSquare, show: true },
     { href: "/members", label: "الأعضاء", icon: Users, show: canViewMembers },
     { href: "/reports", label: "التقارير", icon: BarChart3, show: canViewReports },
+    { href: "/reminders", label: "التذكيرات", icon: AlarmClock, show: true },
     { href: "/account", label: "حسابي", icon: User, show: true },
   ].filter((item) => item.show);
 

@@ -9,6 +9,7 @@ import statsRouter from "./stats";
 import adminRouter from "./admin";
 import recitersRouter from "./reciters";
 import notificationsRouter from "./notifications";
+import remindersRouter from "./reminders";
 import activityLogRouter from "./activity-log";
 import telegramRouter from "./telegram";
 import publicRouter from "./public";
@@ -32,6 +33,7 @@ router.use(statsRouter);
 router.use(adminRouter);
 router.use(recitersRouter);
 router.use(notificationsRouter);
+router.use(remindersRouter);
 router.use(activityLogRouter);
 
 export default router;

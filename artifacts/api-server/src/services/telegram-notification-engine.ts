@@ -4,6 +4,7 @@ import {
   db,
   membersTable,
   notificationLogsTable,
+  personalRemindersTable,
   platformsTable,
   recitersTable,
   taskProofsTable,
@@ -16,6 +17,7 @@ import {
   type TelegramSettings,
 } from "@workspace/db";
 import { ensureTelegramSchema } from "./telegram-schema";
+import { ensurePersonalRemindersSchema } from "./personal-reminders-schema";
 import { ensureTaskQuotaSchema } from "./task-quota-schema";
 import { sendTelegramMessage } from "./telegram";
 import { getTaskUrl } from "../lib/public-url";
@@ -37,6 +39,7 @@ type NotificationType =
   | "telegram_task_assigned"
   | "telegram_task_dependency_ready"
   | "telegram_weekly_quota_reminder"
+  | "telegram_personal_reminder"
   | "telegram_password_reset"
   | "telegram_test";
 
@@ -1273,8 +1276,64 @@ export async function notifyTelegramTaskDependencyReady(input: {
   return { sent };
 }
 
+async function sendDuePersonalReminders(now: Date) {
+  await ensurePersonalRemindersSchema();
+  const reminders = await db
+    .select({
+      id: personalRemindersTable.id,
+      userId: personalRemindersTable.userId,
+      message: personalRemindersTable.message,
+      remindAt: personalRemindersTable.remindAt,
+      recipientMemberId: usersTable.memberId,
+      chatId: telegramRecipientsTable.chatId,
+    })
+    .from(personalRemindersTable)
+    .innerJoin(usersTable, eq(personalRemindersTable.userId, usersTable.id))
+    .leftJoin(telegramRecipientsTable, and(
+      eq(telegramRecipientsTable.userId, personalRemindersTable.userId),
+      eq(telegramRecipientsTable.isEnabled, true),
+    ))
+    .where(and(
+      eq(personalRemindersTable.status, "active"),
+      lte(personalRemindersTable.remindAt, now),
+      eq(usersTable.isApproved, true),
+    ))
+    .orderBy(asc(personalRemindersTable.remindAt))
+    .limit(50);
+
+  let sent = 0;
+  for (const reminder of reminders) {
+    if (!reminder.chatId) continue;
+    const text = [
+      "⏰ <b>تذكير شخصي</b>",
+      "",
+      escapeHtml(reminder.message),
+    ].join("\n");
+    const result = await sendLoggedTelegram({
+      type: "telegram_personal_reminder",
+      dedupeKey: `telegram:personal_reminder:${reminder.id}`,
+      chatId: reminder.chatId,
+      text,
+      recipientUserId: reminder.userId,
+      recipientMemberId: reminder.recipientMemberId,
+    });
+    if (result.sent) {
+      sent += 1;
+      await db
+        .update(personalRemindersTable)
+        .set({ status: "sent", sentAt: now, updatedAt: now })
+        .where(and(
+          eq(personalRemindersTable.id, reminder.id),
+          eq(personalRemindersTable.status, "active"),
+        ));
+    }
+  }
+  return sent;
+}
+
 export async function runTelegramNotificationCycle(now = new Date()) {
   await ensureTelegramSchema();
+  await ensurePersonalRemindersSchema();
   const settings = await getTelegramSettings();
   if (!settings.enabled) return { enabled: false, sent: 0 };
 
@@ -1284,16 +1343,18 @@ export async function runTelegramNotificationCycle(now = new Date()) {
   const weeklyAppreciation = await sendWeeklyMemberAppreciation(settings, now);
   const summary = await sendAdminDailySummary(settings, now);
   const publicSummary = await sendDailyPublicSummary(settings, now);
+  const personalReminders = await sendDuePersonalReminders(now);
 
   return {
     enabled: true,
-    sent: daily + overdue + weeklyQuota + weeklyAppreciation + summary + publicSummary,
+    sent: daily + overdue + weeklyQuota + weeklyAppreciation + summary + publicSummary + personalReminders,
     daily,
     overdue,
     weeklyQuota,
     weeklyAppreciation,
     summary,
     publicSummary,
+    personalReminders,
   };
 }
 
