@@ -46,14 +46,19 @@ function formatDateTime(value: string | null) {
   }).format(new Date(value));
 }
 
-function getStatusLabel(status: ReminderStatus) {
+function getStatusLabel(reminder: Pick<PersonalReminder, "status" | "remindAt">) {
+  const isDue = reminder.status === "active" && new Date(reminder.remindAt).getTime() <= Date.now();
+  if (isDue) return "مستحق - بانتظار الإرسال";
+  const status = reminder.status;
   if (status === "active") return "نشط";
   if (status === "sent") return "تم الإرسال";
   if (status === "cancelled") return "ملغي";
   return status;
 }
 
-function getStatusVariant(status: ReminderStatus): "default" | "secondary" | "destructive" | "outline" {
+function getStatusVariant(reminder: Pick<PersonalReminder, "status" | "remindAt">): "default" | "secondary" | "destructive" | "outline" {
+  if (reminder.status === "active" && new Date(reminder.remindAt).getTime() <= Date.now()) return "destructive";
+  const status = reminder.status;
   if (status === "active") return "default";
   if (status === "sent") return "secondary";
   if (status === "cancelled") return "outline";
@@ -112,6 +117,7 @@ export default function Reminders() {
   const remindersQuery = useQuery({
     queryKey: ["personal-reminders"],
     queryFn: fetchReminders,
+    refetchInterval: 60_000,
   });
 
   const telegramQuery = useQuery({
@@ -247,7 +253,7 @@ export default function Reminders() {
                 >
                   <div className="space-y-2 min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <Badge variant={getStatusVariant(reminder.status)}>{getStatusLabel(reminder.status)}</Badge>
+                      <Badge variant={getStatusVariant(reminder)}>{getStatusLabel(reminder)}</Badge>
                       <span className="text-sm text-muted-foreground">
                         {formatDateTime(reminder.remindAt)}
                       </span>

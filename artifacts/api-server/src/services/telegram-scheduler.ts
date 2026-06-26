@@ -8,13 +8,14 @@ let running = false;
 export function startTelegramScheduler(logger?: Logger) {
   if (started) return;
   started = true;
+  logger?.info({ intervalMs: INTERVAL_MS }, "Telegram scheduler started");
 
   const tick = async () => {
     if (running) return;
     running = true;
     try {
       const result = await runTelegramNotificationCycle();
-      if (result.enabled && result.sent > 0) {
+      if (result.sent > 0 || result.personalReminders?.due > 0) {
         logger?.info({ result }, "Telegram notification cycle completed");
       }
     } catch (err) {

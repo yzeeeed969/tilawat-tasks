@@ -21,6 +21,7 @@ import { ensurePersonalRemindersSchema } from "./personal-reminders-schema";
 import { ensureTaskQuotaSchema } from "./task-quota-schema";
 import { sendTelegramMessage } from "./telegram";
 import { getTaskUrl } from "../lib/public-url";
+import { logger } from "../lib/logger";
 
 const RIYADH_OFFSET_HOURS = 3;
 const LINK_TOKEN_BYTES = 18;
@@ -1301,22 +1302,53 @@ async function sendDuePersonalReminders(now: Date) {
     .orderBy(asc(personalRemindersTable.remindAt))
     .limit(50);
 
+  if (reminders.length > 0) {
+    logger.info({
+      dueCount: reminders.length,
+      now: now.toISOString(),
+    }, "Personal reminder due check found reminders");
+  } else {
+    logger.debug({ now: now.toISOString() }, "Personal reminder due check found no reminders");
+  }
+
   let sent = 0;
+  let skippedNoChat = 0;
+  let failed = 0;
   for (const reminder of reminders) {
-    if (!reminder.chatId) continue;
+    const hasTelegramRecipient = Boolean(reminder.chatId);
+    logger.info({
+      reminderId: reminder.id,
+      userId: reminder.userId,
+      remindAt: reminder.remindAt instanceof Date ? reminder.remindAt.toISOString() : reminder.remindAt,
+      now: now.toISOString(),
+      hasTelegramRecipient,
+    }, "Personal reminder delivery check");
+
+    if (!reminder.chatId) {
+      skippedNoChat += 1;
+      logger.warn({
+        reminderId: reminder.id,
+        userId: reminder.userId,
+        remindAt: reminder.remindAt instanceof Date ? reminder.remindAt.toISOString() : reminder.remindAt,
+      }, "Personal reminder skipped because Telegram is not linked");
+      continue;
+    }
+
     const text = [
       "⏰ <b>تذكير شخصي</b>",
       "",
       escapeHtml(reminder.message),
     ].join("\n");
+
     const result = await sendLoggedTelegram({
       type: "telegram_personal_reminder",
-      dedupeKey: `telegram:personal_reminder:${reminder.id}`,
+      dedupeKey: `telegram:personal_reminder:${reminder.id}:attempt:${now.getTime()}`,
       chatId: reminder.chatId,
       text,
       recipientUserId: reminder.userId,
       recipientMemberId: reminder.recipientMemberId,
     });
+
     if (result.sent) {
       sent += 1;
       await db
@@ -1326,16 +1358,43 @@ async function sendDuePersonalReminders(now: Date) {
           eq(personalRemindersTable.id, reminder.id),
           eq(personalRemindersTable.status, "active"),
         ));
+      logger.info({
+        reminderId: reminder.id,
+        userId: reminder.userId,
+        sentAt: now.toISOString(),
+      }, "Personal reminder sent");
+    } else {
+      failed += 1;
+      logger.warn({
+        reminderId: reminder.id,
+        userId: reminder.userId,
+        skipped: result.skipped,
+        error: result.error,
+      }, "Personal reminder send failed");
     }
   }
-  return sent;
+
+  return {
+    due: reminders.length,
+    sent,
+    skippedNoChat,
+    failed,
+  };
 }
 
 export async function runTelegramNotificationCycle(now = new Date()) {
   await ensureTelegramSchema();
   await ensurePersonalRemindersSchema();
+  const personalReminders = await sendDuePersonalReminders(now);
   const settings = await getTelegramSettings();
-  if (!settings.enabled) return { enabled: false, sent: 0 };
+  if (!settings.enabled) {
+    return {
+      enabled: false,
+      sent: personalReminders.sent,
+      personalReminders,
+      telegramSettingsDisabled: true,
+    };
+  }
 
   const daily = await sendDailyMemberReminders(settings, now);
   const overdue = await sendOverdueNotifications(settings, now);
@@ -1343,11 +1402,10 @@ export async function runTelegramNotificationCycle(now = new Date()) {
   const weeklyAppreciation = await sendWeeklyMemberAppreciation(settings, now);
   const summary = await sendAdminDailySummary(settings, now);
   const publicSummary = await sendDailyPublicSummary(settings, now);
-  const personalReminders = await sendDuePersonalReminders(now);
 
   return {
     enabled: true,
-    sent: daily + overdue + weeklyQuota + weeklyAppreciation + summary + publicSummary + personalReminders,
+    sent: daily + overdue + weeklyQuota + weeklyAppreciation + summary + publicSummary + personalReminders.sent,
     daily,
     overdue,
     weeklyQuota,
