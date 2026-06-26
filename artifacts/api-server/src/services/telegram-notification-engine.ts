@@ -208,6 +208,41 @@ function isTimeReached(now: Date, time: string) {
   return p.hours * 60 + p.minutes >= parsed.hours * 60 + parsed.minutes;
 }
 
+function parseReminderWeekdays(value: string | null | undefined) {
+  if (!value) return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return [...new Set(parsed.map((day) => Number(day)))]
+      .filter((day) => Number.isInteger(day) && day >= 0 && day <= 6)
+      .sort((a, b) => a - b);
+  } catch {
+    return [];
+  }
+}
+
+function shouldSendWeeklyTasksReminder(input: {
+  weekdays: string | null | undefined;
+  timeOfDay: string | null | undefined;
+}, now: Date) {
+  const weekdays = parseReminderWeekdays(input.weekdays);
+  const parts = riyadhParts(now);
+  return weekdays.includes(parts.weekday) && Boolean(input.timeOfDay) && isTimeReached(now, input.timeOfDay!);
+}
+
+function nextWeeklyReminderDate(weekdays: number[], timeOfDay: string, now = new Date()) {
+  const parsed = parseTime(timeOfDay);
+  const parts = riyadhParts(now);
+  if (!parsed || weekdays.length === 0) return now;
+  for (let offset = 0; offset <= 7; offset += 1) {
+    const targetWeekday = (parts.weekday + offset) % 7;
+    if (!weekdays.includes(targetWeekday)) continue;
+    const candidate = riyadhLocalToUtc(parts.year, parts.month, parts.day + offset, parsed.hours, parsed.minutes);
+    if (candidate.getTime() > now.getTime()) return candidate;
+  }
+  return new Date(now.getTime() + DAY_MS);
+}
+
 function overdueCutoff(now: Date, overdueAfterTime: string) {
   const p = riyadhParts(now);
   const parsed = parseTime(overdueAfterTime) ?? { hours: 23, minutes: 59 };
@@ -533,6 +568,66 @@ async function getWeeklyQuotaReminderTasks(start: Date, end: Date): Promise<Week
       sql`${tasksTable.weeklyQuotaRequired} > 0`,
       sql`coalesce(${tasksTable.weeklyQuotaPeriodEnd}, ${tasksTable.dueDate}) >= ${start}`,
       sql`coalesce(${tasksTable.weeklyQuotaPeriodStart}, ${tasksTable.dueDate}) <= ${end}`,
+    ))
+    .groupBy(
+      tasksTable.id,
+      tasksTable.title,
+      tasksTable.status,
+      tasksTable.dueDate,
+      tasksTable.completedAt,
+      tasksTable.submissionUrl,
+      tasksTable.memberId,
+      membersTable.name,
+      platformsTable.name,
+      recitersTable.name,
+      tasksTable.weeklyQuotaRequired,
+      tasksTable.weeklyQuotaPeriodStart,
+      tasksTable.weeklyQuotaPeriodEnd,
+    )
+    .orderBy(asc(tasksTable.dueDate), asc(tasksTable.id));
+
+  return rows.map((row) => ({ ...row, proofCount: Number(row.proofCount ?? 0) }));
+}
+
+async function getWeeklyQuotaReminderTasksForMember(memberId: number, start: Date, end: Date): Promise<WeeklyQuotaTaskRow[]> {
+  await ensureTaskQuotaSchema();
+  const rows = await db
+    .select({
+      id: tasksTable.id,
+      title: tasksTable.title,
+      status: tasksTable.status,
+      dueDate: tasksTable.dueDate,
+      completedAt: tasksTable.completedAt,
+      submissionUrl: tasksTable.submissionUrl,
+      memberId: tasksTable.memberId,
+      memberName: membersTable.name,
+      platformName: platformsTable.name,
+      reciterName: recitersTable.name,
+      weeklyQuotaRequired: tasksTable.weeklyQuotaRequired,
+      weeklyQuotaPeriodStart: tasksTable.weeklyQuotaPeriodStart,
+      weeklyQuotaPeriodEnd: tasksTable.weeklyQuotaPeriodEnd,
+      proofCount: sql<number>`count(${taskProofsTable.id})::int`,
+    })
+    .from(tasksTable)
+    .innerJoin(membersTable, eq(tasksTable.memberId, membersTable.id))
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .leftJoin(taskMembersTable, and(
+      eq(taskMembersTable.taskId, tasksTable.id),
+      eq(taskMembersTable.memberId, memberId),
+    ))
+    .leftJoin(taskProofsTable, and(
+      eq(taskProofsTable.taskId, tasksTable.id),
+      isNull(taskProofsTable.deletedAt),
+    ))
+    .where(and(
+      isNull(tasksTable.deletedAt),
+      or(eq(tasksTable.status, "pending"), eq(tasksTable.status, "in_progress")),
+      sql`${tasksTable.weeklyQuotaRequired} IS NOT NULL`,
+      sql`${tasksTable.weeklyQuotaRequired} > 0`,
+      sql`coalesce(${tasksTable.weeklyQuotaPeriodEnd}, ${tasksTable.dueDate}) >= ${start}`,
+      sql`coalesce(${tasksTable.weeklyQuotaPeriodStart}, ${tasksTable.dueDate}) <= ${end}`,
+      or(eq(tasksTable.memberId, memberId), eq(taskMembersTable.memberId, memberId)),
     ))
     .groupBy(
       tasksTable.id,
@@ -1285,6 +1380,10 @@ async function sendDuePersonalReminders(now: Date) {
       userId: personalRemindersTable.userId,
       message: personalRemindersTable.message,
       remindAt: personalRemindersTable.remindAt,
+      type: personalRemindersTable.type,
+      weekdays: personalRemindersTable.weekdays,
+      timeOfDay: personalRemindersTable.timeOfDay,
+      sentAt: personalRemindersTable.sentAt,
       recipientMemberId: usersTable.memberId,
       chatId: telegramRecipientsTable.chatId,
     })
@@ -1296,7 +1395,10 @@ async function sendDuePersonalReminders(now: Date) {
     ))
     .where(and(
       eq(personalRemindersTable.status, "active"),
-      lte(personalRemindersTable.remindAt, now),
+      or(
+        and(eq(personalRemindersTable.type, "custom"), lte(personalRemindersTable.remindAt, now)),
+        eq(personalRemindersTable.type, "weekly_tasks"),
+      ),
       eq(usersTable.isApproved, true),
     ))
     .orderBy(asc(personalRemindersTable.remindAt))
@@ -1304,22 +1406,36 @@ async function sendDuePersonalReminders(now: Date) {
 
   if (reminders.length > 0) {
     logger.info({
-      dueCount: reminders.length,
+      candidateCount: reminders.length,
       now: now.toISOString(),
-    }, "Personal reminder due check found reminders");
+    }, "Personal reminder check found active candidates");
   } else {
     logger.debug({ now: now.toISOString() }, "Personal reminder due check found no reminders");
   }
 
   let sent = 0;
+  let due = 0;
   let skippedNoChat = 0;
+  let skippedNotDue = 0;
+  let skippedDuplicate = 0;
   let failed = 0;
   for (const reminder of reminders) {
+    const isWeeklyTasks = reminder.type === "weekly_tasks";
+    const isCustom = reminder.type !== "weekly_tasks";
+    if (isWeeklyTasks && !shouldSendWeeklyTasksReminder(reminder, now)) {
+      skippedNotDue += 1;
+      continue;
+    }
+    due += 1;
+
     const hasTelegramRecipient = Boolean(reminder.chatId);
     logger.info({
       reminderId: reminder.id,
       userId: reminder.userId,
+      type: reminder.type,
       remindAt: reminder.remindAt instanceof Date ? reminder.remindAt.toISOString() : reminder.remindAt,
+      weekdays: reminder.weekdays,
+      timeOfDay: reminder.timeOfDay,
       now: now.toISOString(),
       hasTelegramRecipient,
     }, "Personal reminder delivery check");
@@ -1329,20 +1445,47 @@ async function sendDuePersonalReminders(now: Date) {
       logger.warn({
         reminderId: reminder.id,
         userId: reminder.userId,
+        type: reminder.type,
         remindAt: reminder.remindAt instanceof Date ? reminder.remindAt.toISOString() : reminder.remindAt,
       }, "Personal reminder skipped because Telegram is not linked");
       continue;
     }
 
-    const text = [
-      "⏰ <b>تذكير شخصي</b>",
-      "",
-      escapeHtml(reminder.message),
-    ].join("\n");
+    let text: string;
+    let dedupeKey: string;
+    if (isWeeklyTasks) {
+      const tasks = reminder.recipientMemberId
+        ? await getWeeklyQuotaReminderTasksForMember(reminder.recipientMemberId, riyadhWeekRange(now).start, riyadhWeekRange(now).end)
+        : [];
+      const incompleteTasks = tasks.filter((task) => {
+        const required = Number(task.weeklyQuotaRequired ?? 0);
+        return required > 0 && Number(task.proofCount ?? 0) < required;
+      });
+      const lines = incompleteTasks.map((task) => {
+        const required = Number(task.weeklyQuotaRequired ?? 0);
+        const done = Number(task.proofCount ?? 0);
+        return `- ${escapeHtml(task.title)}: أنجزت ${done} من ${required}`;
+      });
+      text = [
+        "⏰ <b>تذكير بالمهام الأسبوعية</b>",
+        "",
+        lines.length > 0
+          ? ["لديك مهام أسبوعية لم تكتمل بعد:", "", ...lines].join("\n")
+          : "✅ لا توجد مهام أسبوعية متبقية عليك الآن.",
+      ].join("\n");
+      dedupeKey = `telegram:personal_weekly_tasks:${reminder.id}:${riyadhDateKey(now)}`;
+    } else {
+      text = [
+        "⏰ <b>تذكير شخصي</b>",
+        "",
+        escapeHtml(reminder.message),
+      ].join("\n");
+      dedupeKey = `telegram:personal_reminder:${reminder.id}:attempt:${now.getTime()}`;
+    }
 
     const result = await sendLoggedTelegram({
       type: "telegram_personal_reminder",
-      dedupeKey: `telegram:personal_reminder:${reminder.id}:attempt:${now.getTime()}`,
+      dedupeKey,
       chatId: reminder.chatId,
       text,
       recipientUserId: reminder.userId,
@@ -1353,7 +1496,14 @@ async function sendDuePersonalReminders(now: Date) {
       sent += 1;
       await db
         .update(personalRemindersTable)
-        .set({ status: "sent", sentAt: now, updatedAt: now })
+        .set({
+          status: isCustom ? "sent" : "active",
+          remindAt: isWeeklyTasks
+            ? nextWeeklyReminderDate(parseReminderWeekdays(reminder.weekdays), reminder.timeOfDay ?? "20:00", new Date(now.getTime() + 60_000))
+            : reminder.remindAt,
+          sentAt: now,
+          updatedAt: now,
+        })
         .where(and(
           eq(personalRemindersTable.id, reminder.id),
           eq(personalRemindersTable.status, "active"),
@@ -1361,13 +1511,23 @@ async function sendDuePersonalReminders(now: Date) {
       logger.info({
         reminderId: reminder.id,
         userId: reminder.userId,
+        type: reminder.type,
         sentAt: now.toISOString(),
       }, "Personal reminder sent");
+    } else if (result.skipped) {
+      skippedDuplicate += 1;
+      logger.info({
+        reminderId: reminder.id,
+        userId: reminder.userId,
+        type: reminder.type,
+        dedupeKey,
+      }, "Personal reminder skipped because it was already processed for this key");
     } else {
       failed += 1;
       logger.warn({
         reminderId: reminder.id,
         userId: reminder.userId,
+        type: reminder.type,
         skipped: result.skipped,
         error: result.error,
       }, "Personal reminder send failed");
@@ -1375,9 +1535,12 @@ async function sendDuePersonalReminders(now: Date) {
   }
 
   return {
-    due: reminders.length,
+    due,
+    candidates: reminders.length,
     sent,
     skippedNoChat,
+    skippedNotDue,
+    skippedDuplicate,
     failed,
   };
 }
