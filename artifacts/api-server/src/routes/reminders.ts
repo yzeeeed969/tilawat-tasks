@@ -88,10 +88,15 @@ router.get("/reminders", async (req, res) => {
 router.post("/reminders", async (req, res) => {
   const user = (req as any).currentUser;
   const type = req.body?.type === "weekly_tasks" ? "weekly_tasks" : "custom";
+  const message = parseReminderMessage(req.body?.message);
 
   if (type === "weekly_tasks") {
     const weekdays = parseWeekdays(req.body?.weekdays);
     const timeOfDay = parseTimeOfDay(req.body?.timeOfDay);
+    if (!message) {
+      res.status(400).json({ error: "message must be between 3 and 500 characters" });
+      return;
+    }
     if (!weekdays) {
       res.status(400).json({ error: "weekdays must include at least one valid weekday" });
       return;
@@ -105,7 +110,7 @@ router.post("/reminders", async (req, res) => {
       .insert(personalRemindersTable)
       .values({
         userId: user.id,
-        message: "تذكير بالمهام الأسبوعية",
+        message,
         remindAt: nextWeeklyReminderDate(weekdays, timeOfDay),
         timezone: "Asia/Riyadh",
         type,
@@ -119,7 +124,6 @@ router.post("/reminders", async (req, res) => {
     return;
   }
 
-  const message = parseReminderMessage(req.body?.message);
   const remindAt = parseFutureDate(req.body?.remindAt);
 
   if (!message) {

@@ -1469,6 +1469,8 @@ async function sendDuePersonalReminders(now: Date) {
       text = [
         "⏰ <b>تذكير بالمهام الأسبوعية</b>",
         "",
+        escapeHtml(reminder.message),
+        "",
         lines.length > 0
           ? ["لديك مهام أسبوعية لم تكتمل بعد:", "", ...lines].join("\n")
           : "✅ لا توجد مهام أسبوعية متبقية عليك الآن.",

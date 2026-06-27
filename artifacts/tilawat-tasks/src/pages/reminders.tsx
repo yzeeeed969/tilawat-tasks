@@ -167,7 +167,7 @@ export default function Reminders() {
   const selectedDate = useMemo(() => new Date(remindAt), [remindAt]);
   const isFutureDate = Number.isFinite(selectedDate.getTime()) && selectedDate.getTime() > Date.now();
   const canSubmitCustom = trimmedMessage.length >= 3 && trimmedMessage.length <= 500 && isFutureDate;
-  const canSubmitWeekly = selectedWeekdays.length > 0 && /^([01]\d|2[0-3]):([0-5]\d)$/.test(timeOfDay);
+  const canSubmitWeekly = trimmedMessage.length >= 3 && trimmedMessage.length <= 500 && selectedWeekdays.length > 0 && /^([01]\d|2[0-3]):([0-5]\d)$/.test(timeOfDay);
   const canSubmit = reminderType === "custom" ? canSubmitCustom : canSubmitWeekly;
 
   const remindersQuery = useQuery({
@@ -184,7 +184,7 @@ export default function Reminders() {
   const createMutation = useMutation({
     mutationFn: () => {
       if (reminderType === "weekly_tasks") {
-        return createReminder({ type: "weekly_tasks", weekdays: selectedWeekdays, timeOfDay });
+        return createReminder({ type: "weekly_tasks", message: trimmedMessage, weekdays: selectedWeekdays, timeOfDay });
       }
       return createReminder({ type: "custom", message: trimmedMessage, remindAt: selectedDate.toISOString() });
     },
@@ -303,6 +303,22 @@ export default function Reminders() {
             ) : (
               <>
                 <div className="grid gap-2">
+                  <Label htmlFor="weekly-reminder-message">نص التذكير</Label>
+                  <Textarea
+                    id="weekly-reminder-message"
+                    value={message}
+                    onChange={(event) => setMessage(event.target.value)}
+                    maxLength={500}
+                    placeholder="اكتب ما تريد أن يذكّرك به هذا التذكير"
+                    className="min-h-24"
+                  />
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>مثال: تذكير بنشر مقاطع الشيخ ياسر</span>
+                    <span>{trimmedMessage.length}/500</span>
+                  </div>
+                </div>
+
+                <div className="grid gap-2">
                   <Label>أيام التذكير الأسبوعي</Label>
                   <div className="grid grid-cols-2 gap-2 sm:grid-cols-4 lg:grid-cols-7">
                     {weekdayOptions.map((day) => {
@@ -382,6 +398,7 @@ export default function Reminders() {
                       </div>
                       {isWeekly ? (
                         <>
+                          <p className="font-semibold leading-7 whitespace-pre-wrap break-words">{reminder.message}</p>
                           <p className="font-medium leading-7">
                             كل أسبوع: {formatWeekdays(reminder.weekdays)} — {formatTime(reminder.timeOfDay)}
                           </p>
