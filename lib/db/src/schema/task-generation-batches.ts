@@ -6,6 +6,7 @@ import { recitersTable } from "./reciters";
 export const taskGenerationBatchesTable = pgTable("task_generation_batches", {
   id: serial("id").primaryKey(),
   createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  sourceTaskId: integer("source_task_id"),
   title: text("title").notNull(),
   sourcePlatformId: integer("source_platform_id").notNull().references(() => platformsTable.id, { onDelete: "restrict" }),
   reciterId: integer("reciter_id").notNull().references(() => recitersTable.id, { onDelete: "restrict" }),
@@ -15,6 +16,7 @@ export const taskGenerationBatchesTable = pgTable("task_generation_batches", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 }, (table) => [
   index("idx_task_generation_batches_created_by").on(table.createdByUserId),
+  index("idx_task_generation_batches_source_task").on(table.sourceTaskId),
   index("idx_task_generation_batches_reciter").on(table.reciterId),
 ]);
 
