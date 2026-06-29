@@ -6,6 +6,7 @@ import { platformsTable } from "./platforms";
 import { platformPagesTable } from "./platform-pages";
 import { recitersTable } from "./reciters";
 import { taskSeriesTable } from "./task-series";
+import { taskGenerationBatchesTable } from "./task-generation-batches";
 
 export const taskStatusEnum = pgEnum("task_status", ["pending", "in_progress", "completed"]);
 export const taskRecurrenceEnum = pgEnum("task_recurrence", ["none", "daily", "weekly", "monthly", "custom_days"]);
@@ -34,6 +35,7 @@ export const tasksTable = pgTable("tasks", {
   weeklyQuotaPeriodStart: timestamp("weekly_quota_period_start"),
   weeklyQuotaPeriodEnd: timestamp("weekly_quota_period_end"),
   source: text("source").notNull().default("admin_created"),
+  generationBatchId: integer("generation_batch_id").references(() => taskGenerationBatchesTable.id, { onDelete: "set null" }),
   lastRecurredAt: timestamp("last_recurred_at"),
   submissionUrl: text("submission_url"),
   pageId: integer("page_id").references(() => platformPagesTable.id, { onDelete: "set null" }),

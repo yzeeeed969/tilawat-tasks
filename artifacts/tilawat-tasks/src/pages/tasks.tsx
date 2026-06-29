@@ -1600,6 +1600,9 @@ function TaskFlowActionMenuItems({
   eligibility: TaskFlowActionEligibility;
   onOpen: () => void;
 }) {
+  void eligibility;
+  void onOpen;
+  return null;
   const reasonText = eligibility.reasons.join("، ") || "جاهزة";
   const debug = eligibility.debug;
   const debugText = [
@@ -5567,7 +5570,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               <div className="min-w-0">
                 <h2 className="text-2xl font-bold tracking-tight text-foreground">المهام</h2>
                 <p className="mt-1 text-sm text-muted-foreground">إدارة ومتابعة مهام الفريق</p>
-                <p className="mt-1 text-[11px] font-semibold text-amber-700">نسخة تشخيص المهام التابعة: {TASK_FLOW_DIAGNOSTIC_VERSION}</p>
+                {false && <p className="mt-1 text-[11px] font-semibold text-amber-700">نسخة تشخيص المهام التابعة: {TASK_FLOW_DIAGNOSTIC_VERSION}</p>}
                 {view === "list" && activeTab === "active" && (
                   <p className="mt-2 inline-flex rounded-full border border-sidebar-primary/20 bg-sidebar-primary/5 px-2.5 py-1 text-xs font-semibold text-sidebar-primary">
                     يعرض {adminListShown} من {adminListTotal} مهمة
@@ -5670,7 +5673,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           <p className="text-muted-foreground mt-2">
             {!isAdmin ? "مهامك المسندة إليك — ضع علامة ✓ عند إتمام كل مهمة" : "إدارة ومتابعة مهام الفريق"}
           </p>
-          {isAdmin && (
+          {false && isAdmin && (
             <p className="mt-1 text-xs font-semibold text-amber-700">نسخة تشخيص المهام التابعة: {TASK_FLOW_DIAGNOSTIC_VERSION}</p>
           )}
         </div>

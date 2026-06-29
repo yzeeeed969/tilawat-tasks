@@ -26,6 +26,7 @@ import {
   AlarmClock,
   BookOpen,
   Layers,
+  WandSparkles,
 } from "lucide-react";
 import {
   Dialog,
@@ -375,6 +376,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   ].filter((item) => item.show);
 
   const adminNavItems = [
+    { href: "/task-generation", label: "توليد المهام", icon: WandSparkles, show: canManageSettings },
     { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
     { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
     { href: "/settings/telegram", label: "Telegram", icon: Bell, show: canManageSettings },

@@ -7,6 +7,7 @@ export * from "./reciter-task-flow-rule-assignees";
 export * from "./task-series";
 export * from "./tasks";
 export * from "./task-flow-links";
+export * from "./task-generation-batches";
 export * from "./task-dependencies";
 export * from "./task-members";
 export * from "./task-proofs";

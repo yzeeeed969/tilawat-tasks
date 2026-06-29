@@ -19,6 +19,7 @@ import RecitersPage from "@/pages/reciters";
 import PlatformsPage from "@/pages/platforms";
 import Account from "@/pages/account";
 import Reminders from "@/pages/reminders";
+import TaskGenerationPage from "@/pages/task-generation";
 import Achievements from "@/pages/achievements";
 import SignInPage from "@/pages/sign-in";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -132,6 +133,11 @@ function AppRouter() {
       <Route path="/platforms">
         <ProtectedRoute>
           <AppLayout><PlatformsPage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/task-generation">
+        <ProtectedRoute>
+          <AppLayout><TaskGenerationPage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/account">
