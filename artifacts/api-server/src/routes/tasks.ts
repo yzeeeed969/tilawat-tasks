@@ -1236,6 +1236,18 @@ router.get("/tasks", async (req, res) => {
   res.json(result);
 });
 
+function disabledTaskGenerationResponse(_req: any, res: any) {
+  res.status(410).json({ error: "task_generation_disabled", message: "ميزة توليد المهام غير مفعلة حاليًا" });
+}
+
+function isTaskGenerationEnabled() {
+  return false;
+}
+
+router.get("/tasks/:id/flow-change-impact", disabledTaskGenerationResponse);
+router.post("/tasks/:id/flow-change-action", disabledTaskGenerationResponse);
+router.post("/tasks/:id/flow-children", disabledTaskGenerationResponse);
+
 router.get("/tasks/:id/flow-change-impact", async (req, res) => {
   const id = Number(req.params.id);
   const newReciterId = Number(req.query.newReciterId);
@@ -2088,7 +2100,7 @@ router.patch("/tasks/:id/quick-reciter", async (req, res) => {
     res.status(404).json({ error: "Member not found" });
     return;
   }
-  if ((req.body as any).flowChangeAcknowledged !== true) {
+  if (isTaskGenerationEnabled() && (req.body as any).flowChangeAcknowledged !== true) {
     const impact = await buildFlowChangeImpact(id, reciterId);
     if (impact && impact.totalChildren > 0) {
       res.status(409).json({ error: "flow_change_required", impact });
@@ -2229,6 +2241,7 @@ router.put("/tasks/:id", async (req, res) => {
   const updateScope: TaskUpdateScope = canApplySeriesScope ? requestedUpdateScope : "single";
   const requestedReciterId = "reciterId" in body ? body.reciterId ?? null : currentTask.reciterId ?? null;
   if (
+    isTaskGenerationEnabled() &&
     currentUser?.role === "admin" &&
     "reciterId" in body &&
     requestedReciterId &&

@@ -19,7 +19,6 @@ import RecitersPage from "@/pages/reciters";
 import PlatformsPage from "@/pages/platforms";
 import Account from "@/pages/account";
 import Reminders from "@/pages/reminders";
-import TaskGenerationPage from "@/pages/task-generation";
 import Achievements from "@/pages/achievements";
 import SignInPage from "@/pages/sign-in";
 import ResetPasswordPage from "@/pages/reset-password";
@@ -83,6 +82,24 @@ function TaskLinkRoute() {
   return <TasksRoute taskId={Number.isFinite(parsedTaskId) ? parsedTaskId : undefined} />;
 }
 
+function TaskGenerationDisabledRoute() {
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    setLocation("/tasks");
+  }, [setLocation]);
+
+  return (
+    <ProtectedRoute>
+      <AppLayout>
+        <div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
+          ميزة توليد المهام غير مفعلة حاليًا
+        </div>
+      </AppLayout>
+    </ProtectedRoute>
+  );
+}
+
 function AppRouter() {
   return (
     <Switch>
@@ -136,9 +153,7 @@ function AppRouter() {
         </ProtectedRoute>
       </Route>
       <Route path="/task-generation">
-        <ProtectedRoute>
-          <AppLayout><TaskGenerationPage /></AppLayout>
-        </ProtectedRoute>
+        <TaskGenerationDisabledRoute />
       </Route>
       <Route path="/account">
         <ProtectedRoute>
