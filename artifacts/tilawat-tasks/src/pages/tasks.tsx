@@ -773,26 +773,35 @@ type TaskDialogErrorBoundaryProps = {
 
 type TaskDialogErrorBoundaryState = {
   error: Error | null;
+  errorInfo: ErrorInfo | null;
 };
 
 class TaskDialogErrorBoundary extends Component<TaskDialogErrorBoundaryProps, TaskDialogErrorBoundaryState> {
-  state: TaskDialogErrorBoundaryState = { error: null };
+  state: TaskDialogErrorBoundaryState = { error: null, errorInfo: null };
 
   static getDerivedStateFromError(error: Error): TaskDialogErrorBoundaryState {
-    return { error };
+    return { error, errorInfo: null };
   }
 
   componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error("[task-dialog-crash]", {
+      dialogName: this.props.dialogName,
+      name: error?.name,
+      message: error?.message,
+      stack: error?.stack,
+      componentStack: errorInfo?.componentStack,
+    });
     console.error("[tasks-dialog] render failed", {
       dialogName: this.props.dialogName,
       error,
       errorInfo,
     });
+    this.setState({ errorInfo });
   }
 
   componentDidUpdate(previousProps: TaskDialogErrorBoundaryProps) {
     if (previousProps.resetKey !== this.props.resetKey && this.state.error) {
-      this.setState({ error: null });
+      this.setState({ error: null, errorInfo: null });
     }
   }
 
@@ -805,6 +814,13 @@ class TaskDialogErrorBoundary extends Component<TaskDialogErrorBoundaryProps, Ta
         <p className="mt-1 text-sm leading-6 text-red-700/80">
           حدث خطأ أثناء تجهيز بيانات النموذج. أغلق النافذة وحدّث الصفحة ثم حاول مرة أخرى.
         </p>
+        <div className="mt-3 rounded-md border border-red-200 bg-white/70 p-3 text-left text-xs leading-5 text-red-900" dir="ltr">
+          <div>name: {this.state.error?.name || "UnknownError"}</div>
+          <div>message: {this.state.error?.message || "No error message"}</div>
+          {this.state.errorInfo?.componentStack && (
+            <pre className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap">{this.state.errorInfo.componentStack}</pre>
+          )}
+        </div>
         <Button
           type="button"
           variant="outline"
@@ -1822,9 +1838,7 @@ type MultiPlatformAssignmentState = {
 };
 
 function createEmptyPlatformAssignment(): MultiPlatformAssignmentState {
-  const id = globalThis.crypto?.randomUUID
-    ? globalThis.crypto.randomUUID()
-    : `${Date.now()}-${Math.random()}`;
+  const id = `multi-platform-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   return { id, platformId: "", pageId: "", assigneeIds: [] };
 }
 
@@ -1885,10 +1899,13 @@ function MultiPlatformAssignmentsFields({
           <div key={assignment.id || index} className="space-y-3 rounded-md border border-border bg-background p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold">صف إضافي #{index + 2}</p>
-              <Button type="button" variant="ghost" size="sm" onClick={() => removeRow(index)}>
-                <Trash2 className="ml-1 h-4 w-4" />
+              <button
+                type="button"
+                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-destructive hover:bg-destructive/10"
+                onClick={() => removeRow(index)}
+              >
                 حذف
-              </Button>
+              </button>
             </div>
 
             <div className="grid gap-3 sm:grid-cols-2">
@@ -1946,11 +1963,13 @@ function MultiPlatformAssignmentsFields({
                           checked ? "bg-sidebar-primary/10" : "bg-background hover:bg-muted/40"
                         )}
                       >
-                        <Checkbox
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4 accent-[hsl(var(--sidebar-primary))]"
                           checked={checked}
-                          onCheckedChange={(value) => {
+                          onChange={(event) => {
                             const nextIds = new Set(selectedMemberIds);
-                            Boolean(value) ? nextIds.add(member.id) : nextIds.delete(member.id);
+                            event.target.checked ? nextIds.add(member.id) : nextIds.delete(member.id);
                             updateRow(index, { assigneeIds: [...nextIds] });
                           }}
                         />
@@ -1971,10 +1990,13 @@ function MultiPlatformAssignmentsFields({
         );
       })}
 
-      <Button type="button" variant="outline" className="w-full" onClick={addRow}>
-        <Plus className="ml-2 h-4 w-4" />
+      <button
+        type="button"
+        className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-md border border-input bg-background px-4 py-2 text-sm font-medium hover:bg-muted"
+        onClick={addRow}
+      >
         إضافة منصة
-      </Button>
+      </button>
     </div>
   );
 }
