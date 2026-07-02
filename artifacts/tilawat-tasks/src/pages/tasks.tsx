@@ -1,4 +1,4 @@
-import { Component, useState, useEffect, useMemo, useRef, type ErrorInfo, type ReactNode } from "react";
+import { Component, useState, useEffect, useMemo, useRef, type Dispatch, type ErrorInfo, type ReactNode, type SetStateAction } from "react";
 import {
   useListTasks,
   getListTasksQueryKey,
@@ -1814,69 +1814,51 @@ function MemberMultiSelect({
   );
 }
 
+type MultiPlatformAssignmentState = {
+  id: string;
+  platformId: string;
+  pageId: string;
+  assigneeIds: number[];
+};
+
+function createEmptyPlatformAssignment(): MultiPlatformAssignmentState {
+  const id = globalThis.crypto?.randomUUID
+    ? globalThis.crypto.randomUUID()
+    : `${Date.now()}-${Math.random()}`;
+  return { id, platformId: "", pageId: "", assigneeIds: [] };
+}
+
 function MultiPlatformAssignmentsFields({
   platforms,
   members,
-  reciterId,
+  assignments,
+  setAssignments,
 }: {
   platforms: { id: number; name: string }[] | undefined;
   members: { id: number; name: string; role: string }[] | undefined;
-  reciterId?: number | null;
+  assignments: MultiPlatformAssignmentState[];
+  setAssignments: Dispatch<SetStateAction<MultiPlatformAssignmentState[]>>;
 }) {
-  const { watch, setValue } = useFormContext<TaskFormValues>();
-  const watchedRows = watch("platformAssignments");
-  const rows = Array.isArray(watchedRows) ? watchedRows : [];
-  const platformIds = useMemo(() => (platforms ?? []).map((platform) => platform.id), [platforms]);
-
-  const pagesQuery = useQuery({
-    queryKey: ["multi-platform-assignment-pages", platformIds.join(",")],
-    enabled: platformIds.length > 0,
-    queryFn: async () => {
-      const pageLists = await Promise.all(platformIds.map(async (platformId) => {
-        const response = await fetch(`/api/platforms/${platformId}/pages`, { credentials: "include" });
-        if (!response.ok) return [];
-        const pages = await response.json() as Array<{
-          id: number;
-          name?: string | null;
-          platformId?: number | null;
-          reciterId?: number | null;
-        }>;
-        return pages.map((page) => ({ ...page, platformId }));
-      }));
-      return pageLists.flat();
-    },
-  });
-
-  const setRows = (nextRows: NonNullable<TaskFormValues["platformAssignments"]>) => {
-    setValue("platformAssignments", nextRows, { shouldDirty: true, shouldValidate: false });
-  };
+  const rows = Array.isArray(assignments) ? assignments : [];
+  console.log("[multi-platform] render assignments", rows);
 
   const addRow = () => {
-    const rowId = globalThis.crypto?.randomUUID
-      ? globalThis.crypto.randomUUID()
-      : `${Date.now()}-${Math.random()}`;
-    const nextRow = { id: rowId, platformId: null, pageId: null, memberIds: [] };
-    console.info("[multi-platform-task] add platform row", {
-      previousRowsCount: rows.length,
-      platformAssignmentsExists: Array.isArray(watchedRows),
-      nextRow,
-    });
-    setRows([...rows, nextRow]);
+    console.log("[multi-platform] add clicked", rows);
+    const nextRow = createEmptyPlatformAssignment();
+    setAssignments((previous) => [...(Array.isArray(previous) ? previous : []), nextRow]);
   };
 
-  const updateRow = (
-    index: number,
-    patch: Partial<NonNullable<TaskFormValues["platformAssignments"]>[number]>,
-  ) => {
-    setRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  const updateRow = (index: number, patch: Partial<MultiPlatformAssignmentState>) => {
+    setAssignments((previous) => (
+      (Array.isArray(previous) ? previous : []).map((row, rowIndex) => (
+        rowIndex === index ? { ...row, ...patch } : row
+      ))
+    ));
   };
 
   const removeRow = (index: number) => {
-    setRows(rows.filter((_, rowIndex) => rowIndex !== index));
+    setAssignments((previous) => (Array.isArray(previous) ? previous : []).filter((_, rowIndex) => rowIndex !== index));
   };
-
-  const pages = pagesQuery.data ?? [];
-  const selectedReciterId = toPositiveNumber(reciterId);
 
   return (
     <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3">
@@ -1895,17 +1877,12 @@ function MultiPlatformAssignmentsFields({
       </div>
 
       {rows.map((row, index) => {
-        const platformPages = pages
-          .filter((page) => page.platformId === row.platformId)
-          .filter((page) => {
-            const pageReciterId = toPositiveNumber(page.reciterId);
-            return selectedReciterId === null || pageReciterId === null || pageReciterId === selectedReciterId;
-          });
-        const selectedMemberIds = row.memberIds ?? [];
-        const isIncomplete = Boolean(row.platformId) && selectedMemberIds.length === 0;
+        const assignment = row ?? createEmptyPlatformAssignment();
+        const selectedMemberIds = Array.isArray(assignment.assigneeIds) ? assignment.assigneeIds : [];
+        const isIncomplete = Boolean(assignment.platformId) && selectedMemberIds.length === 0;
 
         return (
-          <div key={row.id ?? index} className="space-y-3 rounded-md border border-border bg-background p-3">
+          <div key={assignment.id || index} className="space-y-3 rounded-md border border-border bg-background p-3">
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm font-semibold">صف إضافي #{index + 2}</p>
               <Button type="button" variant="ghost" size="sm" onClick={() => removeRow(index)}>
@@ -1919,11 +1896,11 @@ function MultiPlatformAssignmentsFields({
                 <FormLabel>المنصة</FormLabel>
                 <select
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  value={row.platformId ? String(row.platformId) : ""}
+                  value={assignment.platformId || ""}
                   onChange={(event) => {
                     updateRow(index, {
-                      platformId: parseSelectNumberValue(event.target.value),
-                      pageId: null,
+                      platformId: event.target.value,
+                      pageId: "",
                     });
                   }}
                 >
@@ -1938,16 +1915,11 @@ function MultiPlatformAssignmentsFields({
                 <FormLabel>الصفحة</FormLabel>
                 <select
                   className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  value={row.pageId ? String(row.pageId) : "none"}
-                  disabled={!row.platformId}
-                  onChange={(event) => updateRow(index, { pageId: parseSelectNumberValue(event.target.value) })}
+                  value={assignment.pageId || ""}
+                  disabled
+                  onChange={(event) => updateRow(index, { pageId: event.target.value })}
                 >
-                  <option value="none">بدون صفحة</option>
-                  {platformPages.map((page) => (
-                    <option key={page.id} value={String(page.id)}>
-                      {page.name || `صفحة #${page.id}`}
-                    </option>
-                  ))}
+                  <option value="">بدون صفحة في الصف الإضافي حاليًا</option>
                 </select>
               </div>
             </div>
@@ -1960,11 +1932,37 @@ function MultiPlatformAssignmentsFields({
                   <span className="text-xs text-sidebar-primary font-semibold">({selectedMemberIds.length} مختار)</span>
                 )}
               </FormLabel>
-              <MemberMultiSelect
-                members={members}
-                value={selectedMemberIds}
-                onChange={(memberIds) => updateRow(index, { memberIds })}
-              />
+              <div className="rounded-md border border-input divide-y divide-border">
+                {(members ?? []).length === 0 ? (
+                  <div className="p-4 text-center text-sm text-muted-foreground">لا يوجد أعضاء</div>
+                ) : (
+                  (members ?? []).map((member) => {
+                    const checked = selectedMemberIds.includes(member.id);
+                    return (
+                      <label
+                        key={member.id}
+                        className={cn(
+                          "flex cursor-pointer items-center gap-3 px-4 py-3 text-right transition-colors",
+                          checked ? "bg-sidebar-primary/10" : "bg-background hover:bg-muted/40"
+                        )}
+                      >
+                        <Checkbox
+                          checked={checked}
+                          onCheckedChange={(value) => {
+                            const nextIds = new Set(selectedMemberIds);
+                            Boolean(value) ? nextIds.add(member.id) : nextIds.delete(member.id);
+                            updateRow(index, { assigneeIds: [...nextIds] });
+                          }}
+                        />
+                        <span className="flex-1">
+                          <span className="block text-sm font-semibold">{member.name}</span>
+                          {member.role && <span className="block text-xs text-muted-foreground">{member.role}</span>}
+                        </span>
+                      </label>
+                    );
+                  })
+                )}
+              </div>
               {isIncomplete && (
                 <p className="text-xs text-destructive">اختر مسؤولًا واحدًا على الأقل لهذا الصف.</p>
               )}
@@ -4324,6 +4322,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const restoreTask = useRestoreTask();
   const permanentDeleteTask = usePermanentDeleteTask();
   const [isCreateSubmitting, setIsCreateSubmitting] = useState(false);
+  const [platformAssignments, setPlatformAssignments] = useState<MultiPlatformAssignmentState[]>([]);
 
   const defaultFormValues: Omit<TaskFormValues, "platformId"> & { platformId?: number } = {
     title: "",
@@ -5221,28 +5220,28 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       if (isAdmin && isApplicationPlatform && data.reciterId) {
         pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, memberIdsForCreate);
       }
-      const rawExtraAssignments = isAdmin ? data.platformAssignments ?? [] : [];
-      const touchedExtraAssignments = rawExtraAssignments.filter((row) =>
-        Boolean(row.platformId) || Boolean(row.pageId) || Boolean(row.memberIds?.length)
+      const rawExtraAssignments: MultiPlatformAssignmentState[] = isAdmin && Array.isArray(platformAssignments) ? platformAssignments : [];
+      const touchedExtraAssignments = rawExtraAssignments.filter((row: MultiPlatformAssignmentState) =>
+        Boolean(row?.platformId) || Boolean(row?.pageId) || Boolean(row?.assigneeIds?.length)
       );
-      const incompleteExtraAssignment = touchedExtraAssignments.find((row) =>
-        !row.platformId || !row.memberIds?.length
+      const incompleteExtraAssignment = touchedExtraAssignments.find((row: MultiPlatformAssignmentState) =>
+        !row?.platformId || !row?.assigneeIds?.length
       );
       if (incompleteExtraAssignment) {
         toast({ title: "أكمل بيانات صفوف المنصات الإضافية", variant: "destructive" });
         return;
       }
-      const platformAssignments = touchedExtraAssignments.length > 0
+      const platformAssignmentPayload = touchedExtraAssignments.length > 0
         ? [
             {
               platformId: data.platformId,
               pageId,
               memberIds: memberIdsForCreate,
             },
-            ...touchedExtraAssignments.map((row) => ({
-              platformId: row.platformId!,
-              pageId: row.pageId ?? null,
-              memberIds: row.memberIds ?? [],
+            ...touchedExtraAssignments.map((row: MultiPlatformAssignmentState) => ({
+              platformId: Number(row.platformId),
+              pageId: row.pageId ? Number(row.pageId) : null,
+              memberIds: row.assigneeIds ?? [],
             })),
           ]
         : undefined;
@@ -5279,7 +5278,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           recurrencePattern: recurrence,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : null,
           source: isMemberSelfTask ? "member_created" : "admin_created",
-          platformAssignments,
+          platformAssignments: platformAssignmentPayload,
         } as any,
       });
       invalidateTasks();
@@ -5292,6 +5291,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       });
       setIsCreateOpen(false);
       createForm.reset(defaultFormValues);
+      setPlatformAssignments([]);
     } catch (error) {
       console.error("[tasks-dialog] create submit failed", { error, data });
       toast({ title: "حدث خطأ أثناء إنشاء المهمة", variant: "destructive" });
@@ -5960,7 +5960,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               open={isCreateOpen}
               onOpenChange={(open) => {
                 if (open) {
-                  createForm.setValue("platformAssignments", [], { shouldDirty: false, shouldValidate: false });
+                  setPlatformAssignments([]);
                   logTaskDialogOpen("create-task", {
                     isAdmin,
                     userId: user?.id,
@@ -6014,7 +6014,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               <MultiPlatformAssignmentsFields
                                 platforms={platforms}
                                 members={members as { id: number; name: string; role: string }[]}
-                                reciterId={createForm.watch("reciterId")}
+                                assignments={platformAssignments}
+                                setAssignments={setPlatformAssignments}
                               />
                             )}
                           </>
