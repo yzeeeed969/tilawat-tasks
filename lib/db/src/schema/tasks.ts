@@ -6,6 +6,7 @@ import { platformsTable } from "./platforms";
 import { platformPagesTable } from "./platform-pages";
 import { recitersTable } from "./reciters";
 import { taskSeriesTable } from "./task-series";
+import { taskCreationGroupsTable } from "./task-creation-groups";
 import { taskGenerationBatchesTable } from "./task-generation-batches";
 
 export const taskStatusEnum = pgEnum("task_status", ["pending", "in_progress", "completed"]);
@@ -15,6 +16,7 @@ export const taskPriorityEnum = pgEnum("task_priority", ["urgent", "normal", "lo
 export const tasksTable = pgTable("tasks", {
   id: serial("id").primaryKey(),
   seriesId: integer("series_id").references(() => taskSeriesTable.id, { onDelete: "set null" }),
+  creationGroupId: integer("creation_group_id").references(() => taskCreationGroupsTable.id, { onDelete: "set null" }),
   title: text("title").notNull(),
   description: text("description"),
   platformId: integer("platform_id").notNull().references(() => platformsTable.id, { onDelete: "cascade" }),
@@ -43,6 +45,7 @@ export const tasksTable = pgTable("tasks", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [
   index("idx_tasks_series_id").on(table.seriesId),
+  index("idx_tasks_creation_group_id").on(table.creationGroupId),
   uniqueIndex("uq_tasks_series_due_date").on(table.seriesId, table.dueDate),
 ]);
 

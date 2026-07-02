@@ -628,6 +628,12 @@ const taskSchema = z.object({
   weeklyQuotaRequired: z.coerce.number().min(1, { message: "أدخل عددًا صحيحًا" }).max(50, { message: "الحد الأعلى 50 مرة" }).optional().nullable(),
   submissionUrl: z.string().url({ message: "أدخل رابطاً صحيحاً" }).or(z.literal("")).optional().nullable(),
   dependsOnTaskId: z.coerce.number().optional().nullable(),
+  platformAssignments: z.array(z.object({
+    id: z.string().optional(),
+    platformId: z.number().nullable().optional(),
+    pageId: z.number().nullable().optional(),
+    memberIds: z.array(z.number()).optional(),
+  })).optional(),
 }).superRefine((data, ctx) => {
   if ((data.seriesType ?? "temporary") === "operational" && data.recurrence !== "weekly" && data.recurrence !== "monthly") {
     ctx.addIssue({
@@ -1804,6 +1810,179 @@ function MemberMultiSelect({
           </button>
         );
       })}
+    </div>
+  );
+}
+
+function MultiPlatformAssignmentsFields({
+  platforms,
+  members,
+  reciterId,
+}: {
+  platforms: { id: number; name: string }[] | undefined;
+  members: { id: number; name: string; role: string }[] | undefined;
+  reciterId?: number | null;
+}) {
+  const { watch, setValue } = useFormContext<TaskFormValues>();
+  const rows = watch("platformAssignments") ?? [];
+  const platformIds = useMemo(() => (platforms ?? []).map((platform) => platform.id), [platforms]);
+
+  const pagesQuery = useQuery({
+    queryKey: ["multi-platform-assignment-pages", platformIds.join(",")],
+    enabled: platformIds.length > 0,
+    queryFn: async () => {
+      const pageLists = await Promise.all(platformIds.map(async (platformId) => {
+        const response = await fetch(`/api/platforms/${platformId}/pages`, { credentials: "include" });
+        if (!response.ok) return [];
+        const pages = await response.json() as Array<{
+          id: number;
+          name?: string | null;
+          platformId?: number | null;
+          reciterId?: number | null;
+        }>;
+        return pages.map((page) => ({ ...page, platformId }));
+      }));
+      return pageLists.flat();
+    },
+  });
+
+  const setRows = (nextRows: NonNullable<TaskFormValues["platformAssignments"]>) => {
+    setValue("platformAssignments", nextRows, { shouldDirty: true, shouldValidate: true });
+  };
+
+  const addRow = () => {
+    const rowId = typeof crypto !== "undefined" && "randomUUID" in crypto
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random()}`;
+    setRows([...rows, { id: rowId, platformId: null, pageId: null, memberIds: [] }]);
+  };
+
+  const updateRow = (
+    index: number,
+    patch: Partial<NonNullable<TaskFormValues["platformAssignments"]>[number]>,
+  ) => {
+    setRows(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+  };
+
+  const removeRow = (index: number) => {
+    setRows(rows.filter((_, rowIndex) => rowIndex !== index));
+  };
+
+  const pages = pagesQuery.data ?? [];
+  const selectedReciterId = toPositiveNumber(reciterId);
+
+  return (
+    <div className="space-y-3 rounded-lg border border-border/70 bg-muted/20 p-3">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold text-foreground">المنصات والمسؤولون</h3>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+            الصف الأول هو بيانات المهمة الحالية. أضف صفوفًا أخرى لإنشاء نفس المهمة على منصات أو صفحات إضافية.
+          </p>
+        </div>
+        <Badge variant="outline">{rows.length + 1} صف</Badge>
+      </div>
+
+      <div className="rounded-md border border-dashed border-border bg-background/70 p-3 text-xs text-muted-foreground">
+        يتم إنشاء مهمة واحدة إذا بقي صف واحد فقط. عند إضافة صفوف، يحفظ النظام مجموعة إنشاء واحدة ويربط المهام بها.
+      </div>
+
+      {rows.map((row, index) => {
+        const platformPages = pages
+          .filter((page) => page.platformId === row.platformId)
+          .filter((page) => {
+            const pageReciterId = toPositiveNumber(page.reciterId);
+            return selectedReciterId === null || pageReciterId === null || pageReciterId === selectedReciterId;
+          });
+        const selectedMemberIds = row.memberIds ?? [];
+        const isIncomplete = Boolean(row.platformId) && selectedMemberIds.length === 0;
+
+        return (
+          <div key={row.id ?? index} className="space-y-3 rounded-md border border-border bg-background p-3">
+            <div className="flex items-center justify-between gap-2">
+              <p className="text-sm font-semibold">صف إضافي #{index + 2}</p>
+              <Button type="button" variant="ghost" size="sm" onClick={() => removeRow(index)}>
+                <Trash2 className="ml-1 h-4 w-4" />
+                حذف
+              </Button>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <FormLabel>المنصة</FormLabel>
+                <Select
+                  value={safeSelectNumberValue(row.platformId)}
+                  onValueChange={(value) => {
+                    updateRow(index, {
+                      platformId: parseSelectNumberValue(value),
+                      pageId: null,
+                    });
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختر المنصة" />
+                  </SelectTrigger>
+                  <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                    <SelectItem value="none" disabled>اختر المنصة</SelectItem>
+                    {(platforms ?? []).map((platform) => (
+                      <SelectItem key={platform.id} value={String(platform.id)}>
+                        <span className="flex items-center gap-2">
+                          <PlatformIcon name={platform.name} />
+                          <span>{platform.name}</span>
+                        </span>
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-2">
+                <FormLabel>الصفحة</FormLabel>
+                <Select
+                  value={safeSelectNumberValue(row.pageId)}
+                  disabled={!row.platformId}
+                  onValueChange={(value) => updateRow(index, { pageId: parseSelectNumberValue(value) })}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="اختياري" />
+                  </SelectTrigger>
+                  <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
+                    <SelectItem value="none">بدون صفحة</SelectItem>
+                    {platformPages.map((page) => (
+                      <SelectItem key={page.id} value={String(page.id)}>
+                        {page.name || `صفحة #${page.id}`}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <FormLabel className="flex items-center gap-2">
+                <Users className="h-3.5 w-3.5" />
+                المسؤولون
+                {selectedMemberIds.length > 0 && (
+                  <span className="text-xs text-sidebar-primary font-semibold">({selectedMemberIds.length} مختار)</span>
+                )}
+              </FormLabel>
+              <MemberMultiSelect
+                members={members}
+                value={selectedMemberIds}
+                onChange={(memberIds) => updateRow(index, { memberIds })}
+              />
+              {isIncomplete && (
+                <p className="text-xs text-destructive">اختر مسؤولًا واحدًا على الأقل لهذا الصف.</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
+
+      <Button type="button" variant="outline" className="w-full" onClick={addRow}>
+        <Plus className="ml-2 h-4 w-4" />
+        إضافة منصة
+      </Button>
     </div>
   );
 }
@@ -4169,6 +4348,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     recurrenceDays: null,
     weeklyQuotaRequired: 3,
     dependsOnTaskId: null,
+    platformAssignments: [],
     priority: "normal",
     progress: 0,
   };
@@ -5047,6 +5227,31 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       if (isAdmin && isApplicationPlatform && data.reciterId) {
         pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, memberIdsForCreate);
       }
+      const rawExtraAssignments = isAdmin ? data.platformAssignments ?? [] : [];
+      const touchedExtraAssignments = rawExtraAssignments.filter((row) =>
+        Boolean(row.platformId) || Boolean(row.pageId) || Boolean(row.memberIds?.length)
+      );
+      const incompleteExtraAssignment = touchedExtraAssignments.find((row) =>
+        !row.platformId || !row.memberIds?.length
+      );
+      if (incompleteExtraAssignment) {
+        toast({ title: "أكمل بيانات صفوف المنصات الإضافية", variant: "destructive" });
+        return;
+      }
+      const platformAssignments = touchedExtraAssignments.length > 0
+        ? [
+            {
+              platformId: data.platformId,
+              pageId,
+              memberIds: memberIdsForCreate,
+            },
+            ...touchedExtraAssignments.map((row) => ({
+              platformId: row.platformId!,
+              pageId: row.pageId ?? null,
+              memberIds: row.memberIds ?? [],
+            })),
+          ]
+        : undefined;
       const reciter = reciters?.find((r) => r.id === data.reciterId);
       const taskTitle = isMemberSelfTask
         ? data.title || selectedPlatform?.name || "مهمة مقطوعة"
@@ -5056,7 +5261,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           ? `${data.title || selectedPlatform?.name || "مهمة"} — هدف أسبوعي (${weeklyQuotaRequired} مرات)`
           : data.title || "مهمة جديدة";
 
-      await createTask.mutateAsync({
+      const createResult = await createTask.mutateAsync({
         data: {
           title: taskTitle || "مهمة جديدة",
           description: data.description,
@@ -5080,11 +5285,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           recurrencePattern: recurrence,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : null,
           source: isMemberSelfTask ? "member_created" : "admin_created",
+          platformAssignments,
         } as any,
       });
       invalidateTasks();
       queryClient.invalidateQueries({ queryKey: ["page-members"] });
-      toast({ title: "تم إنشاء المهمة بنجاح" });
+      const createdTasksCount = Number((createResult as any)?.createdTasksCount ?? 1);
+      toast({
+        title: createdTasksCount > 1
+          ? `تم إنشاء ${createdTasksCount} مهام ضمن مجموعة واحدة`
+          : "تم إنشاء المهمة بنجاح",
+      });
       setIsCreateOpen(false);
       createForm.reset(defaultFormValues);
     } catch (error) {
@@ -5796,13 +6007,22 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             currentMemberName={currentMemberName}
                           />
                         ) : (TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM) ? (
-                          <BasicTaskFormFields
-                            platforms={platforms}
-                            members={members as { id: number; name: string; role: string }[]}
-                            reciters={reciters}
-                            allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
-                            showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
-                          />
+                          <>
+                            <BasicTaskFormFields
+                              platforms={platforms}
+                              members={members as { id: number; name: string; role: string }[]}
+                              reciters={reciters}
+                              allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
+                              showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
+                            />
+                            {isAdmin && (
+                              <MultiPlatformAssignmentsFields
+                                platforms={platforms}
+                                members={members as { id: number; name: string; role: string }[]}
+                                reciterId={createForm.watch("reciterId")}
+                              />
+                            )}
+                          </>
                         ) : (
                           <TaskFormFields
                             platforms={platforms}

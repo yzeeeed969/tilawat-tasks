@@ -14,6 +14,7 @@ type GenerateInput = {
   memberIds: number[];
   reciterId?: number | null;
   pageId?: number | null;
+  creationGroupId?: number | null;
   priority?: "urgent" | "normal" | "low";
   startDate: Date;
   recurrenceType: RecurrenceType;
@@ -139,6 +140,7 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
 
       const [task] = await tx.insert(tasksTable).values({
         seriesId: input.seriesId,
+        creationGroupId: input.creationGroupId ?? null,
         title: input.title,
         description: input.description ?? undefined,
         platformId: input.platformId,
@@ -224,6 +226,7 @@ export async function syncActiveSeries() {
       memberIds,
       reciterId: templateTask.reciterId,
       pageId: templateTask.pageId,
+      creationGroupId: (templateTask as any).creationGroupId ?? null,
       priority: templateTask.priority,
       startDate: series.startDate,
       recurrenceType: series.recurrenceType,

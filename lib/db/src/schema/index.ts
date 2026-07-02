@@ -5,6 +5,7 @@ export * from "./reciters";
 export * from "./reciter-task-flow-rules";
 export * from "./reciter-task-flow-rule-assignees";
 export * from "./task-series";
+export * from "./task-creation-groups";
 export * from "./tasks";
 export * from "./task-flow-links";
 export * from "./task-generation-batches";

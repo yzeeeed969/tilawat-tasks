@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, reciterTaskFlowRuleAssigneesTable, reciterTaskFlowRulesTable, taskFlowLinksTable } from "@workspace/db";
+import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, reciterTaskFlowRuleAssigneesTable, reciterTaskFlowRulesTable, taskFlowLinksTable, taskCreationGroupsTable } from "@workspace/db";
 import { eq, and, inArray, isNull, isNotNull, ilike, or, sql } from "drizzle-orm";
 import {
   CreateTaskBody,
@@ -15,6 +15,7 @@ import { canCreateTask, canDeleteTask, canEditTask, canViewTask } from "../lib/p
 import { ensureTaskQuotaSchema } from "../services/task-quota-schema";
 import { ensureTaskDependenciesSchema } from "../services/task-dependencies-schema";
 import { ensureTaskFlowLinksSchema } from "../services/task-flow-links-schema";
+import { ensureTaskCreationGroupsSchema } from "../services/task-creation-groups-schema";
 
 const router = Router();
 
@@ -23,6 +24,7 @@ router.use(async (_req, _res, next) => {
     await ensureTaskQuotaSchema();
     await ensureTaskDependenciesSchema();
     await ensureTaskFlowLinksSchema();
+    await ensureTaskCreationGroupsSchema();
     next();
   } catch (err) {
     next(err);
@@ -324,6 +326,7 @@ async function notifyTaskUpdated(taskId: number, taskTitle: string, memberIds: n
 const TASK_SELECT = {
   id: tasksTable.id,
   seriesId: tasksTable.seriesId,
+  creationGroupId: tasksTable.creationGroupId,
   source: tasksTable.source,
   title: tasksTable.title,
   description: tasksTable.description,
@@ -614,6 +617,65 @@ async function validateMemberIds(memberIds: unknown): Promise<number[]> {
     throw new Error("INVALID_MEMBER_IDS");
   }
   return uniqueIds;
+}
+
+type PlatformAssignment = {
+  platformId: number;
+  pageId: number | null;
+  memberIds: number[];
+  platformName: string;
+};
+
+function parsePlatformAssignmentInputs(raw: unknown) {
+  if (!Array.isArray(raw)) return [];
+  return raw.map((item) => {
+    const row = item as Record<string, unknown>;
+    const platformId = Number(row.platformId);
+    const pageId = row.pageId === undefined || row.pageId === null || row.pageId === "" ? null : Number(row.pageId);
+    const memberIdsRaw = Array.isArray(row.assigneeIds) ? row.assigneeIds : Array.isArray(row.memberIds) ? row.memberIds : [];
+    const memberIds = [...new Set(memberIdsRaw.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
+    return { platformId, pageId, memberIds };
+  }).filter((row) => Number.isInteger(row.platformId) && row.platformId > 0);
+}
+
+async function validatePlatformAssignments(raw: unknown, currentUser: any): Promise<PlatformAssignment[]> {
+  const inputs = parsePlatformAssignmentInputs(raw);
+  if (inputs.length === 0) return [];
+  const platformIds = [...new Set(inputs.map((item) => item.platformId))];
+  const pageIds = [...new Set(inputs.map((item) => item.pageId).filter((id): id is number => id !== null && Number.isInteger(id) && id > 0))];
+
+  const platforms = await db
+    .select({ id: platformsTable.id, name: platformsTable.name })
+    .from(platformsTable)
+    .where(inArray(platformsTable.id, platformIds));
+  const platformById = new Map(platforms.map((platform) => [platform.id, platform]));
+  if (platformById.size !== platformIds.length) throw new Error("INVALID_PLATFORM_ASSIGNMENTS");
+
+  const pages = pageIds.length > 0
+    ? await db
+      .select({ id: platformPagesTable.id, platformId: platformPagesTable.platformId })
+      .from(platformPagesTable)
+      .where(inArray(platformPagesTable.id, pageIds))
+    : [];
+  const pageById = new Map(pages.map((page) => [page.id, page]));
+
+  const assignments: PlatformAssignment[] = [];
+  for (const input of inputs) {
+    if (input.memberIds.length === 0) throw new Error("INVALID_PLATFORM_ASSIGNMENTS");
+    const memberIds = await validateMemberIds(input.memberIds);
+    if (!canCreateTask(currentUser, memberIds)) throw new Error("FORBIDDEN_PLATFORM_ASSIGNMENTS");
+    if (input.pageId !== null) {
+      const page = pageById.get(input.pageId);
+      if (!page || page.platformId !== input.platformId) throw new Error("INVALID_PLATFORM_ASSIGNMENTS");
+    }
+    assignments.push({
+      platformId: input.platformId,
+      pageId: input.pageId,
+      memberIds,
+      platformName: platformById.get(input.platformId)?.name ?? `#${input.platformId}`,
+    });
+  }
+  return assignments;
 }
 
 function rowsFromExecute<T>(result: unknown): T[] {
@@ -1724,6 +1786,7 @@ router.post("/tasks", async (req, res) => {
   const currentUser = (req as any).currentUser;
   const isAdmin = currentUser?.role === "admin";
   const isMemberSelfTask = !isAdmin;
+  const hasPlatformAssignments = Array.isArray((req.body as any).platformAssignments) && (req.body as any).platformAssignments.length > 0;
 
   if (isMemberSelfTask) {
     if (!currentUser?.memberId) {
@@ -1755,10 +1818,29 @@ router.post("/tasks", async (req, res) => {
       res.status(403).json({ error: "Members can only create one-off self tasks" });
       return;
     }
+    if (hasPlatformAssignments) {
+      res.status(403).json({ error: "Members cannot create multi-platform tasks" });
+      return;
+    }
 
     body.memberIds = [currentUser.memberId];
     body.status = "pending";
     body.recurrence = "none";
+  }
+
+  let platformAssignments: PlatformAssignment[] = [];
+  if (isAdmin && hasPlatformAssignments) {
+    try {
+      platformAssignments = await validatePlatformAssignments((req.body as any).platformAssignments, currentUser);
+    } catch (error) {
+      res.status((error as Error).message === "FORBIDDEN_PLATFORM_ASSIGNMENTS" ? 403 : 400).json({ error: "Invalid platformAssignments" });
+      return;
+    }
+    if (platformAssignments.length === 1) {
+      body.platformId = platformAssignments[0].platformId;
+      body.pageId = platformAssignments[0].pageId;
+      body.memberIds = platformAssignments[0].memberIds;
+    }
   }
 
   let validatedMemberIds: number[];
@@ -1836,6 +1918,171 @@ router.post("/tasks", async (req, res) => {
 
   if (endDate && endDate < startDate) {
     res.status(400).json({ error: "End date must be after start date" });
+    return;
+  }
+
+  if (isAdmin && platformAssignments.length > 1) {
+    const [creationGroup] = await db.insert(taskCreationGroupsTable).values({
+      createdByUserId: currentUser?.id ?? null,
+      title: body.title,
+    }).returning();
+
+    const createdTaskIds: number[] = [];
+    const createdByPlatform: Record<string, number> = {};
+    const notifyQueue: Array<{ taskId: number; title: string; memberIds: number[] }> = [];
+
+    for (const assignment of platformAssignments) {
+      const assignmentPrimaryMemberId = assignment.memberIds[0];
+      if (seriesType === "operational") {
+        if (seriesRecurrenceType !== "weekly" && seriesRecurrenceType !== "monthly") {
+          res.status(400).json({ error: "Operational tasks require weekly or monthly recurrence" });
+          return;
+        }
+
+        const [series] = await db.insert(taskSeriesTable).values({
+          title: body.title,
+          recurrenceType: seriesRecurrenceType,
+          seriesType: "operational",
+          startDate,
+          endDate: null,
+          generateUntil: null,
+          status: "active",
+        }).returning();
+
+        const generatedIds = await generateUpcomingTasksForSeries({
+          seriesId: series.id,
+          title: body.title,
+          description: body.description,
+          platformId: assignment.platformId,
+          memberIds: assignment.memberIds,
+          reciterId: body.reciterId ?? null,
+          pageId: assignment.pageId,
+          creationGroupId: creationGroup.id,
+          priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
+          startDate,
+          recurrenceType: seriesRecurrenceType,
+          recurrenceDays: weeklyRecurrenceDays,
+          weeklyQuotaRequired,
+        });
+        createdTaskIds.push(...generatedIds);
+        if (generatedIds[0]) {
+          notifyQueue.push({ taskId: generatedIds[0], title: body.title, memberIds: assignment.memberIds });
+          if (dependsOnTaskId !== undefined) {
+            await syncDependencyForTask(generatedIds[0], dependsOnTaskId, currentUser?.id ?? null);
+          }
+        }
+        createdByPlatform[assignment.platformName] = (createdByPlatform[assignment.platformName] ?? 0) + generatedIds.length;
+        continue;
+      }
+
+      if (endDate && endDate >= startDate) {
+        const dates: Date[] = recurrence === "custom_days"
+          ? getDateRange(startDate, endDate).filter((date) => customDaysList.includes(String(date.getDay())))
+          : getDateRange(startDate, endDate).filter((_, index) => index % intervalDays === 0);
+
+        if (dates.length === 0) {
+          res.status(400).json({ error: "No matching days in the given date range" });
+          return;
+        }
+
+        const [series] = await db.insert(taskSeriesTable).values({
+          title: body.title,
+          recurrenceType: "none",
+          seriesType: "temporary",
+          startDate,
+          endDate,
+          generateUntil: endDate,
+          status: "active",
+        }).returning();
+
+        let firstTaskId: number | null = null;
+        for (const date of dates) {
+          const [t] = await db.insert(tasksTable).values({
+            seriesId: series.id,
+            creationGroupId: creationGroup.id,
+            source: taskSource,
+            title: body.title,
+            description: body.description,
+            platformId: assignment.platformId,
+            memberId: assignmentPrimaryMemberId,
+            reciterId: body.reciterId ?? null,
+            status: "pending",
+            priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
+            startDate: date,
+            endDate: date,
+            dueDate: date,
+            recurrence: "none",
+            recurrenceIntervalDays: null,
+            recurrenceDurationDays: null,
+            recurrenceDays: null,
+            weeklyQuotaRequired: null,
+            weeklyQuotaPeriodStart: null,
+            weeklyQuotaPeriodEnd: null,
+            pageId: assignment.pageId,
+          }).returning();
+          await syncTaskMembers(t.id, assignment.memberIds);
+          if (firstTaskId === null) firstTaskId = t.id;
+          createdTaskIds.push(t.id);
+        }
+        if (firstTaskId) {
+          notifyQueue.push({ taskId: firstTaskId, title: body.title, memberIds: assignment.memberIds });
+          if (dependsOnTaskId !== undefined) {
+            await syncDependencyForTask(firstTaskId, dependsOnTaskId, currentUser?.id ?? null);
+          }
+        }
+        createdByPlatform[assignment.platformName] = (createdByPlatform[assignment.platformName] ?? 0) + dates.length;
+        continue;
+      }
+
+      const [task] = await db.insert(tasksTable).values({
+        creationGroupId: creationGroup.id,
+        source: taskSource,
+        title: body.title,
+        description: body.description,
+        platformId: assignment.platformId,
+        memberId: assignmentPrimaryMemberId,
+        reciterId: body.reciterId ?? null,
+        status: (body.status ?? "pending") as "pending" | "completed",
+        priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
+        startDate: body.startDate ? new Date(body.startDate) : null,
+        endDate: endDate,
+        dueDate: startDate,
+        recurrence: recurrence as "none" | "weekly" | "monthly" | "daily" | "custom_days",
+        recurrenceIntervalDays: body.recurrenceIntervalDays ?? null,
+        recurrenceDurationDays: body.recurrenceDurationDays ?? null,
+        recurrenceDays: (body as any).recurrenceDays ?? null,
+        weeklyQuotaRequired,
+        weeklyQuotaPeriodStart: weeklyQuotaRequired ? getWeekRange(startDate).start : null,
+        weeklyQuotaPeriodEnd: weeklyQuotaRequired ? getWeekRange(startDate).end : null,
+        pageId: assignment.pageId,
+      }).returning();
+      await syncTaskMembers(task.id, assignment.memberIds);
+      if (dependsOnTaskId !== undefined) {
+        await syncDependencyForTask(task.id, dependsOnTaskId, currentUser?.id ?? null);
+      }
+      createdTaskIds.push(task.id);
+      notifyQueue.push({ taskId: task.id, title: task.title, memberIds: assignment.memberIds });
+      createdByPlatform[assignment.platformName] = (createdByPlatform[assignment.platformName] ?? 0) + 1;
+    }
+
+    if (createdTaskIds.length === 0) {
+      res.status(400).json({ error: "No tasks were created" });
+      return;
+    }
+
+    await logActivity(req, "task_creation_group_created", "task_creation_group", creationGroup.id, body.title, {
+      createdTasks: createdTaskIds.length,
+      createdByPlatform,
+    });
+    await Promise.all(notifyQueue.map((item) => notifyTaskAssigned(item.taskId, item.title, item.memberIds).catch(() => {})));
+    const taskResponse = await buildTaskResponse(createdTaskIds[0]);
+    res.status(201).json({
+      ...taskResponse,
+      creationGroupId: creationGroup.id,
+      createdTasksCount: createdTaskIds.length,
+      createdTaskIds,
+      createdByPlatform,
+    });
     return;
   }
 
