@@ -1824,7 +1824,8 @@ function MultiPlatformAssignmentsFields({
   reciterId?: number | null;
 }) {
   const { watch, setValue } = useFormContext<TaskFormValues>();
-  const rows = watch("platformAssignments") ?? [];
+  const watchedRows = watch("platformAssignments");
+  const rows = Array.isArray(watchedRows) ? watchedRows : [];
   const platformIds = useMemo(() => (platforms ?? []).map((platform) => platform.id), [platforms]);
 
   const pagesQuery = useQuery({
@@ -1847,14 +1848,20 @@ function MultiPlatformAssignmentsFields({
   });
 
   const setRows = (nextRows: NonNullable<TaskFormValues["platformAssignments"]>) => {
-    setValue("platformAssignments", nextRows, { shouldDirty: true, shouldValidate: true });
+    setValue("platformAssignments", nextRows, { shouldDirty: true, shouldValidate: false });
   };
 
   const addRow = () => {
-    const rowId = typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
+    const rowId = globalThis.crypto?.randomUUID
+      ? globalThis.crypto.randomUUID()
       : `${Date.now()}-${Math.random()}`;
-    setRows([...rows, { id: rowId, platformId: null, pageId: null, memberIds: [] }]);
+    const nextRow = { id: rowId, platformId: null, pageId: null, memberIds: [] };
+    console.info("[multi-platform-task] add platform row", {
+      previousRowsCount: rows.length,
+      platformAssignmentsExists: Array.isArray(watchedRows),
+      nextRow,
+    });
+    setRows([...rows, nextRow]);
   };
 
   const updateRow = (
@@ -1910,51 +1917,38 @@ function MultiPlatformAssignmentsFields({
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="space-y-2">
                 <FormLabel>المنصة</FormLabel>
-                <Select
-                  value={safeSelectNumberValue(row.platformId)}
-                  onValueChange={(value) => {
+                <select
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                  value={row.platformId ? String(row.platformId) : ""}
+                  onChange={(event) => {
                     updateRow(index, {
-                      platformId: parseSelectNumberValue(value),
+                      platformId: parseSelectNumberValue(event.target.value),
                       pageId: null,
                     });
                   }}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="اختر المنصة" />
-                  </SelectTrigger>
-                  <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                    <SelectItem value="none" disabled>اختر المنصة</SelectItem>
-                    {(platforms ?? []).map((platform) => (
-                      <SelectItem key={platform.id} value={String(platform.id)}>
-                        <span className="flex items-center gap-2">
-                          <PlatformIcon name={platform.name} />
-                          <span>{platform.name}</span>
-                        </span>
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <option value="" disabled>اختر المنصة</option>
+                  {(platforms ?? []).map((platform) => (
+                    <option key={platform.id} value={String(platform.id)}>{platform.name}</option>
+                  ))}
+                </select>
               </div>
 
               <div className="space-y-2">
                 <FormLabel>الصفحة</FormLabel>
-                <Select
-                  value={safeSelectNumberValue(row.pageId)}
+                <select
+                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  value={row.pageId ? String(row.pageId) : "none"}
                   disabled={!row.platformId}
-                  onValueChange={(value) => updateRow(index, { pageId: parseSelectNumberValue(value) })}
+                  onChange={(event) => updateRow(index, { pageId: parseSelectNumberValue(event.target.value) })}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="اختياري" />
-                  </SelectTrigger>
-                  <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                    <SelectItem value="none">بدون صفحة</SelectItem>
-                    {platformPages.map((page) => (
-                      <SelectItem key={page.id} value={String(page.id)}>
-                        {page.name || `صفحة #${page.id}`}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                  <option value="none">بدون صفحة</option>
+                  {platformPages.map((page) => (
+                    <option key={page.id} value={String(page.id)}>
+                      {page.name || `صفحة #${page.id}`}
+                    </option>
+                  ))}
+                </select>
               </div>
             </div>
 
@@ -5966,6 +5960,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               open={isCreateOpen}
               onOpenChange={(open) => {
                 if (open) {
+                  createForm.setValue("platformAssignments", [], { shouldDirty: false, shouldValidate: false });
                   logTaskDialogOpen("create-task", {
                     isAdmin,
                     userId: user?.id,
