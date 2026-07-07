@@ -346,6 +346,7 @@ const TASK_SELECT = {
   weeklyQuotaPeriodEnd: tasksTable.weeklyQuotaPeriodEnd,
   lastRecurredAt: tasksTable.lastRecurredAt,
   submissionUrl: tasksTable.submissionUrl,
+  assigneeNote: tasksTable.assigneeNote,
   pageId: tasksTable.pageId,
   deletedAt: tasksTable.deletedAt,
   createdAt: tasksTable.createdAt,
@@ -370,7 +371,7 @@ const TASK_SELECT = {
 
 type SeriesType = "temporary" | "operational";
 type SeriesRecurrenceType = "none" | "weekly" | "monthly";
-type TaskUpdateScope = "single" | "future" | "series";
+type TaskUpdateScope = "single" | "future" | "series" | "group";
 type FlowChangeAction = "delete_safe_children" | "delete_safe_and_regenerate" | "keep_children";
 
 const STATE_UPDATE_KEYS = new Set(["status", "completedAt", "progress", "submissionUrl"]);
@@ -392,7 +393,7 @@ function parseTaskUpdateScope(value: unknown, hasSeries: boolean): TaskUpdateSco
   if (value === undefined || value === null || value === "") {
     return hasSeries ? "series" : "single";
   }
-  if (value === "single" || value === "future" || value === "series") return value;
+  if (value === "single" || value === "future" || value === "series" || value === "group") return value;
   throw new Error("INVALID_TASK_UPDATE_SCOPE");
 }
 
@@ -624,6 +625,7 @@ type PlatformAssignment = {
   pageId: number | null;
   memberIds: number[];
   platformName: string;
+  assigneeNote: string | null;
 };
 
 function parsePlatformAssignmentInputs(raw: unknown) {
@@ -634,7 +636,9 @@ function parsePlatformAssignmentInputs(raw: unknown) {
     const pageId = row.pageId === undefined || row.pageId === null || row.pageId === "" ? null : Number(row.pageId);
     const memberIdsRaw = Array.isArray(row.assigneeIds) ? row.assigneeIds : Array.isArray(row.memberIds) ? row.memberIds : [];
     const memberIds = [...new Set(memberIdsRaw.map((id) => Number(id)).filter((id) => Number.isInteger(id) && id > 0))];
-    return { platformId, pageId, memberIds };
+    const noteRaw = typeof row.assigneeNote === "string" ? row.assigneeNote.trim() : "";
+    const assigneeNote = noteRaw.length > 0 ? noteRaw : null;
+    return { platformId, pageId, memberIds, assigneeNote };
   }).filter((row) => Number.isInteger(row.platformId) && row.platformId > 0);
 }
 
@@ -673,6 +677,7 @@ async function validatePlatformAssignments(raw: unknown, currentUser: any): Prom
       pageId: input.pageId,
       memberIds,
       platformName: platformById.get(input.platformId)?.name ?? `#${input.platformId}`,
+      assigneeNote: input.assigneeNote,
     });
   }
   return assignments;
@@ -2019,6 +2024,7 @@ router.post("/tasks", async (req, res) => {
             weeklyQuotaPeriodStart: null,
             weeklyQuotaPeriodEnd: null,
             pageId: assignment.pageId,
+            assigneeNote: assignment.assigneeNote,
           }).returning();
           await syncTaskMembers(t.id, assignment.memberIds);
           if (firstTaskId === null) firstTaskId = t.id;
@@ -2055,6 +2061,7 @@ router.post("/tasks", async (req, res) => {
         weeklyQuotaPeriodStart: weeklyQuotaRequired ? getWeekRange(startDate).start : null,
         weeklyQuotaPeriodEnd: weeklyQuotaRequired ? getWeekRange(startDate).end : null,
         pageId: assignment.pageId,
+        assigneeNote: assignment.assigneeNote,
       }).returning();
       await syncTaskMembers(task.id, assignment.memberIds);
       if (dependsOnTaskId !== undefined) {
@@ -2485,7 +2492,10 @@ router.put("/tasks/:id", async (req, res) => {
     return;
   }
   const canApplySeriesScope = currentUser?.role === "admin" && Boolean(currentTask.seriesId);
-  const updateScope: TaskUpdateScope = canApplySeriesScope ? requestedUpdateScope : "single";
+  const canApplyGroupScope = currentUser?.role === "admin" && Boolean(currentTask.creationGroupId);
+  let updateScope: TaskUpdateScope = requestedUpdateScope;
+  if (updateScope === "group" && !canApplyGroupScope) updateScope = "single";
+  if ((updateScope === "series" || updateScope === "future") && !canApplySeriesScope) updateScope = "single";
   const requestedReciterId = "reciterId" in body ? body.reciterId ?? null : currentTask.reciterId ?? null;
   if (
     isTaskGenerationEnabled() &&
@@ -2571,6 +2581,40 @@ router.put("/tasks/:id", async (req, res) => {
     if (body.memberIds !== undefined && body.memberIds.length > 0) {
       await syncTaskMembers(id, body.memberIds);
     }
+  } else if (updateScope === "group") {
+    // Group scope: only the DATE is shared across the group. All other edited
+    // fields stay on the selected task. Dates are shifted by the same delta so
+    // multi-day groups keep their relative structure.
+    const creationGroupId = currentTask.creationGroupId!;
+    const groupTasks = await db
+      .select({ id: tasksTable.id })
+      .from(tasksTable)
+      .where(and(eq(tasksTable.creationGroupId, creationGroupId), isNull(tasksTable.deletedAt)));
+
+    updatedTaskIds = groupTasks.map((task) => task.id);
+    if (!updatedTaskIds.includes(id)) updatedTaskIds.push(id);
+
+    const { sharedUpdateData, selectedTaskOnlyUpdateData } = splitUpdateData(updateData);
+    const selectedTaskData = { ...sharedUpdateData, ...selectedTaskOnlyUpdateData };
+    const dateDeltaDays = getSeriesDateDelta(body as Record<string, unknown>, currentTask);
+
+    await db.transaction(async (tx: any) => {
+      if (Object.keys(selectedTaskData).length > 0) {
+        await tx.update(tasksTable).set(selectedTaskData).where(eq(tasksTable.id, id));
+      }
+
+      if (dateDeltaDays !== 0 && updatedTaskIds.length > 0) {
+        await tx.update(tasksTable).set({
+          startDate: sql`${tasksTable.startDate} + (${dateDeltaDays} * interval '1 day')`,
+          dueDate: sql`${tasksTable.dueDate} + (${dateDeltaDays} * interval '1 day')`,
+          endDate: sql`${tasksTable.endDate} + (${dateDeltaDays} * interval '1 day')`,
+        }).where(inArray(tasksTable.id, updatedTaskIds));
+      }
+
+      if (body.memberIds !== undefined && body.memberIds.length > 0) {
+        await syncTaskMembersUsing(tx, id, body.memberIds);
+      }
+    });
   } else {
     const seriesId = currentTask.seriesId!;
     const targetConditions: any[] = [
@@ -2859,10 +2903,10 @@ router.delete("/tasks/:id", async (req, res) => {
   res.status(204).end();
 });
 
-type DeleteTaskScope = "single" | "from_this_forward" | "entire_series";
+type DeleteTaskScope = "single" | "from_this_forward" | "entire_series" | "entire_group";
 
 function parseDeleteTaskScope(value: unknown): DeleteTaskScope {
-  if (value === "single" || value === "from_this_forward" || value === "entire_series") return value;
+  if (value === "single" || value === "from_this_forward" || value === "entire_series" || value === "entire_group") return value;
   throw new Error("INVALID_DELETE_SCOPE");
 }
 
@@ -2896,7 +2940,11 @@ router.post("/tasks/:id/delete-scope", async (req, res) => {
     res.status(403).json({ error: "Forbidden" });
     return;
   }
-  if (scope !== "single" && !task.seriesId) {
+  if (scope === "entire_group" && !task.creationGroupId) {
+    res.status(400).json({ error: "Task is not part of a group" });
+    return;
+  }
+  if ((scope === "from_this_forward" || scope === "entire_series") && !task.seriesId) {
     res.status(400).json({ error: "Task is not part of a series" });
     return;
   }
@@ -2904,6 +2952,8 @@ router.post("/tasks/:id/delete-scope", async (req, res) => {
   const targetConditions: any[] = [isNull(tasksTable.deletedAt)];
   if (scope === "single") {
     targetConditions.push(eq(tasksTable.id, id));
+  } else if (scope === "entire_group") {
+    targetConditions.push(eq(tasksTable.creationGroupId, task.creationGroupId!));
   } else {
     targetConditions.push(eq(tasksTable.seriesId, task.seriesId!));
     if (scope === "from_this_forward") {

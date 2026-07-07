@@ -19,6 +19,11 @@ async function runTaskCreationGroupsSchemaEnsure() {
     ADD COLUMN IF NOT EXISTS creation_group_id integer REFERENCES task_creation_groups(id) ON DELETE SET NULL
   `);
 
+  await db.execute(sql`
+    ALTER TABLE tasks
+    ADD COLUMN IF NOT EXISTS assignee_note text
+  `);
+
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_task_creation_groups_created_by ON task_creation_groups(created_by_user_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_tasks_creation_group_id ON tasks(creation_group_id)`);
 }

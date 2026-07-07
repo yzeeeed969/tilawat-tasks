@@ -1,6 +1,7 @@
 import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth-context";
+import { APP_VERSION, APP_VERSION_DATE } from "@/lib/app-version";
 import { format } from "date-fns";
 import { ar } from "date-fns/locale";
 import {
@@ -455,6 +456,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </nav>
 
         <UserCard />
+
+        <div className="px-4 py-2 border-t border-sidebar-border/70 text-center">
+          <span className="text-[10px] font-medium text-sidebar-foreground/45">
+            تحديث رقم {APP_VERSION} · {APP_VERSION_DATE}
+          </span>
+        </div>
       </aside>
 
       {/* ── Main Content ────────────────────────────────────── */}

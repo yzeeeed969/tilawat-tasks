@@ -2,6 +2,9 @@
 .env.*
 !.env.example
 
+# مشغّل الخادم المحلي (يحتوي رابط قاعدة البيانات السرّي) — لا يُرفع إلى git
+run-api-forever.bat
+
 node_modules/
 dist/
 artifacts/**/dist/

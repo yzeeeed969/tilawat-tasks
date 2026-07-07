@@ -1,7 +1,7 @@
 import crypto from "node:crypto";
 import { access } from "node:fs/promises";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const entrypoint = path.join(rootDir, "artifacts/api-server/dist/index.mjs");
@@ -33,4 +33,4 @@ try {
   process.exit(1);
 }
 
-await import(entrypoint);
+await import(pathToFileURL(entrypoint).href);

@@ -28,6 +28,7 @@ import { TaskStatusBadge } from "@/components/task-status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -633,6 +634,7 @@ const taskSchema = z.object({
     platformId: z.number().nullable().optional(),
     pageId: z.number().nullable().optional(),
     memberIds: z.array(z.number()).optional(),
+    assigneeNote: z.string().optional().nullable(),
   })).optional(),
 }).superRefine((data, ctx) => {
   if ((data.seriesType ?? "temporary") === "operational" && data.recurrence !== "weekly" && data.recurrence !== "monthly") {
@@ -893,23 +895,30 @@ function TaskNoteLine({
   className,
   compact = false,
 }: {
-  task: { description?: string | null };
+  task: { description?: string | null; assigneeNote?: string | null };
   className?: string;
   compact?: boolean;
 }) {
   const note = typeof task.description === "string" ? task.description.trim() : "";
-  if (!note) return null;
+  const assigneeNote = typeof task.assigneeNote === "string" ? task.assigneeNote.trim() : "";
+  if (!note && !assigneeNote) return null;
+
+  const boxSpacing = compact ? "px-1.5 py-0.5 text-[10px] leading-snug" : "px-2 py-1 text-xs leading-relaxed";
 
   return (
-    <div
-      className={cn(
-        "max-w-full whitespace-normal break-words rounded-md border border-amber-200/80 bg-amber-50/80 text-amber-900",
-        compact ? "px-1.5 py-0.5 text-[10px] leading-snug" : "px-2 py-1 text-xs leading-relaxed",
-        className
+    <div className={cn("space-y-1", className)}>
+      {note && (
+        <div className={cn("max-w-full whitespace-normal break-words rounded-md border border-amber-200/80 bg-amber-50/80 text-amber-900", boxSpacing)}>
+          <span className="font-semibold">ملاحظة: </span>
+          <span>{note}</span>
+        </div>
       )}
-    >
-      <span className="font-semibold">ملاحظة: </span>
-      <span>{note}</span>
+      {assigneeNote && (
+        <div className={cn("max-w-full whitespace-normal break-words rounded-md border border-sky-200/80 bg-sky-50/80 text-sky-900", boxSpacing)}>
+          <span className="font-semibold">ملاحظة للمسؤول: </span>
+          <span>{assigneeNote}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -1835,11 +1844,119 @@ type MultiPlatformAssignmentState = {
   platformId: string;
   pageId: string;
   assigneeIds: number[];
+  note: string;
 };
 
 function createEmptyPlatformAssignment(): MultiPlatformAssignmentState {
   const id = `multi-platform-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-  return { id, platformId: "", pageId: "", assigneeIds: [] };
+  return { id, platformId: "", pageId: "", assigneeIds: [], note: "" };
+}
+
+function PlatformAssignmentRow({
+  index,
+  assignment,
+  platforms,
+  members,
+  onChange,
+  onRemove,
+}: {
+  index: number;
+  assignment: MultiPlatformAssignmentState;
+  platforms: { id: number; name: string }[] | undefined;
+  members: { id: number; name: string; role: string }[] | undefined;
+  onChange: (patch: Partial<MultiPlatformAssignmentState>) => void;
+  onRemove: () => void;
+}) {
+  const platformIdNum = assignment.platformId ? Number(assignment.platformId) : 0;
+  const { data: pages } = useListPlatformPages(platformIdNum, {
+    query: { queryKey: getListPlatformPagesQueryKey(platformIdNum), enabled: platformIdNum > 0 },
+  });
+  const pageOptions = (pages ?? []).map((page: any) => ({
+    id: page.id,
+    name: page.name ?? `الصفحة #${page.id}`,
+  }));
+
+  const selectedMemberIds = Array.isArray(assignment.assigneeIds) ? assignment.assigneeIds : [];
+  const isIncomplete = Boolean(assignment.platformId) && selectedMemberIds.length === 0;
+
+  return (
+    <div className="space-y-3 rounded-md border border-border bg-background p-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-sm font-semibold">صف إضافي #{index + 2}</p>
+        <button
+          type="button"
+          className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-destructive hover:bg-destructive/10"
+          onClick={onRemove}
+        >
+          حذف
+        </button>
+      </div>
+
+      <div className="grid gap-3 sm:grid-cols-2">
+        <div className="space-y-2">
+          <Label>المنصة</Label>
+          <select
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+            value={assignment.platformId || ""}
+            onChange={(event) => onChange({ platformId: event.target.value, pageId: "" })}
+          >
+            <option value="" disabled>اختر المنصة</option>
+            {(platforms ?? []).map((platform) => (
+              <option key={platform.id} value={String(platform.id)}>{platform.name}</option>
+            ))}
+          </select>
+        </div>
+
+        <div className="space-y-2">
+          <Label>الصفحة / القناة</Label>
+          <select
+            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+            value={assignment.pageId || ""}
+            disabled={platformIdNum <= 0}
+            onChange={(event) => onChange({ pageId: event.target.value })}
+          >
+            <option value="">
+              {platformIdNum <= 0 ? "اختر المنصة أولًا" : "بدون تحديد صفحة"}
+            </option>
+            {pageOptions.map((page) => (
+              <option key={page.id} value={String(page.id)}>{page.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label className="flex items-center gap-2">
+          <Users className="h-3.5 w-3.5" />
+          المسؤولون
+          {selectedMemberIds.length > 0 && (
+            <span className="text-xs text-sidebar-primary font-semibold">({selectedMemberIds.length} مختار)</span>
+          )}
+        </Label>
+        <MemberMultiSelect
+          members={members}
+          value={selectedMemberIds}
+          onChange={(ids) => onChange({ assigneeIds: ids })}
+        />
+        {isIncomplete && (
+          <p className="text-xs text-destructive">اختر مسؤولًا واحدًا على الأقل لهذا الصف.</p>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <Label>
+          ملاحظة خاصة بهذا الصف
+          <span className="mr-1 text-xs font-normal text-muted-foreground">(تظهر لمسؤول هذه المنصة فقط)</span>
+        </Label>
+        <Textarea
+          value={assignment.note ?? ""}
+          onChange={(event) => onChange({ note: event.target.value })}
+          placeholder="ملاحظة تظهر للعضو المسؤول عن هذه المنصة تحديدًا"
+          rows={2}
+        />
+      </div>
+    </div>
+  );
 }
 
 function MultiPlatformAssignmentsFields({
@@ -1854,12 +1971,9 @@ function MultiPlatformAssignmentsFields({
   setAssignments: Dispatch<SetStateAction<MultiPlatformAssignmentState[]>>;
 }) {
   const rows = Array.isArray(assignments) ? assignments : [];
-  console.log("[multi-platform] render assignments", rows);
 
   const addRow = () => {
-    console.log("[multi-platform] add clicked", rows);
-    const nextRow = createEmptyPlatformAssignment();
-    setAssignments((previous) => [...(Array.isArray(previous) ? previous : []), nextRow]);
+    setAssignments((previous) => [...(Array.isArray(previous) ? previous : []), createEmptyPlatformAssignment()]);
   };
 
   const updateRow = (index: number, patch: Partial<MultiPlatformAssignmentState>) => {
@@ -1880,7 +1994,7 @@ function MultiPlatformAssignmentsFields({
         <div>
           <h3 className="text-sm font-semibold text-foreground">المنصات والمسؤولون</h3>
           <p className="mt-1 text-xs leading-5 text-muted-foreground">
-            الصف الأول هو بيانات المهمة الحالية. أضف صفوفًا أخرى لإنشاء نفس المهمة على منصات أو صفحات إضافية.
+            الصف الأول أعلاه هو بيانات المهمة الحالية. أضف صفوفًا أخرى لإنشاء نفس المهمة على منصات أو صفحات إضافية، ويُطبَّق التاريخ أدناه على الجميع.
           </p>
         </div>
         <Badge variant="outline">{rows.length + 1} صف</Badge>
@@ -1890,105 +2004,17 @@ function MultiPlatformAssignmentsFields({
         يتم إنشاء مهمة واحدة إذا بقي صف واحد فقط. عند إضافة صفوف، يحفظ النظام مجموعة إنشاء واحدة ويربط المهام بها.
       </div>
 
-      {rows.map((row, index) => {
-        const assignment = row ?? createEmptyPlatformAssignment();
-        const selectedMemberIds = Array.isArray(assignment.assigneeIds) ? assignment.assigneeIds : [];
-        const isIncomplete = Boolean(assignment.platformId) && selectedMemberIds.length === 0;
-
-        return (
-          <div key={assignment.id || index} className="space-y-3 rounded-md border border-border bg-background p-3">
-            <div className="flex items-center justify-between gap-2">
-              <p className="text-sm font-semibold">صف إضافي #{index + 2}</p>
-              <button
-                type="button"
-                className="inline-flex items-center gap-1 rounded-md px-2 py-1 text-sm text-destructive hover:bg-destructive/10"
-                onClick={() => removeRow(index)}
-              >
-                حذف
-              </button>
-            </div>
-
-            <div className="grid gap-3 sm:grid-cols-2">
-              <div className="space-y-2">
-                <FormLabel>المنصة</FormLabel>
-                <select
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                  value={assignment.platformId || ""}
-                  onChange={(event) => {
-                    updateRow(index, {
-                      platformId: event.target.value,
-                      pageId: "",
-                    });
-                  }}
-                >
-                  <option value="" disabled>اختر المنصة</option>
-                  {(platforms ?? []).map((platform) => (
-                    <option key={platform.id} value={String(platform.id)}>{platform.name}</option>
-                  ))}
-                </select>
-              </div>
-
-              <div className="space-y-2">
-                <FormLabel>الصفحة</FormLabel>
-                <select
-                  className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  value={assignment.pageId || ""}
-                  disabled
-                  onChange={(event) => updateRow(index, { pageId: event.target.value })}
-                >
-                  <option value="">بدون صفحة في الصف الإضافي حاليًا</option>
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-2">
-              <FormLabel className="flex items-center gap-2">
-                <Users className="h-3.5 w-3.5" />
-                المسؤولون
-                {selectedMemberIds.length > 0 && (
-                  <span className="text-xs text-sidebar-primary font-semibold">({selectedMemberIds.length} مختار)</span>
-                )}
-              </FormLabel>
-              <div className="rounded-md border border-input divide-y divide-border">
-                {(members ?? []).length === 0 ? (
-                  <div className="p-4 text-center text-sm text-muted-foreground">لا يوجد أعضاء</div>
-                ) : (
-                  (members ?? []).map((member) => {
-                    const checked = selectedMemberIds.includes(member.id);
-                    return (
-                      <label
-                        key={member.id}
-                        className={cn(
-                          "flex cursor-pointer items-center gap-3 px-4 py-3 text-right transition-colors",
-                          checked ? "bg-sidebar-primary/10" : "bg-background hover:bg-muted/40"
-                        )}
-                      >
-                        <input
-                          type="checkbox"
-                          className="h-4 w-4 accent-[hsl(var(--sidebar-primary))]"
-                          checked={checked}
-                          onChange={(event) => {
-                            const nextIds = new Set(selectedMemberIds);
-                            event.target.checked ? nextIds.add(member.id) : nextIds.delete(member.id);
-                            updateRow(index, { assigneeIds: [...nextIds] });
-                          }}
-                        />
-                        <span className="flex-1">
-                          <span className="block text-sm font-semibold">{member.name}</span>
-                          {member.role && <span className="block text-xs text-muted-foreground">{member.role}</span>}
-                        </span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-              {isIncomplete && (
-                <p className="text-xs text-destructive">اختر مسؤولًا واحدًا على الأقل لهذا الصف.</p>
-              )}
-            </div>
-          </div>
-        );
-      })}
+      {rows.map((row, index) => (
+        <PlatformAssignmentRow
+          key={row?.id || index}
+          index={index}
+          assignment={row ?? createEmptyPlatformAssignment()}
+          platforms={platforms}
+          members={members}
+          onChange={(patch) => updateRow(index, patch)}
+          onRemove={() => removeRow(index)}
+        />
+      ))}
 
       <button
         type="button"
@@ -2120,6 +2146,7 @@ function BasicTaskFormFields({
   currentTask,
   showDependency = false,
   taskFlowPreviewSlot,
+  multiPlatformSlot,
 }: {
   platforms: { id: number; name: string }[] | undefined;
   members: { id: number; name: string; role: string }[] | undefined;
@@ -2129,6 +2156,7 @@ function BasicTaskFormFields({
   currentTask?: TaskWithDetails | null;
   showDependency?: boolean;
   taskFlowPreviewSlot?: ReactNode;
+  multiPlatformSlot?: ReactNode;
 }) {
   const { watch, setValue } = useFormContext<TaskFormValues>();
   const [dependencyOpen, setDependencyOpen] = useState(false);
@@ -2364,6 +2392,8 @@ function BasicTaskFormFields({
       />
 
       <TaskDescriptionField />
+
+      {multiPlatformSlot}
 
       <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-muted/20">
         <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
@@ -4052,6 +4082,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [deleteSeriesServerPreview, setDeleteSeriesServerPreview] = useState<DeleteSeriesPreview | null>(null);
   const [deleteSeriesPreviewLoading, setDeleteSeriesPreviewLoading] = useState(false);
   const [deleteSeriesPreviewError, setDeleteSeriesPreviewError] = useState<string | null>(null);
+  const [deleteGroupTask, setDeleteGroupTask] = useState<TaskWithDetails | null>(null);
+  const [deleteGroupPending, setDeleteGroupPending] = useState(false);
+  const [deleteGroupCount, setDeleteGroupCount] = useState<number | null>(null);
   const [pendingCompleteId, setPendingCompleteId] = useState<number | null>(null);
   const [commentsTaskId, setCommentsTaskId] = useState<number | null>(null);
   const [commentsTaskTitle, setCommentsTaskTitle] = useState<string>("");
@@ -5259,11 +5292,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               platformId: data.platformId,
               pageId,
               memberIds: memberIdsForCreate,
+              assigneeNote: null,
             },
             ...touchedExtraAssignments.map((row: MultiPlatformAssignmentState) => ({
               platformId: Number(row.platformId),
               pageId: row.pageId ? Number(row.pageId) : null,
               memberIds: row.assigneeIds ?? [],
+              assigneeNote: row.note?.trim() ? row.note.trim() : null,
             })),
           ]
         : undefined;
@@ -5354,6 +5389,21 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         return;
       }
 
+      const groupId = (editingTask as any).creationGroupId;
+      const currentTaskIso = (editingTask as any).startDate
+        ? new Date((editingTask as any).startDate).toISOString()
+        : (editingTask as any).dueDate
+          ? new Date((editingTask as any).dueDate).toISOString()
+          : null;
+      const dateChanged = !currentTaskIso || taskDate.slice(0, 10) !== currentTaskIso.slice(0, 10);
+      let stableUpdateScope: "single" | "group" = "single";
+      if (isAdmin && groupId && dateChanged) {
+        const applyToGroup = window.confirm(
+          "هل تريد تطبيق نفس التعديل على باقي المهام المرتبطة؟\nسيُطبَّق التاريخ الجديد على كل مهام هذه المجموعة."
+        );
+        stableUpdateScope = applyToGroup ? "group" : "single";
+      }
+
       updateTask.mutate(
         {
           id: editingTask.id,
@@ -5365,7 +5415,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
             pageId: data.pageId ?? null,
             startDate: taskDate,
             dueDate: taskDate,
-            updateScope: "single",
+            updateScope: stableUpdateScope,
             flowChangeAcknowledged,
           } as any,
         },
@@ -5530,6 +5580,34 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     };
   }, [deleteSeriesTask?.id, deleteSeriesScope]);
 
+  useEffect(() => {
+    if (!deleteGroupTask) {
+      setDeleteGroupCount(null);
+      return;
+    }
+    let cancelled = false;
+    fetch(`/api/tasks/${deleteGroupTask.id}/delete-scope`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ scope: "entire_group", preview: true }),
+    })
+      .then(async (response) => {
+        const payload = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(payload?.error ?? "Failed to preview group");
+        return payload?.summary?.total as number | undefined;
+      })
+      .then((total) => {
+        if (!cancelled) setDeleteGroupCount(typeof total === "number" ? total : null);
+      })
+      .catch(() => {
+        if (!cancelled) setDeleteGroupCount(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [deleteGroupTask?.id]);
+
   const handleStatusChange = (id: number, status: TaskStatus) => {
     if (status === "completed") {
       const task = tasks?.find((t) => t.id === id);
@@ -5556,6 +5634,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const handleDelete = (id: number) => {
     const task = allKnownTasks.find((item) => item.id === id) ?? tasks?.find((item) => item.id === id);
+    if (isAdmin && task && (task as any).creationGroupId && !(task as any).deletedAt) {
+      setDeleteGroupTask(task);
+      return;
+    }
     if (isAdmin && task && (task as any).seriesId && !(task as any).deletedAt) {
       setDeleteSeriesTask(task);
       setDeleteSeriesScope("single");
@@ -5565,6 +5647,35 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       { id },
       { onSuccess: () => { invalidateTasks(); toast({ title: "تم نقل المهمة إلى السلة" }); } }
     );
+  };
+
+  const executeDeleteGroup = async (scope: "single" | "entire_group") => {
+    if (!deleteGroupTask) return;
+    setDeleteGroupPending(true);
+    try {
+      const response = await fetch(`/api/tasks/${deleteGroupTask.id}/delete-scope`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ scope, confirmedProtected: true }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? "Failed to delete group");
+      await invalidateTasks();
+      setDeleteGroupTask(null);
+      toast({
+        title: scope === "entire_group" ? "تم نقل مهام المجموعة إلى السلة" : "تم نقل المهمة إلى السلة",
+        description: `تم نقل ${payload?.summary?.total ?? payload?.deletedTaskIds?.length ?? 0} مهمة إلى السلة.`,
+      });
+    } catch (error) {
+      toast({
+        title: "تعذر حذف المهام",
+        description: error instanceof Error ? error.message : undefined,
+        variant: "destructive",
+      });
+    } finally {
+      setDeleteGroupPending(false);
+    }
   };
 
   const executeDeleteSeriesScope = async () => {
@@ -6031,15 +6142,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               reciters={reciters}
                               allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                               showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
+                              multiPlatformSlot={
+                                isAdmin ? (
+                                  <MultiPlatformAssignmentsFields
+                                    platforms={platforms}
+                                    members={members as { id: number; name: string; role: string }[]}
+                                    assignments={platformAssignments}
+                                    setAssignments={setPlatformAssignments}
+                                  />
+                                ) : null
+                              }
                             />
-                            {isAdmin && (
-                              <MultiPlatformAssignmentsFields
-                                platforms={platforms}
-                                members={members as { id: number; name: string; role: string }[]}
-                                assignments={platformAssignments}
-                                setAssignments={setPlatformAssignments}
-                              />
-                            )}
                           </>
                         ) : (
                           <TaskFormFields
@@ -6317,6 +6430,70 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                 >
                   {deleteSeriesPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
                   تأكيد النقل إلى السلة
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Group delete dialog */}
+      <Dialog
+        open={!!deleteGroupTask}
+        onOpenChange={(open) => {
+          if (!open && !deleteGroupPending) setDeleteGroupTask(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-[480px]" dir="rtl">
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">حذف مهمة مرتبطة بمجموعة</DialogTitle>
+          </DialogHeader>
+          {deleteGroupTask && (
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm leading-6">
+                <div className="font-semibold">{deleteGroupTask.title}</div>
+                <div className="text-muted-foreground">
+                  أُنشئت هذه المهمة ضمن مجموعة من عدة منصات.
+                  {typeof deleteGroupCount === "number" && deleteGroupCount > 0
+                    ? ` عدد المهام المرتبطة بها: ${deleteGroupCount}.`
+                    : ""}
+                </div>
+              </div>
+
+              <p className="text-sm font-medium">هل تريد حذف باقي المهام المرتبطة بها؟</p>
+
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
+                يتم النقل إلى السلة فقط، ويمكن استعادتها لاحقًا.
+              </div>
+
+              <div className="flex flex-col gap-2 pt-1">
+                <Button
+                  type="button"
+                  variant="destructive"
+                  className="w-full"
+                  onClick={() => executeDeleteGroup("entire_group")}
+                  disabled={deleteGroupPending}
+                >
+                  {deleteGroupPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                  نعم، احذف كل المهام المرتبطة
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="w-full"
+                  onClick={() => executeDeleteGroup("single")}
+                  disabled={deleteGroupPending}
+                >
+                  لا، احذف هذه المهمة فقط
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  className="w-full"
+                  onClick={() => setDeleteGroupTask(null)}
+                  disabled={deleteGroupPending}
+                >
+                  إلغاء
                 </Button>
               </div>
             </div>

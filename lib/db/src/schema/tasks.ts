@@ -40,6 +40,7 @@ export const tasksTable = pgTable("tasks", {
   generationBatchId: integer("generation_batch_id").references(() => taskGenerationBatchesTable.id, { onDelete: "set null" }),
   lastRecurredAt: timestamp("last_recurred_at"),
   submissionUrl: text("submission_url"),
+  assigneeNote: text("assignee_note"),
   pageId: integer("page_id").references(() => platformPagesTable.id, { onDelete: "set null" }),
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
