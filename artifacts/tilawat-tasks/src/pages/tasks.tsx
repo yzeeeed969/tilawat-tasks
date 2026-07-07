@@ -836,6 +836,23 @@ class TaskDialogErrorBoundary extends Component<TaskDialogErrorBoundaryProps, Ta
   }
 }
 
+// يبني رسالة نتيجة نشر القارئ للمجموعة: كم مهمة تابعة تحدّثت، وأي منصات تحتاج مراجعة يدوية.
+function reciterPropagationToast(
+  propagation: { updatedCount?: number; needsManualReview?: Array<{ platform: string; reason: string }> } | null | undefined,
+  fallbackTitle: string,
+): { title: string; description?: string; variant?: "destructive" } {
+  const updated = Number(propagation?.updatedCount ?? 0);
+  const review = Array.isArray(propagation?.needsManualReview) ? propagation!.needsManualReview! : [];
+  if (updated > 0 || review.length > 0) {
+    return {
+      title: updated > 0 ? `تم تغيير القارئ ونشره إلى ${updated} مهمة تابعة` : fallbackTitle,
+      description: review.length > 0 ? `تحتاج مراجعة يدوية: ${review.map((item) => item.platform).join("، ")}` : undefined,
+      variant: review.length > 0 ? "destructive" : undefined,
+    };
+  }
+  return { title: fallbackTitle };
+}
+
 const EDIT_SCOPE_MESSAGES: Record<EditTaskScope, string> = {
   single: "سيتم تعديل هذه المهمة فقط.",
   future: "سيتم تطبيق هذا التعديل على هذه المهمة وما بعدها ضمن نفس السلسلة.",
@@ -5420,9 +5437,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           } as any,
         },
         {
-          onSuccess: () => {
+          onSuccess: (result) => {
             invalidateTasks();
-            toast({ title: "تم تحديث المهمة بنجاح" });
+            toast(reciterPropagationToast((result as any)?.reciterPropagation, "تم تحديث المهمة بنجاح"));
             setEditingTask(null);
           },
           onError: () => toast({ title: "حدث خطأ أثناء تحديث المهمة", variant: "destructive" }),
@@ -5830,7 +5847,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         throw new Error(error?.error ?? "Failed to change reciter");
       }
       await invalidateTasks();
-      toast({ title: "تم تغيير القارئ وإسناد المهمة للعضو المسؤول" });
+      const result = await response.json().catch(() => null);
+      toast(reciterPropagationToast(result?.reciterPropagation, "تم تغيير القارئ وإسناد المهمة للعضو المسؤول"));
       closeQuickReciterDialog();
     } catch (error) {
       toast({
