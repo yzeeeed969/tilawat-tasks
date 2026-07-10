@@ -2272,20 +2272,54 @@ router.get("/tasks/:id", async (req, res) => {
   res.json(taskResponse);
 });
 
-// نشر تغيير القارئ من مهمة «تطبيق تلاوات الحرمين» إلى بقية مهام مجموعتها (creationGroupId).
-// لكل مهمة تابعة: يغيّر القارئ، ويعيد حساب المسؤول من (صفحة تلك المنصة للقارئ الجديد ←
-// العضو المربوط بها)، ويرسل إشعارًا للأعضاء الجدد. الحالات الناقصة (لا صفحة/لا عضو/تعدد
-// الأعضاء) تُترك بمسؤولها الحالي وتُدرَج في «تحتاج مراجعة يدوية». لا يفشل بسبب منصة واحدة.
-async function propagateReciterToGroupSiblings(params: {
+type ReciterDecisionKind = "no_member" | "multi_member" | "no_page";
+type ReciterDecisionRow = {
+  taskId: number;
+  platformId: number;
+  platformName: string;
+  kind: ReciterDecisionKind;
+  candidateMembers: Array<{ id: number; name: string }>;
+};
+
+// إشعار عضو واحد بإسناد مهمة إليه بعد تغيير القارئ (داخلي + Telegram).
+async function notifyReciterAssignment(
+  n: { taskId: number; title: string; memberId: number; platformName: string; dueDate: Date | null },
+  reciterName: string,
+) {
+  await notifyTaskAssignedAfterReciterChange({
+    taskId: n.taskId,
+    taskTitle: n.title,
+    memberId: n.memberId,
+    reciterName,
+    platformName: n.platformName,
+    dueDate: n.dueDate,
+  }).catch(() => {});
+  await notifyTelegramTaskAssigned({
+    id: n.taskId,
+    title: n.title,
+    memberId: n.memberId,
+    dueDate: n.dueDate,
+    reciterName,
+    platformName: n.platformName,
+  }).catch(() => {});
+}
+
+function reciterTitleReplace(currentTitle: string, oldReciterName: string | undefined, newReciterName: string) {
+  return oldReciterName && currentTitle.includes(oldReciterName)
+    ? currentTitle.replace(oldReciterName, newReciterName)
+    : currentTitle;
+}
+
+// المرحلة (أ): يفحص مهام مجموعة المهمة الأساسية، ويطبّق فورًا المنصات ذات العضو الواحد
+// (تحديث القارئ/الصفحة/المسؤول + إشعار)، ويُعيد قائمة المنصات التي تحتاج قرار المستخدم:
+// «بلا عضو» / «تعدد أعضاء» / «بلا صفحة». المنصات التي تحتاج قرارًا لا تُلمس هنا إطلاقًا.
+async function analyzeAndApplyReciterPropagation(params: {
   baseTaskId: number;
   creationGroupId: number;
   newReciterId: number;
   newReciterName: string;
-}): Promise<{ updatedCount: number; memberChangedCount: number; needsManualReview: Array<{ platform: string; reason: string }> }> {
+}): Promise<{ autoAppliedCount: number; decisions: ReciterDecisionRow[] }> {
   const { baseTaskId, creationGroupId, newReciterId, newReciterName } = params;
-  const needsManualReview: Array<{ platform: string; reason: string }> = [];
-  let updatedCount = 0;
-  let memberChangedCount = 0;
 
   const groupTasks = await db
     .select({
@@ -2302,9 +2336,7 @@ async function propagateReciterToGroupSiblings(params: {
     .where(and(eq(tasksTable.creationGroupId, creationGroupId), isNull(tasksTable.deletedAt)));
 
   const siblings = groupTasks.filter((task) => task.id !== baseTaskId);
-  if (siblings.length === 0) {
-    return { updatedCount: 0, memberChangedCount: 0, needsManualReview };
-  }
+  if (siblings.length === 0) return { autoAppliedCount: 0, decisions: [] };
 
   const oldReciterIds = [...new Set(siblings.map((s) => s.reciterId).filter((x): x is number => Number.isInteger(x as number) && (x as number) > 0))];
   const oldReciterRows = oldReciterIds.length > 0
@@ -2312,76 +2344,56 @@ async function propagateReciterToGroupSiblings(params: {
     : [];
   const oldReciterNameById = new Map(oldReciterRows.map((r) => [r.id, r.name]));
 
+  const allActiveMembers = await db
+    .select({ id: membersTable.id, name: membersTable.name })
+    .from(membersTable)
+    .where(eq(membersTable.isActive, true));
+
+  const decisions: ReciterDecisionRow[] = [];
   const notifications: Array<{ taskId: number; title: string; memberId: number; platformName: string; dueDate: Date | null }> = [];
+  let autoAppliedCount = 0;
 
   for (const sib of siblings) {
-    try {
-      const [page] = await db
-        .select({ id: platformPagesTable.id })
-        .from(platformPagesTable)
-        .where(and(eq(platformPagesTable.platformId, sib.platformId), eq(platformPagesTable.reciterId, newReciterId)))
-        .limit(1);
+    const newTitle = reciterTitleReplace(sib.title, sib.reciterId ? oldReciterNameById.get(sib.reciterId) : undefined, newReciterName);
 
-      const linkedMemberIds = page
-        ? (await db
-            .select({ memberId: pageMembersTable.memberId })
-            .from(pageMembersTable)
-            .where(eq(pageMembersTable.pageId, page.id))).map((r) => r.memberId)
-        : [];
+    const [page] = await db
+      .select({ id: platformPagesTable.id })
+      .from(platformPagesTable)
+      .where(and(eq(platformPagesTable.platformId, sib.platformId), eq(platformPagesTable.reciterId, newReciterId)))
+      .limit(1);
 
-      let newMemberId = sib.memberId;
-      let memberChanged = false;
-      if (linkedMemberIds.length === 1) {
-        if (linkedMemberIds[0] !== sib.memberId) {
-          newMemberId = linkedMemberIds[0];
-          memberChanged = true;
-        }
-      } else if (linkedMemberIds.length === 0) {
-        needsManualReview.push({ platform: sib.platformName, reason: page ? "لا يوجد عضو مربوط بالقارئ الجديد" : "لا توجد صفحة للقارئ الجديد" });
-      } else {
-        needsManualReview.push({ platform: sib.platformName, reason: "أكثر من عضو مربوط — يحتاج اختيارًا يدويًا" });
-      }
+    if (!page) {
+      decisions.push({ taskId: sib.id, platformId: sib.platformId, platformName: sib.platformName, kind: "no_page", candidateMembers: [] });
+      continue;
+    }
 
-      const oldName = sib.reciterId ? oldReciterNameById.get(sib.reciterId) : undefined;
-      const newTitle = oldName && sib.title.includes(oldName) ? sib.title.replace(oldName, newReciterName) : sib.title;
+    const linkedMembers = await db
+      .select({ id: membersTable.id, name: membersTable.name })
+      .from(pageMembersTable)
+      .innerJoin(membersTable, eq(pageMembersTable.memberId, membersTable.id))
+      .where(eq(pageMembersTable.pageId, page.id));
 
-      const updateValues: Record<string, unknown> = { reciterId: newReciterId, title: newTitle };
-      if (page) updateValues.pageId = page.id; // نحدّث الصفحة فقط إن وُجدت للقارئ الجديد، وإلا نُبقيها كما هي
+    if (linkedMembers.length === 1) {
+      const newMemberId = linkedMembers[0].id;
+      const memberChanged = newMemberId !== sib.memberId;
+      const updateValues: Record<string, unknown> = { reciterId: newReciterId, title: newTitle, pageId: page.id };
       if (memberChanged) updateValues.memberId = newMemberId;
-
       await db.update(tasksTable).set(updateValues).where(eq(tasksTable.id, sib.id));
-      updatedCount++;
-
+      autoAppliedCount++;
       if (memberChanged) {
         await syncTaskMembers(sib.id, [newMemberId]);
-        memberChangedCount++;
         notifications.push({ taskId: sib.id, title: newTitle, memberId: newMemberId, platformName: sib.platformName, dueDate: sib.dueDate });
       }
-    } catch {
-      needsManualReview.push({ platform: sib.platformName, reason: "تعذّر التحديث تقنيًا" });
+    } else if (linkedMembers.length === 0) {
+      decisions.push({ taskId: sib.id, platformId: sib.platformId, platformName: sib.platformName, kind: "no_member", candidateMembers: allActiveMembers });
+    } else {
+      decisions.push({ taskId: sib.id, platformId: sib.platformId, platformName: sib.platformName, kind: "multi_member", candidateMembers: linkedMembers });
     }
   }
 
-  for (const n of notifications) {
-    await notifyTaskAssignedAfterReciterChange({
-      taskId: n.taskId,
-      taskTitle: n.title,
-      memberId: n.memberId,
-      reciterName: newReciterName,
-      platformName: n.platformName,
-      dueDate: n.dueDate,
-    }).catch(() => {});
-    await notifyTelegramTaskAssigned({
-      id: n.taskId,
-      title: n.title,
-      memberId: n.memberId,
-      dueDate: n.dueDate,
-      reciterName: newReciterName,
-      platformName: n.platformName,
-    }).catch(() => {});
-  }
+  for (const n of notifications) await notifyReciterAssignment(n, newReciterName);
 
-  return { updatedCount, memberChangedCount, needsManualReview };
+  return { autoAppliedCount, decisions };
 }
 
 router.patch("/tasks/:id/quick-reciter", async (req, res) => {
@@ -2528,18 +2540,199 @@ router.patch("/tasks/:id/quick-reciter", async (req, res) => {
   });
 
   // نشر القارئ للمجموعة — فقط عند تغيير القارئ في مهمة «تطبيق تلاوات الحرمين»
-  let reciterPropagation: Awaited<ReturnType<typeof propagateReciterToGroupSiblings>> | null = null;
+  let reciterPropagation: { autoAppliedCount: number } | null = null;
+  let pendingReciterDecisions: Record<string, unknown> | null = null;
   if (currentTask.creationGroupId && isApplicationPlatformName(platform.name)) {
-    reciterPropagation = await propagateReciterToGroupSiblings({
+    const analysis = await analyzeAndApplyReciterPropagation({
       baseTaskId: id,
       creationGroupId: currentTask.creationGroupId,
       newReciterId: reciterId,
       newReciterName: reciter.name,
     });
+    reciterPropagation = { autoAppliedCount: analysis.autoAppliedCount };
+    if (analysis.decisions.length > 0) {
+      pendingReciterDecisions = {
+        baseTaskId: id,
+        creationGroupId: currentTask.creationGroupId,
+        newReciterId: reciterId,
+        newReciterName: reciter.name,
+        autoAppliedCount: analysis.autoAppliedCount,
+        decisions: analysis.decisions,
+      };
+    }
   }
 
   const taskResponse = await buildTaskResponse(id);
-  res.json({ ...taskResponse, reciterPropagation });
+  res.json({ ...taskResponse, reciterPropagation, pendingReciterDecisions });
+});
+
+// تطبيق قرارات شاشة اختيار القارئ للمنصات الناقصة. يعيد التحقق من كل شيء ولا يثق بالواجهة:
+// الصلاحية (مدير)، انتماء المهمة الأساسية والتوابع لنفس المجموعة، منصة «تطبيق تلاوات الحرمين»،
+// وصلاحية العضو. تحقّق أولًا لكل القرارات، فإن كان أي قرار غير صالح لا يُطبَّق شيء إطلاقًا.
+router.post("/tasks/:id/reciter-decisions", async (req, res) => {
+  const baseId = Number(req.params.id);
+  const currentUser = (req as any).currentUser;
+  if (currentUser?.role !== "admin") {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+
+  const creationGroupId = Number((req.body as any)?.creationGroupId);
+  const newReciterId = Number((req.body as any)?.newReciterId);
+  const resolutions = Array.isArray((req.body as any)?.resolutions) ? (req.body as any).resolutions : [];
+  if (
+    !Number.isInteger(baseId) || baseId <= 0 ||
+    !Number.isInteger(creationGroupId) || creationGroupId <= 0 ||
+    !Number.isInteger(newReciterId) || newReciterId <= 0
+  ) {
+    res.status(400).json({ error: "Invalid parameters" });
+    return;
+  }
+
+  const [base] = await db
+    .select({ id: tasksTable.id, platformName: platformsTable.name, creationGroupId: tasksTable.creationGroupId })
+    .from(tasksTable)
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .where(and(eq(tasksTable.id, baseId), isNull(tasksTable.deletedAt)))
+    .limit(1);
+  if (!base || base.creationGroupId !== creationGroupId || !isApplicationPlatformName(base.platformName)) {
+    res.status(400).json({ error: "Invalid base task" });
+    return;
+  }
+
+  const [newReciter] = await db.select({ id: recitersTable.id, name: recitersTable.name }).from(recitersTable).where(eq(recitersTable.id, newReciterId)).limit(1);
+  if (!newReciter) {
+    res.status(404).json({ error: "Reciter not found" });
+    return;
+  }
+
+  type ApplyOp =
+    | { type: "assign"; taskId: number; pageId: number; memberId: number; newTitle: string; oldMemberId: number; platformName: string; dueDate: Date | null }
+    | { type: "delete"; taskId: number }
+    | { type: "keep" };
+  const ops: ApplyOp[] = [];
+
+  // المرور الأول: تحقّق فقط (لا تطبيق)
+  for (const raw of resolutions) {
+    const taskId = Number(raw?.taskId);
+    const action = raw?.action;
+    if (!Number.isInteger(taskId) || taskId <= 0 || taskId === baseId) {
+      res.status(400).json({ error: "Invalid resolution taskId" });
+      return;
+    }
+
+    const [sib] = await db
+      .select({
+        id: tasksTable.id,
+        title: tasksTable.title,
+        platformId: tasksTable.platformId,
+        platformName: platformsTable.name,
+        reciterId: tasksTable.reciterId,
+        memberId: tasksTable.memberId,
+        dueDate: tasksTable.dueDate,
+        creationGroupId: tasksTable.creationGroupId,
+      })
+      .from(tasksTable)
+      .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+      .where(and(eq(tasksTable.id, taskId), isNull(tasksTable.deletedAt)))
+      .limit(1);
+    if (!sib || sib.creationGroupId !== creationGroupId) {
+      res.status(400).json({ error: "Task not in group" });
+      return;
+    }
+
+    const [page] = await db
+      .select({ id: platformPagesTable.id })
+      .from(platformPagesTable)
+      .where(and(eq(platformPagesTable.platformId, sib.platformId), eq(platformPagesTable.reciterId, newReciterId)))
+      .limit(1);
+    const linkedMemberIds = page
+      ? (await db.select({ memberId: pageMembersTable.memberId }).from(pageMembersTable).where(eq(pageMembersTable.pageId, page.id))).map((r) => r.memberId)
+      : [];
+
+    if (action === "delete") {
+      if (page) {
+        res.status(400).json({ error: "Cannot delete a platform that has a page for the new reciter" });
+        return;
+      }
+      ops.push({ type: "delete", taskId: sib.id });
+      continue;
+    }
+    if (action === "keep") {
+      if (page) {
+        res.status(400).json({ error: "Cannot keep a platform that needs a member" });
+        return;
+      }
+      ops.push({ type: "keep" });
+      continue;
+    }
+    if (action === "assign") {
+      if (!page) {
+        res.status(400).json({ error: "Cannot assign without a page" });
+        return;
+      }
+      const memberId = Number(raw?.memberId);
+      if (!Number.isInteger(memberId) || memberId <= 0) {
+        res.status(400).json({ error: "Invalid memberId" });
+        return;
+      }
+      if (linkedMemberIds.length > 1) {
+        if (!linkedMemberIds.includes(memberId)) {
+          res.status(400).json({ error: "Member not linked to this page" });
+          return;
+        }
+      } else {
+        const [m] = await db.select({ id: membersTable.id }).from(membersTable).where(and(eq(membersTable.id, memberId), eq(membersTable.isActive, true))).limit(1);
+        if (!m) {
+          res.status(400).json({ error: "Invalid member" });
+          return;
+        }
+      }
+      const [oldReciter] = sib.reciterId
+        ? await db.select({ name: recitersTable.name }).from(recitersTable).where(eq(recitersTable.id, sib.reciterId)).limit(1)
+        : [];
+      const newTitle = reciterTitleReplace(sib.title, oldReciter?.name, newReciter.name);
+      ops.push({ type: "assign", taskId: sib.id, pageId: page.id, memberId, newTitle, oldMemberId: sib.memberId, platformName: sib.platformName, dueDate: sib.dueDate });
+      continue;
+    }
+
+    res.status(400).json({ error: "Invalid action" });
+    return;
+  }
+
+  // المرور الثاني: تطبيق (كل القرارات صالحة)
+  let assigned = 0;
+  let deleted = 0;
+  let kept = 0;
+  const notifications: Array<{ taskId: number; title: string; memberId: number; platformName: string; dueDate: Date | null }> = [];
+
+  for (const op of ops) {
+    if (op.type === "delete") {
+      await db.update(tasksTable).set({ deletedAt: new Date() }).where(eq(tasksTable.id, op.taskId));
+      deleted++;
+    } else if (op.type === "keep") {
+      kept++;
+    } else {
+      await db.update(tasksTable).set({ reciterId: newReciterId, pageId: op.pageId, memberId: op.memberId, title: op.newTitle }).where(eq(tasksTable.id, op.taskId));
+      await syncTaskMembers(op.taskId, [op.memberId]);
+      assigned++;
+      if (op.memberId !== op.oldMemberId) {
+        notifications.push({ taskId: op.taskId, title: op.newTitle, memberId: op.memberId, platformName: op.platformName, dueDate: op.dueDate });
+      }
+    }
+  }
+
+  for (const n of notifications) await notifyReciterAssignment(n, newReciter.name);
+
+  await logActivity(req, "task_reciter_decisions_applied", "task_creation_group", creationGroupId, base.platformName, {
+    baseTaskId: baseId,
+    newReciterId,
+    assigned,
+    deleted,
+    kept,
+  });
+
+  res.json({ assigned, deleted, kept });
 });
 
 router.put("/tasks/:id", async (req, res) => {
@@ -2871,7 +3064,8 @@ router.put("/tasks/:id", async (req, res) => {
 
   // نشر القارئ للمجموعة من نافذة التعديل الكاملة — فقط عند تغيير القارئ في مهمة
   // «تطبيق تلاوات الحرمين». المهمة الأساسية تبقى بما اختاره المستخدم؛ يُطبَّق على التابعة فقط.
-  let reciterPropagation: Awaited<ReturnType<typeof propagateReciterToGroupSiblings>> | null = null;
+  let reciterPropagation: { autoAppliedCount: number } | null = null;
+  let pendingReciterDecisions: Record<string, unknown> | null = null;
   if (
     currentUser?.role === "admin" &&
     currentTask.creationGroupId &&
@@ -2891,18 +3085,29 @@ router.put("/tasks/:id", async (req, res) => {
         .where(eq(recitersTable.id, requestedReciterId))
         .limit(1);
       if (newReciter) {
-        reciterPropagation = await propagateReciterToGroupSiblings({
+        const analysis = await analyzeAndApplyReciterPropagation({
           baseTaskId: id,
           creationGroupId: currentTask.creationGroupId,
           newReciterId: requestedReciterId,
           newReciterName: newReciter.name,
         });
+        reciterPropagation = { autoAppliedCount: analysis.autoAppliedCount };
+        if (analysis.decisions.length > 0) {
+          pendingReciterDecisions = {
+            baseTaskId: id,
+            creationGroupId: currentTask.creationGroupId,
+            newReciterId: requestedReciterId,
+            newReciterName: newReciter.name,
+            autoAppliedCount: analysis.autoAppliedCount,
+            decisions: analysis.decisions,
+          };
+        }
       }
     }
   }
 
   const taskResponse = await buildTaskResponse(id);
-  res.json({ ...taskResponse, reciterPropagation });
+  res.json({ ...taskResponse, reciterPropagation, pendingReciterDecisions });
 });
 
 router.post("/tasks/:id/proofs", async (req, res) => {

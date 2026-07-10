@@ -836,21 +836,35 @@ class TaskDialogErrorBoundary extends Component<TaskDialogErrorBoundaryProps, Ta
   }
 }
 
-// يبني رسالة نتيجة نشر القارئ للمجموعة: كم مهمة تابعة تحدّثت، وأي منصات تحتاج مراجعة يدوية.
+// أنواع شاشة اختيار القارئ للمنصات الناقصة
+type ReciterDecisionKind = "no_member" | "multi_member" | "no_page";
+type ReciterDecisionRow = {
+  taskId: number;
+  platformId: number;
+  platformName: string;
+  kind: ReciterDecisionKind;
+  candidateMembers: Array<{ id: number; name: string }>;
+};
+type PendingReciterDecisions = {
+  baseTaskId: number;
+  creationGroupId: number;
+  newReciterId: number;
+  newReciterName: string;
+  autoAppliedCount: number;
+  decisions: ReciterDecisionRow[];
+};
+type ReciterDecisionChoice =
+  | { action: "assign"; memberId: number }
+  | { action: "delete" }
+  | { action: "keep" };
+
+// رسالة نتيجة نشر القارئ للمجموعة عند عدم وجود منصات تحتاج قرارًا (تحديث تلقائي فقط).
 function reciterPropagationToast(
-  propagation: { updatedCount?: number; needsManualReview?: Array<{ platform: string; reason: string }> } | null | undefined,
+  propagation: { autoAppliedCount?: number } | null | undefined,
   fallbackTitle: string,
-): { title: string; description?: string; variant?: "destructive" } {
-  const updated = Number(propagation?.updatedCount ?? 0);
-  const review = Array.isArray(propagation?.needsManualReview) ? propagation!.needsManualReview! : [];
-  if (updated > 0 || review.length > 0) {
-    return {
-      title: updated > 0 ? `تم تغيير القارئ ونشره إلى ${updated} مهمة تابعة` : fallbackTitle,
-      description: review.length > 0 ? `تحتاج مراجعة يدوية: ${review.map((item) => item.platform).join("، ")}` : undefined,
-      variant: review.length > 0 ? "destructive" : undefined,
-    };
-  }
-  return { title: fallbackTitle };
+): { title: string } {
+  const applied = Number(propagation?.autoAppliedCount ?? 0);
+  return { title: applied > 0 ? `تم تغيير القارئ ونشره إلى ${applied} مهمة تابعة` : fallbackTitle };
 }
 
 const EDIT_SCOPE_MESSAGES: Record<EditTaskScope, string> = {
@@ -4093,6 +4107,9 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [quickReciterHasLinkedMembers, setQuickReciterHasLinkedMembers] = useState(false);
   const [quickReciterMembersLoading, setQuickReciterMembersLoading] = useState(false);
   const [quickReciterSaving, setQuickReciterSaving] = useState(false);
+  const [reciterDecisions, setReciterDecisions] = useState<PendingReciterDecisions | null>(null);
+  const [reciterDecisionChoices, setReciterDecisionChoices] = useState<Record<number, ReciterDecisionChoice>>({});
+  const [reciterDecisionsSaving, setReciterDecisionsSaving] = useState(false);
   const [deleteSeriesTask, setDeleteSeriesTask] = useState<TaskWithDetails | null>(null);
   const [deleteSeriesScope, setDeleteSeriesScope] = useState<DeleteSeriesScope>("single");
   const [deleteSeriesPending, setDeleteSeriesPending] = useState(false);
@@ -5439,8 +5456,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         {
           onSuccess: (result) => {
             invalidateTasks();
-            toast(reciterPropagationToast((result as any)?.reciterPropagation, "تم تحديث المهمة بنجاح"));
             setEditingTask(null);
+            if ((result as any)?.pendingReciterDecisions) {
+              openReciterDecisions((result as any).pendingReciterDecisions as PendingReciterDecisions);
+            } else {
+              toast(reciterPropagationToast((result as any)?.reciterPropagation, "تم تحديث المهمة بنجاح"));
+            }
           },
           onError: () => toast({ title: "حدث خطأ أثناء تحديث المهمة", variant: "destructive" }),
         }
@@ -5848,8 +5869,12 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       }
       await invalidateTasks();
       const result = await response.json().catch(() => null);
-      toast(reciterPropagationToast(result?.reciterPropagation, "تم تغيير القارئ وإسناد المهمة للعضو المسؤول"));
       closeQuickReciterDialog();
+      if (result?.pendingReciterDecisions) {
+        openReciterDecisions(result.pendingReciterDecisions as PendingReciterDecisions);
+      } else {
+        toast(reciterPropagationToast(result?.reciterPropagation, "تم تغيير القارئ وإسناد المهمة للعضو المسؤول"));
+      }
     } catch (error) {
       toast({
         title: error instanceof Error ? error.message : "حدث خطأ أثناء تغيير القارئ",
@@ -5857,6 +5882,59 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       });
     } finally {
       setQuickReciterSaving(false);
+    }
+  };
+
+  const openReciterDecisions = (payload: PendingReciterDecisions) => {
+    setReciterDecisions(payload);
+    setReciterDecisionChoices({});
+  };
+
+  // هل حُسمت كل الصفوف؟ (assign يحتاج عضوًا، no_page يحتاج delete أو keep)
+  const reciterDecisionsComplete = (() => {
+    if (!reciterDecisions) return false;
+    return reciterDecisions.decisions.every((row) => {
+      const choice = reciterDecisionChoices[row.taskId];
+      if (!choice) return false;
+      if (choice.action === "assign") return Number.isInteger(choice.memberId) && choice.memberId > 0;
+      return true;
+    });
+  })();
+
+  const applyReciterDecisions = async () => {
+    if (!reciterDecisions || !reciterDecisionsComplete) return;
+    setReciterDecisionsSaving(true);
+    try {
+      const resolutions = reciterDecisions.decisions.map((row) => {
+        const choice = reciterDecisionChoices[row.taskId];
+        if (choice.action === "assign") return { taskId: row.taskId, action: "assign", memberId: choice.memberId };
+        return { taskId: row.taskId, action: choice.action };
+      });
+      const response = await fetch(`/api/tasks/${reciterDecisions.baseTaskId}/reciter-decisions`, {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          creationGroupId: reciterDecisions.creationGroupId,
+          newReciterId: reciterDecisions.newReciterId,
+          resolutions,
+        }),
+      });
+      const payload = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(payload?.error ?? "Failed to apply reciter decisions");
+      await invalidateTasks();
+      const parts = [
+        payload?.assigned ? `أُسند: ${payload.assigned}` : null,
+        payload?.deleted ? `حُذف: ${payload.deleted}` : null,
+        payload?.kept ? `أُبقي: ${payload.kept}` : null,
+      ].filter(Boolean);
+      toast({ title: "تم تطبيق قرارات القارئ", description: parts.length ? parts.join(" · ") : undefined });
+      setReciterDecisions(null);
+      setReciterDecisionChoices({});
+    } catch (error) {
+      toast({ title: error instanceof Error ? error.message : "تعذّر تطبيق القرارات", variant: "destructive" });
+    } finally {
+      setReciterDecisionsSaving(false);
     }
   };
 
@@ -6514,6 +6592,107 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   إلغاء
                 </Button>
               </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Reciter decisions dialog (إلزامي — لا يُغلق قبل حسم كل الصفوف) */}
+      <Dialog open={!!reciterDecisions} onOpenChange={() => { /* شاشة إلزامية: تجاهل أي محاولة إغلاق */ }}>
+        <DialogContent
+          className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto [&>button]:hidden"
+          dir="rtl"
+          onEscapeKeyDown={(event) => event.preventDefault()}
+          onInteractOutside={(event) => event.preventDefault()}
+        >
+          <DialogHeader>
+            <DialogTitle className="text-xl font-bold">توزيع المسؤولين على المنصات</DialogTitle>
+          </DialogHeader>
+          {reciterDecisions && (
+            <div className="space-y-4">
+              <div className="rounded-md border border-sidebar-primary/20 bg-sidebar-primary/5 p-3 text-sm leading-6">
+                <div>القارئ الجديد: <span className="font-semibold">{reciterDecisions.newReciterName}</span></div>
+                {reciterDecisions.autoAppliedCount > 0 && (
+                  <div className="text-muted-foreground">تم تحديث {reciterDecisions.autoAppliedCount} منصة تلقائيًا. المنصات أدناه تحتاج قرارك.</div>
+                )}
+              </div>
+
+              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
+                يجب حسم كل المنصات أدناه قبل المتابعة — لا يمكن إغلاق هذه الشاشة قبل إكمالها.
+              </div>
+
+              <div className="space-y-3">
+                {reciterDecisions.decisions.map((row) => {
+                  const choice = reciterDecisionChoices[row.taskId];
+                  return (
+                    <div key={row.taskId} className="space-y-2 rounded-lg border border-border bg-background p-3">
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="text-sm font-semibold">{row.platformName}</p>
+                        <Badge variant="outline" className="text-[10px]">
+                          {row.kind === "no_page" ? "لا توجد صفحة" : row.kind === "no_member" ? "بلا عضو مربوط" : "أكثر من عضو"}
+                        </Badge>
+                      </div>
+
+                      {row.kind === "no_page" ? (
+                        <div className="space-y-2">
+                          <p className="text-xs text-destructive">القارئ الجديد ليس له صفحة على هذه المنصة.</p>
+                          <div className="grid grid-cols-2 gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setReciterDecisionChoices((prev) => ({ ...prev, [row.taskId]: { action: "keep" } }))}
+                              className={cn(
+                                "rounded-md border p-2 text-sm transition-colors",
+                                choice?.action === "keep" ? "border-sidebar-primary bg-sidebar-primary/10 text-sidebar-primary font-semibold" : "border-border hover:bg-muted/40"
+                              )}
+                            >
+                              إبقاؤها كما هي
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setReciterDecisionChoices((prev) => ({ ...prev, [row.taskId]: { action: "delete" } }))}
+                              className={cn(
+                                "rounded-md border p-2 text-sm transition-colors",
+                                choice?.action === "delete" ? "border-destructive bg-destructive/10 text-destructive font-semibold" : "border-border hover:bg-muted/40"
+                              )}
+                            >
+                              حذف هذه المهمة
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="space-y-1">
+                          <Label className="text-xs text-muted-foreground">اختر المسؤول {row.kind === "multi_member" ? "(من المربوطين)" : "(من كل الأعضاء)"}</Label>
+                          <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
+                            value={choice?.action === "assign" ? String(choice.memberId) : ""}
+                            onChange={(event) => {
+                              const memberId = Number(event.target.value);
+                              if (Number.isInteger(memberId) && memberId > 0) {
+                                setReciterDecisionChoices((prev) => ({ ...prev, [row.taskId]: { action: "assign", memberId } }));
+                              }
+                            }}
+                          >
+                            <option value="" disabled>اختر المسؤول</option>
+                            {row.candidateMembers.map((member) => (
+                              <option key={member.id} value={String(member.id)}>{member.name}</option>
+                            ))}
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              <Button
+                type="button"
+                className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
+                onClick={applyReciterDecisions}
+                disabled={!reciterDecisionsComplete || reciterDecisionsSaving}
+              >
+                {reciterDecisionsSaving && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
+                تأكيد وتطبيق
+              </Button>
             </div>
           )}
         </DialogContent>
