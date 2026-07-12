@@ -1,4 +1,4 @@
-import { useState, type ElementType } from "react";
+import { lazy, Suspense, useState, type ElementType } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { format } from "date-fns";
 import { ar } from "date-fns/locale";
@@ -393,57 +393,43 @@ function MonthlyGrowthChart({
   );
 }
 
-const chartPalette = ["#0f5b3d", "#c59226", "#2563eb", "#dc2626", "#7c3aed", "#0f766e", "#ea580c", "#475569"];
+// رسوم recharts محمّلة كسولًا — تُحمَّل فقط عند فتح «العرض التحليلي» كي لا تثقل
+// التحميل الأول للصفحة العامة ولا بقية الصفحات.
+const LazyPlatformDonut = lazy(() =>
+  import("./achievements-charts").then((module) => ({ default: module.PlatformDistributionDonutChart }))
+);
+const LazyMonthlyGrowth = lazy(() =>
+  import("./achievements-charts").then((module) => ({ default: module.MonthlyGrowthAreaChart }))
+);
 
-function PlatformDistributionDonut({
-  rows,
-}: {
-  rows: PublicAchievements["achievementsByPlatform"];
-}) {
-  const total = rows.reduce((sum, row) => sum + row.publications, 0);
-  if (rows.length === 0 || total <= 0) {
-    return (
-      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
-        لا توجد بيانات منصات للعرض.
-      </p>
-    );
+// عرض متصل للأشهر: يبدأ من أول شهر موثّق (لا شهر فارغ قبله)، ويعرض كل الأشهر بعده
+// حتى الشهر الحالي، بملء الأشهر الفارغة بقيمة صفر بدل حذفها. عرضيّ فقط — لا يمسّ الحساب.
+function fillMonthlyGrowth(rows: PublicAchievements["monthlyGrowth"]): PublicAchievements["monthlyGrowth"] {
+  if (rows.length === 0) return [];
+  const sorted = [...rows].sort((a, b) => new Date(a.monthStart).getTime() - new Date(b.monthStart).getTime());
+  const byKey = new Map<string, PublicAchievements["monthlyGrowth"][number]>();
+  for (const row of sorted) {
+    const date = new Date(row.monthStart);
+    byKey.set(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`, row);
   }
-
-  let cursor = 0;
-  const segments = rows.map((row, index) => {
-    const value = (row.publications / total) * 100;
-    const start = cursor;
-    const end = cursor + value;
-    cursor = end;
-    return {
-      ...row,
-      color: chartPalette[index % chartPalette.length],
-      start,
-      end,
-    };
-  });
-  const gradient = segments.map((segment) => `${segment.color} ${segment.start}% ${segment.end}%`).join(", ");
-
-  return (
-    <div className="grid gap-3 md:grid-cols-[176px_1fr] md:items-center">
-      <div className="mx-auto flex h-40 w-40 items-center justify-center rounded-full border border-[#eadfcd] shadow-inner md:h-44 md:w-44" style={{ background: `conic-gradient(${gradient})` }}>
-        <div className="flex h-24 w-24 flex-col items-center justify-center rounded-full border border-[#eadfcd] bg-[#fffdf8] text-center shadow-sm">
-          <span className="text-[10px] font-bold text-[#6f8378]">الإجمالي</span>
-          <span className="mt-0.5 text-lg font-black text-[#103c2d]">{formatNumber(total)}</span>
-          <span className="text-[10px] font-bold text-[#6f8378]">منشور</span>
-        </div>
-      </div>
-      <div className="grid grid-cols-2 gap-2">
-        {segments.map((segment) => (
-          <div key={segment.platformId} className="flex min-w-0 items-center gap-2 rounded-md border border-[#efe6d8] bg-[#fffdf8] px-2 py-2">
-            <span className="h-2.5 w-2.5 shrink-0 rounded-full" style={{ backgroundColor: segment.color }} />
-            <span className="truncate text-xs font-black text-[#103c2d]">{segment.name}</span>
-            <span className="ms-auto shrink-0 text-xs font-black text-[#5f796d]">{formatNumber(segment.publications)}</span>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+  const first = new Date(sorted[0].monthStart);
+  const now = new Date();
+  let year = first.getUTCFullYear();
+  let month = first.getUTCMonth();
+  const endYear = now.getUTCFullYear();
+  const endMonth = now.getUTCMonth();
+  const result: PublicAchievements["monthlyGrowth"] = [];
+  while (year < endYear || (year === endYear && month <= endMonth)) {
+    const key = `${year}-${String(month + 1).padStart(2, "0")}`;
+    const existing = byKey.get(key);
+    result.push(existing ?? { monthStart: new Date(Date.UTC(year, month, 1)).toISOString(), publications: 0, completedTasks: 0 });
+    month += 1;
+    if (month > 11) {
+      month = 0;
+      year += 1;
+    }
+  }
+  return result;
 }
 
 function CompactMetricCard({
@@ -499,70 +485,6 @@ function CompactPeriodSwitch({
           </button>
         ))}
       </div>
-    </div>
-  );
-}
-
-function CompactMonthlyGrowthChart({
-  rows,
-}: {
-  rows: PublicAchievements["monthlyGrowth"];
-}) {
-  if (rows.length === 0) {
-    return (
-      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-8 text-center text-xs font-bold text-[#6f8378]">
-        لا توجد بيانات نمو لهذه الفترة.
-      </p>
-    );
-  }
-
-  const maxValue = Math.max(...rows.map((row) => row.publications), 1);
-  const width = 620;
-  const height = 170;
-  const paddingX = 34;
-  const paddingTop = 18;
-  const paddingBottom = 34;
-  const chartHeight = height - paddingTop - paddingBottom;
-  const usableWidth = width - paddingX * 2;
-  const points = rows.map((row, index) => {
-    const x = rows.length === 1 ? width / 2 : paddingX + (index / (rows.length - 1)) * usableWidth;
-    const y = paddingTop + chartHeight - (row.publications / maxValue) * chartHeight;
-    return { ...row, x, y };
-  });
-  const baseline = height - paddingBottom;
-  const linePath = points.length === 1
-    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y}`
-    : points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-  const areaPath = points.length === 1
-    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y} L ${width - paddingX} ${baseline} L ${paddingX} ${baseline} Z`
-    : `${linePath} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-[#efe6d8] bg-[#fffdf8] p-2">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-[170px] w-full" role="img" aria-label="رسم النمو الشهري المختصر">
-        <defs>
-          <linearGradient id="compactMonthlyGrowthFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#0f5b3d" stopOpacity="0.24" />
-            <stop offset="100%" stopColor="#0f5b3d" stopOpacity="0.02" />
-          </linearGradient>
-        </defs>
-        <path d={areaPath} fill="url(#compactMonthlyGrowthFill)" />
-        <path d={linePath} fill="none" stroke="#0f5b3d" strokeLinecap="round" strokeLinejoin="round" strokeWidth="4" />
-        {points.map((point) => {
-          const date = new Date(point.monthStart);
-          return (
-            <g key={point.monthStart}>
-              <circle cx={point.x} cy={point.y} r="5" fill="#c59226" stroke="#fffaf0" strokeWidth="3" />
-              <text x={point.x} y={point.y - 12} textAnchor="middle" className="fill-[#103c2d] text-[12px] font-black">
-                {formatNumber(point.publications)}
-              </text>
-              <text x={point.x} y={height - 12} textAnchor="middle" className="fill-[#6f8378] text-[13px] font-bold">
-                {format(date, "MMM", { locale: ar })}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
     </div>
   );
 }
@@ -628,7 +550,9 @@ function AnalyticsView({
               <BarChart3 className="h-4 w-4 text-[#c59226]" />
               <h3 className="text-base font-black text-[#103c2d]">توزيع الإنجازات حسب المنصات</h3>
             </div>
-            <PlatformDistributionDonut rows={data.achievementsByPlatform} />
+            <Suspense fallback={<Skeleton className="h-52 w-full rounded-lg bg-[#f4eddf]" />}>
+              <LazyPlatformDonut rows={data.achievementsByPlatform} />
+            </Suspense>
           </CardContent>
         </Card>
 
@@ -638,7 +562,9 @@ function AnalyticsView({
               <LineChart className="h-4 w-4 text-[#c59226]" />
               <h3 className="text-base font-black text-[#103c2d]">النمو الشهري</h3>
             </div>
-            <CompactMonthlyGrowthChart rows={data.monthlyGrowth} />
+            <Suspense fallback={<Skeleton className="h-[260px] w-full rounded-lg bg-[#f4eddf]" />}>
+              <LazyMonthlyGrowth rows={fillMonthlyGrowth(data.monthlyGrowth)} />
+            </Suspense>
           </CardContent>
         </Card>
       </div>
