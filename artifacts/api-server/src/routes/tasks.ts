@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, reciterTaskFlowRuleAssigneesTable, reciterTaskFlowRulesTable, taskFlowLinksTable, taskCreationGroupsTable } from "@workspace/db";
-import { eq, and, inArray, isNull, isNotNull, ilike, or, sql } from "drizzle-orm";
+import { eq, and, inArray, isNull, isNotNull, ilike, or, sql, desc } from "drizzle-orm";
 import {
   CreateTaskBody,
   UpdateTaskBody,
@@ -2251,6 +2251,59 @@ router.post("/tasks", async (req, res) => {
 
   const taskResponse = await buildTaskResponse(task.id);
   res.status(201).json(taskResponse);
+});
+
+// اقتراح العضو المسؤول عند الإنشاء بناءً على (المنصة + القارئ).
+// المصدر الأساسي: أعضاء صفحة (المنصة+القارئ) في page_members. وإن لم يوجد ربط مُعدّ:
+// العضو المسؤول في آخر مهمة غير محذوفة بنفس المنصة والقارئ. قراءة فقط، لا يغيّر بيانات.
+// مسجّل قبل مسار "/tasks/:id" كي لا يلتقطه كمعرّف.
+router.get("/tasks/member-suggestion", async (req, res) => {
+  const platformId = Number(req.query.platformId);
+  const reciterId = Number(req.query.reciterId);
+  if (!Number.isInteger(platformId) || platformId <= 0 || !Number.isInteger(reciterId) || reciterId <= 0) {
+    res.json({ memberIds: [], source: "none" });
+    return;
+  }
+
+  const [page] = await db
+    .select({ id: platformPagesTable.id })
+    .from(platformPagesTable)
+    .where(and(eq(platformPagesTable.platformId, platformId), eq(platformPagesTable.reciterId, reciterId)))
+    .limit(1);
+
+  if (page) {
+    const linked = await db
+      .select({ memberId: pageMembersTable.memberId })
+      .from(pageMembersTable)
+      .innerJoin(membersTable, eq(pageMembersTable.memberId, membersTable.id))
+      .where(and(eq(pageMembersTable.pageId, page.id), eq(membersTable.isActive, true)));
+    const memberIds = [...new Set(linked.map((row) => row.memberId))];
+    if (memberIds.length > 0) {
+      res.json({ memberIds, source: "page_members" });
+      return;
+    }
+  }
+
+  // احتياط: آخر مهمة بنفس المنصة والقارئ
+  const [lastTask] = await db
+    .select({ memberId: tasksTable.memberId })
+    .from(tasksTable)
+    .innerJoin(membersTable, eq(tasksTable.memberId, membersTable.id))
+    .where(and(
+      eq(tasksTable.platformId, platformId),
+      eq(tasksTable.reciterId, reciterId),
+      isNull(tasksTable.deletedAt),
+      eq(membersTable.isActive, true),
+    ))
+    .orderBy(desc(tasksTable.createdAt))
+    .limit(1);
+
+  if (lastTask?.memberId) {
+    res.json({ memberIds: [lastTask.memberId], source: "last_task" });
+    return;
+  }
+
+  res.json({ memberIds: [], source: "none" });
 });
 
 router.get("/tasks/:id", async (req, res) => {

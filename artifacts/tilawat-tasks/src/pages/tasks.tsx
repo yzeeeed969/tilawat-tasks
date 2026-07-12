@@ -173,6 +173,27 @@ function toPositiveNumber(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null;
 }
 
+function sameMemberIds(a: number[], b: number[]): boolean {
+  if (a.length !== b.length) return false;
+  const setB = new Set(b);
+  return a.every((id) => setB.has(id));
+}
+
+// اقتراح العضو المسؤول من الخادم بناءً على (المنصة + القارئ):
+// page_members أساسيًا، ثم آخر مهمة بنفس المنصة والقارئ احتياطًا.
+function useMemberSuggestion(platformId: number | null, reciterId: number | null) {
+  return useQuery<{ memberIds: number[]; source: "page_members" | "last_task" | "none" }>({
+    queryKey: ["member-suggestion", platformId, reciterId],
+    queryFn: async () => {
+      const response = await fetch(`/api/tasks/member-suggestion?platformId=${platformId}&reciterId=${reciterId}`, { credentials: "include" });
+      if (!response.ok) return { memberIds: [], source: "none" };
+      return response.json();
+    },
+    enabled: Boolean(platformId && platformId > 0 && reciterId && reciterId > 0),
+    staleTime: 60_000,
+  });
+}
+
 function safeSelectNumberValue(value: unknown, fallback = "none") {
   const n = toPositiveNumber(value);
   return n ? String(n) : fallback;
@@ -1888,6 +1909,7 @@ function PlatformAssignmentRow({
   assignment,
   platforms,
   members,
+  mainReciterId,
   onChange,
   onRemove,
 }: {
@@ -1895,6 +1917,7 @@ function PlatformAssignmentRow({
   assignment: MultiPlatformAssignmentState;
   platforms: { id: number; name: string }[] | undefined;
   members: { id: number; name: string; role: string }[] | undefined;
+  mainReciterId: number | null;
   onChange: (patch: Partial<MultiPlatformAssignmentState>) => void;
   onRemove: () => void;
 }) {
@@ -1909,6 +1932,22 @@ function PlatformAssignmentRow({
 
   const selectedMemberIds = Array.isArray(assignment.assigneeIds) ? assignment.assigneeIds : [];
   const isIncomplete = Boolean(assignment.platformId) && selectedMemberIds.length === 0;
+
+  // اقتراح المسؤول لهذا الصف: منصة الصف + قارئ النموذج الرئيسي — اقتراح لا إجبار.
+  const rowSuggestion = useMemberSuggestion(platformIdNum > 0 ? platformIdNum : null, mainReciterId);
+  const [rowAutoSuggested, setRowAutoSuggested] = useState<number[] | null>(null);
+  const isRowAutoSuggested = rowAutoSuggested !== null && selectedMemberIds.length > 0 && sameMemberIds(selectedMemberIds, rowAutoSuggested);
+
+  useEffect(() => {
+    const suggested = rowSuggestion.data?.memberIds ?? [];
+    if (suggested.length === 0) return;
+    const current = Array.isArray(assignment.assigneeIds) ? assignment.assigneeIds : [];
+    const untouched = current.length === 0 || (rowAutoSuggested !== null && sameMemberIds(current, rowAutoSuggested));
+    if (untouched && !sameMemberIds(current, suggested)) {
+      onChange({ assigneeIds: suggested });
+      setRowAutoSuggested(suggested);
+    }
+  }, [rowSuggestion.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="space-y-3 rounded-md border border-border bg-background p-3">
@@ -1957,11 +1996,16 @@ function PlatformAssignmentRow({
       </div>
 
       <div className="space-y-2">
-        <Label className="flex items-center gap-2">
+        <Label className="flex flex-wrap items-center gap-2">
           <Users className="h-3.5 w-3.5" />
           المسؤولون
           {selectedMemberIds.length > 0 && (
             <span className="text-xs text-sidebar-primary font-semibold">({selectedMemberIds.length} مختار)</span>
+          )}
+          {isRowAutoSuggested && (
+            <span className="inline-flex items-center gap-1 rounded-full bg-sidebar-primary/10 px-2 py-0.5 text-[10px] font-semibold text-sidebar-primary">
+              ✨ مُقترَح تلقائيًا
+            </span>
           )}
         </Label>
         <MemberMultiSelect
@@ -2001,6 +2045,9 @@ function MultiPlatformAssignmentsFields({
   assignments: MultiPlatformAssignmentState[];
   setAssignments: Dispatch<SetStateAction<MultiPlatformAssignmentState[]>>;
 }) {
+  const { watch } = useFormContext<TaskFormValues>();
+  // قارئ الصفوف الإضافية دائمًا = قارئ النموذج الرئيسي (لاقتراح مسؤول كل صف).
+  const mainReciterId = toPositiveNumber(watch("reciterId"));
   const rows = Array.isArray(assignments) ? assignments : [];
 
   const addRow = () => {
@@ -2042,6 +2089,7 @@ function MultiPlatformAssignmentsFields({
           assignment={row ?? createEmptyPlatformAssignment()}
           platforms={platforms}
           members={members}
+          mainReciterId={mainReciterId}
           onChange={(patch) => updateRow(index, patch)}
           onRemove={() => removeRow(index)}
         />
@@ -2202,6 +2250,16 @@ function BasicTaskFormFields({
   const recurrenceDays = watch("recurrenceDays") ?? "";
   const weeklyQuotaRequired = watch("weeklyQuotaRequired");
 
+  // اقتراح العضو المسؤول تلقائيًا من (المنصة + القارئ) — اقتراح لا إجبار.
+  // مقصور على وضع الإنشاء فقط (لا يعمل عند تعديل مهمة قائمة) لئلا يمسّ مسؤولها.
+  const isCreateMode = !currentTask;
+  const memberSuggestion = useMemberSuggestion(
+    isCreateMode ? toPositiveNumber(platformId) : null,
+    isCreateMode ? toPositiveNumber(reciterId) : null,
+  );
+  const [autoSuggestedMembers, setAutoSuggestedMembers] = useState<number[] | null>(null);
+  const isMemberAutoSuggested = autoSuggestedMembers !== null && memberIds.length > 0 && sameMemberIds(memberIds, autoSuggestedMembers);
+
   const platformOptions = useMemo(() => {
     const currentPlatform = (currentTask as any)?.platform;
     return mergeById<{ id: number; name: string }>([
@@ -2268,6 +2326,18 @@ function BasicTaskFormFields({
       setValue("recurrenceDays", null, { shouldDirty: false });
     }
   }, [seriesType, recurrence, recurrenceDays, weeklyQuotaRequired, setValue]);
+
+  // يملأ العضو المقترَح تلقائيًا فقط إذا لم تلمسه يدويًا (فارغ أو ما زال يساوي الاقتراح السابق).
+  useEffect(() => {
+    const suggested = memberSuggestion.data?.memberIds ?? [];
+    if (suggested.length === 0) return;
+    const current = watch("memberIds") ?? [];
+    const untouched = current.length === 0 || (autoSuggestedMembers !== null && sameMemberIds(current, autoSuggestedMembers));
+    if (untouched && !sameMemberIds(current, suggested)) {
+      setValue("memberIds", suggested, { shouldDirty: false, shouldValidate: true });
+      setAutoSuggestedMembers(suggested);
+    }
+  }, [memberSuggestion.data]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const reciter = reciterOptions.find((item) => item.id === reciterId);
@@ -2403,12 +2473,17 @@ function BasicTaskFormFields({
         name="memberIds"
         render={({ field }) => (
           <FormItem>
-            <FormLabel className="flex items-center gap-2">
+            <FormLabel className="flex flex-wrap items-center gap-2">
               <Users className="h-3.5 w-3.5" />
               العضو / المسؤول
               {field.value?.length > 0 && (
                 <span className="text-xs text-sidebar-primary font-semibold">
                   ({field.value.length} مختار)
+                </span>
+              )}
+              {isMemberAutoSuggested && (
+                <span className="inline-flex items-center gap-1 rounded-full bg-sidebar-primary/10 px-2 py-0.5 text-[10px] font-semibold text-sidebar-primary">
+                  ✨ مُقترَح تلقائيًا
                 </span>
               )}
             </FormLabel>
