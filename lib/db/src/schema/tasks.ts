@@ -42,6 +42,9 @@ export const tasksTable = pgTable("tasks", {
   submissionUrl: text("submission_url"),
   assigneeNote: text("assignee_note"),
   pageId: integer("page_id").references(() => platformPagesTable.id, { onDelete: "set null" }),
+  // رمز الصلاة الداخلي (fajr / maghrib / isha / jumuah) — للتخزين والمطابقة فقط، لا يظهر للمستخدم.
+  // NULL للمهام القديمة وأي مهمة لم تُحدَّد لها صلاة.
+  prayer: text("prayer"),
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [

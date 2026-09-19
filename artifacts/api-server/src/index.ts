@@ -1,6 +1,7 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startTelegramScheduler } from "./services/telegram-scheduler";
+import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 
 // حماية على مستوى العملية: تمنع توقّف الخادم بسبب أخطاء عابرة غير متوقّعة.
 // في Node، الوعد الفاشل دون معالجة (unhandled rejection) يُنهي العملية افتراضيًا؛
@@ -28,6 +29,22 @@ const port = Number(rawPort);
 
 if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
+}
+
+// عمود tasks.prayer معرَّف في Drizzle، فأي استعلام يقرأ صفّ المهمة كاملًا سيطلبه.
+// لذلك ننشئه قبل الاستماع كي لا ينكسر أي استعلام على جدول المهام. الأمر إضافة فقط
+// وآمن للتكرار. إن تعذّرت القاعدة الآن (أو تأخّرت) لا نمنع إقلاع الخادم؛ يُعاد
+// الضمان تلقائيًا عند أول طلب على مسارات المهام.
+try {
+  await Promise.race([
+    ensureTaskPrayerSchema(),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("ensureTaskPrayerSchema timed out")), 20_000).unref();
+    }),
+  ]);
+  logger.info("tasks.prayer column ensured");
+} catch (err) {
+  logger.error({ err }, "تعذّر ضمان عمود tasks.prayer عند الإقلاع — سيُعاد المحاولة عند أول طلب مهام");
 }
 
 app.listen(port, (err) => {

@@ -12,15 +12,18 @@ import {
 import { generateUpcomingTasksForSeries, syncActiveSeries } from "../services/task-engine";
 import { notifyTelegramTaskAssigned, notifyTelegramTaskCompleted, notifyTelegramTaskDependencyReady } from "../services/telegram-notification-engine";
 import { canCreateTask, canDeleteTask, canEditTask, canViewTask } from "../lib/permissions";
+import { InvalidPrayerError, parsePrayerCode } from "../lib/prayer";
 import { ensureTaskQuotaSchema } from "../services/task-quota-schema";
 import { ensureTaskDependenciesSchema } from "../services/task-dependencies-schema";
 import { ensureTaskFlowLinksSchema } from "../services/task-flow-links-schema";
 import { ensureTaskCreationGroupsSchema } from "../services/task-creation-groups-schema";
+import { ensureTaskPrayerSchema } from "../services/task-prayer-schema";
 
 const router = Router();
 
 router.use(async (_req, _res, next) => {
   try {
+    await ensureTaskPrayerSchema();
     await ensureTaskQuotaSchema();
     await ensureTaskDependenciesSchema();
     await ensureTaskFlowLinksSchema();
@@ -115,6 +118,7 @@ async function spawnRecurringTask(completedTask: {
   recurrenceDurationDays?: number | null;
   recurrenceDays?: string | null;
   priority?: string;
+  prayer?: string | null;
 }, memberIds: number[]) {
   if (completedTask.recurrence === "none" && !completedTask.recurrenceIntervalDays) return;
 
@@ -136,6 +140,7 @@ async function spawnRecurringTask(completedTask: {
     recurrenceDays: completedTask.recurrenceDays ?? null,
     lastRecurredAt: new Date(),
     pageId: completedTask.pageId,
+    prayer: completedTask.prayer ?? null,
   }).returning();
 
   await syncTaskMembers(newTask.id, memberIds);
@@ -348,6 +353,7 @@ const TASK_SELECT = {
   submissionUrl: tasksTable.submissionUrl,
   assigneeNote: tasksTable.assigneeNote,
   pageId: tasksTable.pageId,
+  prayer: tasksTable.prayer,
   deletedAt: tasksTable.deletedAt,
   createdAt: tasksTable.createdAt,
   platform: {
@@ -1793,6 +1799,20 @@ router.post("/tasks", async (req, res) => {
   const isMemberSelfTask = !isAdmin;
   const hasPlatformAssignments = Array.isArray((req.body as any).platformAssignments) && (req.body as any).platformAssignments.length > 0;
 
+  // نوع الصلاة (رمز داخلي): واحد للمجموعة كلها، يُكتب على كل مهمة تُنشأ في هذا الطلب.
+  // قيمة غير معروفة → 400 قبل أي كتابة. مهام الأعضاء الذاتية لا تحمل صلاة.
+  let requestedPrayer: string | null;
+  try {
+    requestedPrayer = parsePrayerCode((req.body as any).prayer);
+  } catch (error) {
+    if (error instanceof InvalidPrayerError) {
+      res.status(400).json({ error: "Invalid prayer" });
+      return;
+    }
+    throw error;
+  }
+  const prayer = isAdmin ? requestedPrayer : null;
+
   if (isMemberSelfTask) {
     if (!currentUser?.memberId) {
       res.status(403).json({ error: "Forbidden" });
@@ -1962,6 +1982,7 @@ router.post("/tasks", async (req, res) => {
           memberIds: assignment.memberIds,
           reciterId: body.reciterId ?? null,
           pageId: assignment.pageId,
+          prayer,
           creationGroupId: creationGroup.id,
           priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
           startDate,
@@ -2024,6 +2045,7 @@ router.post("/tasks", async (req, res) => {
             weeklyQuotaPeriodStart: null,
             weeklyQuotaPeriodEnd: null,
             pageId: assignment.pageId,
+            prayer,
             assigneeNote: assignment.assigneeNote,
           }).returning();
           await syncTaskMembers(t.id, assignment.memberIds);
@@ -2061,6 +2083,7 @@ router.post("/tasks", async (req, res) => {
         weeklyQuotaPeriodStart: weeklyQuotaRequired ? getWeekRange(startDate).start : null,
         weeklyQuotaPeriodEnd: weeklyQuotaRequired ? getWeekRange(startDate).end : null,
         pageId: assignment.pageId,
+        prayer,
         assigneeNote: assignment.assigneeNote,
       }).returning();
       await syncTaskMembers(task.id, assignment.memberIds);
@@ -2117,6 +2140,7 @@ router.post("/tasks", async (req, res) => {
       memberIds: body.memberIds,
       reciterId: body.reciterId ?? null,
       pageId: body.pageId ?? null,
+      prayer,
       priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
       startDate,
       recurrenceType: seriesRecurrenceType,
@@ -2192,6 +2216,7 @@ router.post("/tasks", async (req, res) => {
         weeklyQuotaPeriodStart: null,
         weeklyQuotaPeriodEnd: null,
         pageId: body.pageId ?? null,
+        prayer,
       }).returning();
       await syncTaskMembers(t.id, body.memberIds);
       if (firstTaskId === null) firstTaskId = t.id;
@@ -2237,6 +2262,7 @@ router.post("/tasks", async (req, res) => {
     weeklyQuotaPeriodStart: weeklyQuotaRequired ? getWeekRange(startDate).start : null,
     weeklyQuotaPeriodEnd: weeklyQuotaRequired ? getWeekRange(startDate).end : null,
     pageId: body.pageId ?? null,
+    prayer,
   }).returning();
 
   await syncTaskMembers(task.id, body.memberIds);
@@ -2930,6 +2956,18 @@ router.put("/tasks/:id", async (req, res) => {
   if (body.progress !== undefined) updateData.progress = body.progress;
   if ("submissionUrl" in body) updateData.submissionUrl = body.submissionUrl ?? null;
   if ("pageId" in body) updateData.pageId = body.pageId ?? null;
+  // تعديل الصلاة يخصّ هذه المهمة وحدها (لا ينتقل للمهام الشقيقة)، ولا يُكتب إلا إن أُرسل صراحة.
+  if ("prayer" in (req.body as any)) {
+    try {
+      updateData.prayer = parsePrayerCode((req.body as any).prayer);
+    } catch (error) {
+      if (error instanceof InvalidPrayerError) {
+        res.status(400).json({ error: "Invalid prayer" });
+        return;
+      }
+      throw error;
+    }
+  }
 
   const effectiveWeeklyQuotaRequired = weeklyQuotaRequired ?? (currentTask as any).weeklyQuotaRequired ?? null;
   if (body.status === "completed" && effectiveWeeklyQuotaRequired) {
@@ -3500,6 +3538,7 @@ router.post("/tasks/:id/duplicate", async (req, res) => {
     recurrenceIntervalDays: original.recurrenceIntervalDays,
     recurrenceDurationDays: original.recurrenceDurationDays,
     pageId: original.pageId,
+    prayer: original.prayer ?? null,
     recurrenceDays: original.recurrenceDays,
     weeklyQuotaRequired: (original as any).weeklyQuotaRequired ?? null,
     weeklyQuotaPeriodStart: (original as any).weeklyQuotaPeriodStart ?? null,

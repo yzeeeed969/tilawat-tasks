@@ -20,6 +20,7 @@ type GenerateInput = {
   recurrenceType: RecurrenceType;
   recurrenceDays?: string | null;
   weeklyQuotaRequired?: number | null;
+  prayer?: string | null;
 };
 
 function startOfDay(date: Date): Date {
@@ -160,6 +161,7 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
         weeklyQuotaPeriodStart: weeklyQuotaRequired ? occurrence.periodStart : null,
         weeklyQuotaPeriodEnd: weeklyQuotaRequired ? occurrence.periodEnd : null,
         pageId: input.pageId ?? null,
+        prayer: input.prayer ?? null,
       }).onConflictDoNothing({
         target: [tasksTable.seriesId, tasksTable.dueDate],
       }).returning();
@@ -232,6 +234,7 @@ export async function syncActiveSeries() {
       recurrenceType: series.recurrenceType,
       recurrenceDays: templateTask.recurrenceDays,
       weeklyQuotaRequired: (templateTask as any).weeklyQuotaRequired ?? null,
+      prayer: templateTask.prayer ?? null,
     });
 
     syncedSeriesIds.push(series.id);

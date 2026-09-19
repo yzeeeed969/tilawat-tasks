@@ -259,6 +259,30 @@ function extractAppPrayerFromTitle(title?: string | null) {
   return APP_PRAYER_OPTIONS.find((prayer) => Boolean(title?.includes(prayer))) ?? null;
 }
 
+// الرمز الداخلي المخزَّن في tasks.prayer (للتخزين والمطابقة فقط — لا يظهر في أي واجهة أو عنوان).
+// الصلوات المدعومة: الفجر والمغرب والعشاء والجمعة. العناوين والقائمة تبقى بالعربية كما هي.
+const APP_PRAYER_CODE_BY_LABEL: Record<(typeof APP_PRAYER_OPTIONS)[number], string> = {
+  "صلاة الفجر": "fajr",
+  "صلاة المغرب": "maghrib",
+  "صلاة العشاء": "isha",
+  "صلاة الجمعة": "jumuah",
+};
+
+function prayerCodeFromLabel(label?: string | null): string | null {
+  if (!label) return null;
+  return (APP_PRAYER_CODE_BY_LABEL as Record<string, string | undefined>)[label] ?? null;
+}
+
+function prayerLabelFromCode(code?: string | null): (typeof APP_PRAYER_OPTIONS)[number] | null {
+  if (!code) return null;
+  return APP_PRAYER_OPTIONS.find((label) => APP_PRAYER_CODE_BY_LABEL[label] === code) ?? null;
+}
+
+// الصلاة المعروضة لمهمة قائمة: من العمود المخزَّن إن وُجد، وإلا من العنوان (المهام القديمة).
+function taskAppPrayerLabel(task?: { prayer?: string | null; title?: string | null } | null) {
+  return prayerLabelFromCode(task?.prayer) ?? extractAppPrayerFromTitle(task?.title);
+}
+
 function taskDialogDiagnostic(task: TaskWithDetails | null | undefined) {
   if (!task) return null;
   return {
@@ -1910,6 +1934,7 @@ function PlatformAssignmentRow({
   platforms,
   members,
   mainReciterId,
+  basePrayerLabel,
   onChange,
   onRemove,
 }: {
@@ -1918,6 +1943,7 @@ function PlatformAssignmentRow({
   platforms: { id: number; name: string }[] | undefined;
   members: { id: number; name: string; role: string }[] | undefined;
   mainReciterId: number | null;
+  basePrayerLabel: string | null;
   onChange: (patch: Partial<MultiPlatformAssignmentState>) => void;
   onRemove: () => void;
 }) {
@@ -2018,6 +2044,12 @@ function PlatformAssignmentRow({
         )}
       </div>
 
+      {basePrayerLabel && (
+        <p className="text-xs text-muted-foreground">
+          الصلاة: {basePrayerLabel} — من المهمة الأساسية
+        </p>
+      )}
+
       <div className="space-y-2">
         <Label>
           ملاحظة خاصة بهذا الصف
@@ -2048,6 +2080,14 @@ function MultiPlatformAssignmentsFields({
   const { watch } = useFormContext<TaskFormValues>();
   // قارئ الصفوف الإضافية دائمًا = قارئ النموذج الرئيسي (لاقتراح مسؤول كل صف).
   const mainReciterId = toPositiveNumber(watch("reciterId"));
+  // الصلاة واحدة للمجموعة: تُحدَّد في مهمة التطبيق الأساسية وتُطبَّق على كل الصفوف (عرض فقط).
+  // لا يظهر السطر إلا إن كانت الأساسية على منصة التطبيق وصلاتها مدعومة للتخزين.
+  const mainPlatformId = toPositiveNumber(watch("platformId"));
+  const mainPlatformName = (platforms ?? []).find((platform) => platform.id === mainPlatformId)?.name;
+  const mainAppPrayer = watch("appPrayer");
+  const basePrayerLabel = isApplicationPlatformName(mainPlatformName) && prayerCodeFromLabel(mainAppPrayer)
+    ? (mainAppPrayer ?? null)
+    : null;
   const rows = Array.isArray(assignments) ? assignments : [];
 
   const addRow = () => {
@@ -2090,6 +2130,7 @@ function MultiPlatformAssignmentsFields({
           platforms={platforms}
           members={members}
           mainReciterId={mainReciterId}
+          basePrayerLabel={basePrayerLabel}
           onChange={(patch) => updateRow(index, patch)}
           onRemove={() => removeRow(index)}
         />
@@ -5128,7 +5169,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         pageId,
         memberIds,
         reciterId,
-        appPrayer: extractAppPrayerFromTitle(task.title),
+        appPrayer: taskAppPrayerLabel(task as any),
         status: normalizeTaskStatus((task as any).status),
         priority: normalizeTaskPriority((task as any).priority),
         progress: Number.isFinite(Number((task as any).progress)) ? Number((task as any).progress) : 0,
@@ -5440,6 +5481,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           recurrenceDays,
           weeklyQuotaRequired,
           pageId,
+          // الصلاة تُحدَّد مرة واحدة في مهمة التطبيق الأساسية وتُكتب على كل مهام المجموعة (رمز داخلي).
+          prayer: !isMemberSelfTask && isApplicationPlatform ? prayerCodeFromLabel(data.appPrayer) : null,
           expandDailyInstances: !isMemberSelfTask && apiSeriesType === "temporary",
           recurrencePattern: recurrence,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : null,
@@ -5559,6 +5602,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       ? data.recurrenceDays ?? null
       : null;
     const memberIdsForUpdate = data.memberIds?.length ? data.memberIds : taskAssignedMemberIds(editingTask);
+    // إن غيّر المستخدم الصلاة فعلًا في مهمة على منصة التطبيق، نحدّث رمزها المخزَّن كي لا يخالف العنوان.
+    // لا نرسل شيئًا إن لم تتغيّر، فلا تُلمس المهام القديمة (prayer = NULL) بمجرد حفظ تعديل آخر.
+    const editPlatformName = platforms?.find((platform) => platform.id === data.platformId)?.name;
+    const prayerEditFields =
+      isApplicationPlatformName(editPlatformName) && (data.appPrayer ?? null) !== taskAppPrayerLabel(editingTask as any)
+        ? { prayer: prayerCodeFromLabel(data.appPrayer) }
+        : {};
     let flowChangeAcknowledged = false;
     try {
       flowChangeAcknowledged = await prepareFlowReciterChange(editingTask, data.reciterId ?? null);
@@ -5589,6 +5639,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           recurrenceDays,
           weeklyQuotaRequired: isWeeklyQuota ? Number(data.weeklyQuotaRequired ?? 3) : null,
           pageId: data.pageId ?? null,
+          ...prayerEditFields,
           updateScope: effectiveEditScope,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : undefined,
           flowChangeAcknowledged,
