@@ -381,6 +381,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     { href: "/settings/telegram", label: "Telegram", icon: Bell, show: canManageSettings },
     { href: "/settings/public-stats", label: "إحصائيات عامة", icon: BarChart3, show: canManageSettings },
     { href: "/settings/general", label: "الإعدادات العامة", icon: Settings, show: canManageSettings },
+    { href: "/youtube-monitor", label: "مراقبة يوتيوب", icon: RefreshCw, show: canManageSettings },
   ].filter((item) => item.show);
 
   const renderNavItem = (item: { href: string; label: string; icon: typeof LayoutDashboard }) => {

@@ -22,3 +22,6 @@ export * from "./reset-tokens";
 export * from "./page-members";
 export * from "./telegram";
 export * from "./public-site-settings";
+export * from "./youtube-channels";
+export * from "./youtube-videos";
+export * from "./youtube-settings";

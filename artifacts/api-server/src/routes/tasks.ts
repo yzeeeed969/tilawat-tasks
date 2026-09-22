@@ -257,7 +257,7 @@ async function notifyTaskAssignedAfterReciterChange(input: {
 }
 
 // Helper: notify admins on task completion
-async function notifyTaskCompleted(task: {
+export async function notifyTaskCompleted(task: {
   id: number;
   title: string;
   memberId: number;
@@ -1134,7 +1134,7 @@ async function getTaskTelegramDetails(taskId: number) {
   return task ?? null;
 }
 
-async function notifyDependentTasksReady(prerequisiteTaskId: number) {
+export async function notifyDependentTasksReady(prerequisiteTaskId: number) {
   const dependencies = await db
     .select({
       id: taskDependenciesTable.id,

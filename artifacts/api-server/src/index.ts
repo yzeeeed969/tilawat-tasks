@@ -1,7 +1,9 @@
 import app from "./app";
 import { logger } from "./lib/logger";
 import { startTelegramScheduler } from "./services/telegram-scheduler";
+import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
+import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
 
 // حماية على مستوى العملية: تمنع توقّف الخادم بسبب أخطاء عابرة غير متوقّعة.
 // في Node، الوعد الفاشل دون معالجة (unhandled rejection) يُنهي العملية افتراضيًا؛
@@ -47,6 +49,20 @@ try {
   logger.error({ err }, "تعذّر ضمان عمود tasks.prayer عند الإقلاع — سيُعاد المحاولة عند أول طلب مهام");
 }
 
+// جداول مراقبة يوتيوب جديدة كليًا (لا يقرأها أي استعلام قائم)، فتعذّرها هنا غير حرج —
+// لكن ضمانها الآن مبكرًا يُظهر تحذير بذرة قناة بندر بليلة في السجلات فور الإقلاع إن فشلت.
+try {
+  await Promise.race([
+    ensureYoutubeMonitorSchema(),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("ensureYoutubeMonitorSchema timed out")), 20_000).unref();
+    }),
+  ]);
+  logger.info("youtube monitor tables ensured");
+} catch (err) {
+  logger.error({ err }, "تعذّر ضمان جداول مراقبة يوتيوب عند الإقلاع — سيُعاد المحاولة عند أول فحص");
+}
+
 app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -55,5 +71,6 @@ app.listen(port, (err) => {
 
   logger.info({ port }, "Server listening");
   startTelegramScheduler(logger);
+  startYoutubeScheduler(logger);
 });
 // trigger deploy

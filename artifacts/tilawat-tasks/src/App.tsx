@@ -17,6 +17,7 @@ import Settings, {
 } from "@/pages/settings";
 import RecitersPage from "@/pages/reciters";
 import PlatformsPage from "@/pages/platforms";
+import YoutubeMonitorPage from "@/pages/youtube-monitor";
 import Account from "@/pages/account";
 import Reminders from "@/pages/reminders";
 import Achievements from "@/pages/achievements";
@@ -154,6 +155,11 @@ function AppRouter() {
       </Route>
       <Route path="/task-generation">
         <TaskGenerationDisabledRoute />
+      </Route>
+      <Route path="/youtube-monitor">
+        <ProtectedRoute>
+          <AppLayout><YoutubeMonitorPage /></AppLayout>
+        </ProtectedRoute>
       </Route>
       <Route path="/account">
         <ProtectedRoute>

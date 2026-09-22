@@ -14,6 +14,7 @@ import remindersRouter from "./reminders";
 import activityLogRouter from "./activity-log";
 import telegramRouter from "./telegram";
 import publicRouter from "./public";
+import youtubeRouter from "./youtube";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -37,5 +38,6 @@ router.use(recitersRouter);
 router.use(notificationsRouter);
 router.use(remindersRouter);
 router.use(activityLogRouter);
+router.use(youtubeRouter);
 
 export default router;
