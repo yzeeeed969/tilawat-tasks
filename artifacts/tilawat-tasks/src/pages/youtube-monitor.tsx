@@ -55,7 +55,7 @@ const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   historical: { label: "سجل قديم", className: "bg-muted text-muted-foreground border-border" },
   ignored: { label: "تجاهل تلقائي", className: "bg-muted text-muted-foreground border-border" },
   ignored_manual: { label: "تجاهله المدير", className: "bg-muted text-muted-foreground border-border" },
-  no_marker: { label: "بلا علامة *1 بعد", className: "bg-amber-50 text-amber-700 border-amber-200" },
+  no_marker: { label: "بلا علامة *توثيق* بعد", className: "bg-amber-50 text-amber-700 border-amber-200" },
   needs_review: { label: "بحاجة مراجعة", className: "bg-orange-50 text-orange-700 border-orange-200" },
   no_task: { label: "بلا مهمة مطابقة", className: "bg-orange-50 text-orange-700 border-orange-200" },
   documented: { label: "وُثِّق", className: "bg-green-50 text-green-700 border-green-200" },

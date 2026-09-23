@@ -35,11 +35,15 @@ const TERMINAL_STATUSES = new Set([
 // أقل مدة (ثوانٍ) لاعتبار المقطع تلاوة كاملة لا مقطعًا قصيرًا (Short) يُتجاهل.
 const SHORT_VIDEO_THRESHOLD_SECONDS = 180;
 const MAX_RECENT_VIDEOS_PER_CHECK = 15;
-const MARKER_LINE = "*1";
+// علامة التوثيق: نجمة + "توثيق" ملتصقة + نجمة، في سطر مستقل. مطابقة حرفية صارمة بعد trim() للسطر
+// (تتجاهل مسافات خارج حدود العلامة فقط — بداية/نهاية السطر — لا أي مسافة داخلها).
+// * توثيق* / *توثيق * / *توث يق* كلها مرفوضة؛ فقط "*توثيق*" الحرفية تُقبل.
+const MARKER_LINE = "*توثيق*";
 
 function hasStandaloneMarkerLine(description: string | null | undefined): boolean {
   if (!description) return false;
-  return description.split("\n").some((line) => line.trim() === MARKER_LINE);
+  // نقسّم مع مراعاة \r\n (وندوز) حتى لا يبقى \r خفيًا يكسر المطابقة الحرفية بعد trim().
+  return description.split(/\r\n|\n/).some((line) => line.trim() === MARKER_LINE);
 }
 
 async function ensureChannelResolved(channel: YoutubeChannel): Promise<YoutubeChannel> {
@@ -127,7 +131,7 @@ async function documentTask(taskId: number, videoUrl: string, publishedAt: Date)
 
 type DecisionOutcome = { decision: Decision; extractedPrayer: string | null; extractedHijriDay: number | null; extractedHijriMonth: number | null };
 
-// كل ما يحدث بعد التأكد من وجود العلامة *1: قراءة العنوان ثم المطابقة ثم التوثيق أو المراجعة.
+// كل ما يحدث بعد التأكد من وجود العلامة *توثيق*: قراءة العنوان ثم المطابقة ثم التوثيق أو المراجعة.
 // مستخرجة في دالة مستقلة لأن إعادة الفحص التلقائية (runShortDurationMarkerBackfillOnce) تستدعيها
 // أيضًا على بيانات مخزَّنة محليًا (بلا تفاصيل يوتيوب كاملة كالخصوصية والمدة)، فلا نكرّر منطق
 // المطابقة والتوثيق في مكانين.
@@ -194,14 +198,14 @@ async function decideForVideo(
 
   const hasMarker = hasStandaloneMarkerLine(video.description);
 
-  // العلامة *1 تأكيد صريح من المدير بأن المقطع صالح للتوثيق، فتتجاوز شرط المدة القصيرة
+  // العلامة *توثيق* تأكيد صريح من المدير بأن المقطع صالح للتوثيق، فتتجاوز شرط المدة القصيرة
   // (تلاواتنا الحقيقية أحيانًا قصيرة جدًا). المقطع القصير بلا علامة يبقى يُتجاهل كما كان دائمًا.
   if (video.durationSeconds > 0 && video.durationSeconds < SHORT_VIDEO_THRESHOLD_SECONDS && !hasMarker) {
     return { decision: { status: "ignored", reason: `مدة قصيرة (${video.durationSeconds} ثانية) — على الأرجح مقطع Short`, matchedTaskId: null, createdProofId: null }, ...notExtracted };
   }
 
   if (!hasMarker) {
-    return { decision: { status: "no_marker", reason: "لا يوجد سطر مستقل نصّه *1 في الوصف بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
+    return { decision: { status: "no_marker", reason: "لا يوجد سطر مستقل نصّه *توثيق* في الوصف بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
   }
 
   return decideAfterMarkerConfirmed(channel, { title: video.title, url, publishedAt: video.publishedAt }, trialMode);
@@ -430,7 +434,7 @@ export async function runDueDateTimezoneBackfillOnce(): Promise<{ ran: boolean; 
 
 // يُستدعى فورًا عند حفظ تعديل قناة يغيّر reciterNameConstant أو handle (لا عند الإقلاع — هذا فعل
 // إداري يتكرر بتكرار التعديل، لا خلل كود يُصلَح مرة واحدة). يعيد فحص مقاطع هذه القناة تحديدًا التي
-// تحمل العلامة *1 ووصلت لحالة "لم تُوثَّق"، بالبيانات القناة المحدَّثة فعلًا (بعد التصحيح) وبيانات
+// تحمل العلامة *توثيق* ووصلت لحالة "لم تُوثَّق"، بالبيانات القناة المحدَّثة فعلًا (بعد التصحيح) وبيانات
 // المقاطع المحفوظة محليًا — بلا اتصال جديد بيوتيوب.
 export async function reprocessChannelNeedsAttentionVideos(channel: YoutubeChannel, trialMode: boolean): Promise<number> {
   const affectedRows = await db
