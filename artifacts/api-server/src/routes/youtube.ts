@@ -11,9 +11,18 @@ import {
 } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
 import { getYoutubeSettings, updateYoutubeSettings } from "../services/youtube-settings";
-import { runYoutubeMonitorTick } from "../services/youtube-monitor";
+import { runYoutubeMonitorTick, reprocessChannelNeedsAttentionVideos } from "../services/youtube-monitor";
 import { ensureYoutubeMonitorSchema } from "../services/youtube-monitor-schema";
 import { riyadhDayKey } from "../lib/hijri";
+
+// يزيل المسافات الطرفية وعلامات الاقتباس الطرفية بكل أشكالها الشائعة (مستقيمة أو منحنية/ذكية) —
+// خطأ شائع عند اللصق من الهاتف أو Word، وقد سبّب هذا تحديدًا خللًا حقيقيًا (قناة الوليد الشمسان).
+// نطبّقه في الخادم لا الواجهة فقط، ليبقى فعّالًا مهما كان مصدر الطلب مستقبلًا.
+function normalizeChannelText(value: string): string {
+  // نجمع المسافات وعلامات الاقتباس في فئة واحدة لإزالتهما معًا من الطرفين، فيغطي هذا حالات مثل
+  // ‎" 'النص' "‎ (اقتباس متداخل مع مسافات) في مرة واحدة، لا اقتباسًا واحدًا فقط.
+  return value.replace(/^[\s"'“”‘’]+|[\s"'“”‘’]+$/g, "");
+}
 
 const router = Router();
 router.use(requireAdmin);
@@ -80,9 +89,9 @@ router.post("/youtube/channels", async (req, res) => {
     handle?: string; displayName?: string; reciterNameConstant?: string;
     platformId?: number; reciterId?: number;
   };
-  const handle = typeof body.handle === "string" ? body.handle.trim() : "";
-  const displayName = typeof body.displayName === "string" ? body.displayName.trim() : "";
-  const reciterNameConstant = typeof body.reciterNameConstant === "string" ? body.reciterNameConstant.trim() : "";
+  const handle = typeof body.handle === "string" ? normalizeChannelText(body.handle) : "";
+  const displayName = typeof body.displayName === "string" ? normalizeChannelText(body.displayName) : "";
+  const reciterNameConstant = typeof body.reciterNameConstant === "string" ? normalizeChannelText(body.reciterNameConstant) : "";
   const platformId = Number(body.platformId);
   const reciterId = Number(body.reciterId);
   if (!handle || !displayName || !reciterNameConstant || !Number.isInteger(platformId) || !Number.isInteger(reciterId)) {
@@ -99,21 +108,93 @@ router.post("/youtube/channels", async (req, res) => {
   }
 });
 
+// تعديل بيانات قناة موجودة — تحديث جزئي، ترسل فقط ما تغيّر.
 router.patch("/youtube/channels/:id", async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id) || id <= 0) {
     res.status(400).json({ error: "Invalid channel id" });
     return;
   }
-  const body = req.body as { enabled?: unknown };
-  const update: { enabled?: boolean } = {};
-  if (typeof body.enabled === "boolean") update.enabled = body.enabled;
-  const [channel] = await db.update(youtubeChannelsTable).set(update).where(eq(youtubeChannelsTable.id, id)).returning();
-  if (!channel) {
+
+  const [existing] = await db.select().from(youtubeChannelsTable).where(eq(youtubeChannelsTable.id, id)).limit(1);
+  if (!existing) {
     res.status(404).json({ error: "Channel not found" });
     return;
   }
-  res.json(channel);
+
+  const body = req.body as {
+    enabled?: unknown; handle?: unknown; displayName?: unknown; reciterNameConstant?: unknown;
+    platformId?: unknown; reciterId?: unknown;
+  };
+  const update: Partial<typeof youtubeChannelsTable.$inferInsert> = {};
+
+  if (typeof body.enabled === "boolean") update.enabled = body.enabled;
+
+  if (typeof body.handle === "string") {
+    const handle = normalizeChannelText(body.handle);
+    if (!handle) {
+      res.status(400).json({ error: "رابط القناة مطلوب" });
+      return;
+    }
+    update.handle = handle;
+  }
+  if (typeof body.displayName === "string") {
+    const displayName = normalizeChannelText(body.displayName);
+    if (!displayName) {
+      res.status(400).json({ error: "الاسم الوصفي مطلوب" });
+      return;
+    }
+    update.displayName = displayName;
+  }
+  if (typeof body.reciterNameConstant === "string") {
+    const reciterNameConstant = normalizeChannelText(body.reciterNameConstant);
+    if (!reciterNameConstant) {
+      res.status(400).json({ error: "الاسم الثابت في العناوين مطلوب" });
+      return;
+    }
+    update.reciterNameConstant = reciterNameConstant;
+  }
+  if (body.platformId !== undefined) {
+    const platformId = Number(body.platformId);
+    if (!Number.isInteger(platformId) || platformId <= 0) {
+      res.status(400).json({ error: "منصة غير صحيحة" });
+      return;
+    }
+    update.platformId = platformId;
+  }
+  if (body.reciterId !== undefined) {
+    const reciterId = Number(body.reciterId);
+    if (!Number.isInteger(reciterId) || reciterId <= 0) {
+      res.status(400).json({ error: "قارئ غير صحيح" });
+      return;
+    }
+    update.reciterId = reciterId;
+  }
+
+  // تغيير الرابط يعني قناة يوتيوب مختلفة محتمَلة — نصفّر المعرّف المحلول القديم ليُعاد ربطه
+  // بالرابط الجديد في الفحص التالي، بدل الاستمرار بمراقبة القناة السابقة بصمت.
+  const handleChanged = update.handle !== undefined && update.handle !== existing.handle;
+  if (handleChanged) {
+    update.channelId = null;
+    update.uploadsPlaylistId = null;
+  }
+
+  let channel: typeof existing;
+  try {
+    [channel] = await db.update(youtubeChannelsTable).set(update).where(eq(youtubeChannelsTable.id, id)).returning();
+  } catch (err) {
+    res.status(400).json({ error: (err as Error).message ?? "فشل حفظ تعديل القناة" });
+    return;
+  }
+
+  // إعادة فحص فورية لمقاطع هذه القناة "بحاجة مراجعة/بلا مهمة" فقط إذا تغيّر ما يؤثّر على
+  // المطابقة (الاسم الثابت أو الرابط) — لا داعي لها عند تعديل الاسم الوصفي أو التفعيل مثلًا.
+  const affectsMatching = (update.reciterNameConstant !== undefined && update.reciterNameConstant !== existing.reciterNameConstant) || handleChanged;
+  const reprocessed = affectsMatching
+    ? await reprocessChannelNeedsAttentionVideos(channel, (await getYoutubeSettings()).trialMode)
+    : 0;
+
+  res.json({ ...channel, reprocessed });
 });
 
 // ── المقاطع ──────────────────────────────────────────────────────────────

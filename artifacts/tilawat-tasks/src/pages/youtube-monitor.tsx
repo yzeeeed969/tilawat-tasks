@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Loader2, RefreshCw, Youtube as YoutubeIcon, Link2, Ban, Undo2, Plus } from "lucide-react";
+import { Loader2, RefreshCw, Youtube as YoutubeIcon, Link2, Ban, Undo2, Plus, Pencil, X } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useListPlatforms, getListPlatformsQueryKey, useListReciters, getListRecitersQueryKey } from "@workspace/api-client-react";
 import { useIsAdmin } from "@/lib/roles";
@@ -92,6 +92,38 @@ function StatusBadge({ status }: { status: string }) {
   return <Badge variant="outline" className={meta.className}>{meta.label}</Badge>;
 }
 
+type ChannelFormValue = { handle: string; displayName: string; reciterNameConstant: string; platformId: string; reciterId: string };
+
+// حقول نموذج القناة — مشتركة بين "إضافة قناة" و"تعديل قناة" حتى لا يتكرر التصميم.
+function ChannelFormFields({
+  value, onChange, platforms, reciters,
+}: {
+  value: ChannelFormValue;
+  onChange: (patch: Partial<ChannelFormValue>) => void;
+  platforms: { id: number; name: string }[] | undefined;
+  reciters: { id: number; name: string }[] | undefined;
+}) {
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      <Input placeholder="المعرّف @handle" value={value.handle} onChange={(e) => onChange({ handle: e.target.value })} dir="ltr" />
+      <Input placeholder="اسم وصفي للقناة" value={value.displayName} onChange={(e) => onChange({ displayName: e.target.value })} />
+      <Input placeholder='الاسم الثابت في العناوين (مثل بندر بليلة، بلا علامات اقتباس)' value={value.reciterNameConstant} onChange={(e) => onChange({ reciterNameConstant: e.target.value })} />
+      <Select value={value.platformId} onValueChange={(v) => onChange({ platformId: v })}>
+        <SelectTrigger><SelectValue placeholder="المنصة" /></SelectTrigger>
+        <SelectContent dir="rtl">
+          {(platforms ?? []).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+      <Select value={value.reciterId} onValueChange={(v) => onChange({ reciterId: v })}>
+        <SelectTrigger><SelectValue placeholder="القارئ" /></SelectTrigger>
+        <SelectContent dir="rtl">
+          {(reciters ?? []).map((r: any) => <SelectItem key={r.id} value={String(r.id)}>{r.name}</SelectItem>)}
+        </SelectContent>
+      </Select>
+    </div>
+  );
+}
+
 function SettingsAndChannelsCard() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
@@ -101,8 +133,10 @@ function SettingsAndChannelsCard() {
   const { data: reciters } = useListReciters({}, { query: { queryKey: getListRecitersQueryKey() } });
 
   const [showAddChannel, setShowAddChannel] = useState(false);
-  const [newChannel, setNewChannel] = useState({ handle: "", displayName: "", reciterNameConstant: "", platformId: "", reciterId: "" });
+  const [newChannel, setNewChannel] = useState<ChannelFormValue>({ handle: "", displayName: "", reciterNameConstant: "", platformId: "", reciterId: "" });
   const [scanResult, setScanResult] = useState<string | null>(null);
+  const [editingChannelId, setEditingChannelId] = useState<number | null>(null);
+  const [editChannel, setEditChannel] = useState<ChannelFormValue>({ handle: "", displayName: "", reciterNameConstant: "", platformId: "", reciterId: "" });
 
   const saveSettings = useMutation({
     mutationFn: (update: Partial<Pick<YoutubeSettingsData, "enabled" | "trialMode">>) => apiSend("/api/youtube/settings", "PATCH", update),
@@ -132,6 +166,38 @@ function SettingsAndChannelsCard() {
     onSuccess: () => queryClient.invalidateQueries({ queryKey: ["youtube-channels"] }),
     onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
   });
+
+  const saveChannelEdit = useMutation({
+    mutationFn: ({ id, data }: { id: number; data: ChannelFormValue }) => apiSend<{ reprocessed: number }>(`/api/youtube/channels/${id}`, "PATCH", {
+      handle: data.handle,
+      displayName: data.displayName,
+      reciterNameConstant: data.reciterNameConstant,
+      platformId: Number(data.platformId),
+      reciterId: Number(data.reciterId),
+    }),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["youtube-channels"] });
+      queryClient.invalidateQueries({ queryKey: ["youtube-videos"] });
+      toast({
+        title: result.reprocessed > 0
+          ? `تم حفظ التعديلات — وأُعيد فحص ${result.reprocessed} مقطع بناءً على البيانات الجديدة`
+          : "تم حفظ التعديلات",
+      });
+      setEditingChannelId(null);
+    },
+    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
+  });
+
+  const startEditChannel = (channel: YoutubeChannel) => {
+    setEditingChannelId(channel.id);
+    setEditChannel({
+      handle: channel.handle,
+      displayName: channel.displayName,
+      reciterNameConstant: channel.reciterNameConstant,
+      platformId: String(channel.platformId),
+      reciterId: String(channel.reciterId),
+    });
+  };
 
   const createChannel = useMutation({
     mutationFn: () => apiSend("/api/youtube/channels", "POST", {
@@ -191,19 +257,50 @@ function SettingsAndChannelsCard() {
             <div className="space-y-2">
               <p className="text-sm font-semibold text-foreground">القنوات المراقَبة</p>
               {(channels ?? []).map((channel) => (
-                <div key={channel.id} className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-border bg-background p-3 text-sm">
-                  <div className="space-y-0.5">
-                    <div className="font-medium">{channel.displayName} — {channel.handle}</div>
-                    <div className="text-xs text-muted-foreground">
-                      الثابت: "{channel.reciterNameConstant}" · المنصة: {channel.platformName ?? "—"} · القارئ: {channel.reciterName ?? "—"}
-                      {" · "}{channel.channelId ? "مربوطة بمعرّف يوتيوب" : "لم تُربَط بعد (بانتظار أول فحص ناجح)"}
-                      {channel.lastCheckedAt && ` · آخر فحص: ${new Date(channel.lastCheckedAt).toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" })}`}
+                <div key={channel.id} className="rounded-md border border-border bg-background p-3 text-sm space-y-3">
+                  <div className="flex flex-wrap items-center justify-between gap-3">
+                    <div className="space-y-0.5">
+                      <div className="font-medium">{channel.displayName} — {channel.handle}</div>
+                      <div className="text-xs text-muted-foreground">
+                        الثابت: "{channel.reciterNameConstant}" · المنصة: {channel.platformName ?? "—"} · القارئ: {channel.reciterName ?? "—"}
+                        {" · "}{channel.channelId ? "مربوطة بمعرّف يوتيوب" : "لم تُربَط بعد (بانتظار أول فحص ناجح)"}
+                        {channel.lastCheckedAt && ` · آخر فحص: ${new Date(channel.lastCheckedAt).toLocaleString("ar-SA", { timeZone: "Asia/Riyadh" })}`}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button
+                        type="button" size="sm" variant="ghost"
+                        onClick={() => editingChannelId === channel.id ? setEditingChannelId(null) : startEditChannel(channel)}
+                      >
+                        {editingChannelId === channel.id ? <X className="h-3.5 w-3.5 ml-1" /> : <Pencil className="h-3.5 w-3.5 ml-1" />}
+                        {editingChannelId === channel.id ? "إلغاء" : "تعديل"}
+                      </Button>
+                      <span className="text-xs text-muted-foreground">{channel.enabled ? "مفعَّلة" : "معطَّلة"}</span>
+                      <Switch checked={channel.enabled} onCheckedChange={(v) => toggleChannel.mutate({ id: channel.id, enabled: v })} />
                     </div>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs text-muted-foreground">{channel.enabled ? "مفعَّلة" : "معطَّلة"}</span>
-                    <Switch checked={channel.enabled} onCheckedChange={(v) => toggleChannel.mutate({ id: channel.id, enabled: v })} />
-                  </div>
+
+                  {editingChannelId === channel.id && (
+                    <div className="space-y-3 rounded-md border border-dashed border-border p-3 bg-muted/20">
+                      <ChannelFormFields
+                        value={editChannel}
+                        onChange={(patch) => setEditChannel((s) => ({ ...s, ...patch }))}
+                        platforms={platforms}
+                        reciters={reciters}
+                      />
+                      <div className="flex gap-2">
+                        <Button
+                          type="button" size="sm"
+                          onClick={() => saveChannelEdit.mutate({ id: channel.id, data: editChannel })}
+                          disabled={saveChannelEdit.isPending}
+                        >
+                          {saveChannelEdit.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin ml-2" />}
+                          حفظ التعديلات
+                        </Button>
+                        <Button type="button" size="sm" variant="ghost" onClick={() => setEditingChannelId(null)} disabled={saveChannelEdit.isPending}>إلغاء</Button>
+                      </div>
+                    </div>
+                  )}
                 </div>
               ))}
               {(channels ?? []).length === 0 && (
@@ -220,25 +317,17 @@ function SettingsAndChannelsCard() {
                 <p className="text-xs text-muted-foreground">
                   استخدم هذا فقط إن لم يُفعَّل صف القناة تلقائيًا (تعذّر إيجاد منصة أو قارئ مطابق بوضوح).
                 </p>
-                <div className="grid gap-3 sm:grid-cols-2">
-                  <Input placeholder="المعرّف @handle" value={newChannel.handle} onChange={(e) => setNewChannel((s) => ({ ...s, handle: e.target.value }))} dir="ltr" />
-                  <Input placeholder="اسم وصفي للقناة" value={newChannel.displayName} onChange={(e) => setNewChannel((s) => ({ ...s, displayName: e.target.value }))} />
-                  <Input placeholder='الاسم الثابت في العناوين (مثل "بندر بليلة")' value={newChannel.reciterNameConstant} onChange={(e) => setNewChannel((s) => ({ ...s, reciterNameConstant: e.target.value }))} />
-                  <Select value={newChannel.platformId} onValueChange={(v) => setNewChannel((s) => ({ ...s, platformId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="المنصة" /></SelectTrigger>
-                    <SelectContent dir="rtl">
-                      {(platforms ?? []).map((p: any) => <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                  <Select value={newChannel.reciterId} onValueChange={(v) => setNewChannel((s) => ({ ...s, reciterId: v }))}>
-                    <SelectTrigger><SelectValue placeholder="القارئ" /></SelectTrigger>
-                    <SelectContent dir="rtl">
-                      {(reciters ?? []).map((r: any) => <SelectItem key={r.id} value={String(r.id)}>{r.name}</SelectItem>)}
-                    </SelectContent>
-                  </Select>
-                </div>
+                <ChannelFormFields
+                  value={newChannel}
+                  onChange={(patch) => setNewChannel((s) => ({ ...s, ...patch }))}
+                  platforms={platforms}
+                  reciters={reciters}
+                />
                 <div className="flex gap-2">
-                  <Button type="button" size="sm" onClick={() => createChannel.mutate()} disabled={createChannel.isPending}>حفظ القناة</Button>
+                  <Button type="button" size="sm" onClick={() => createChannel.mutate()} disabled={createChannel.isPending}>
+                    {createChannel.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin ml-2" />}
+                    حفظ القناة
+                  </Button>
                   <Button type="button" size="sm" variant="ghost" onClick={() => setShowAddChannel(false)}>إلغاء</Button>
                 </div>
               </div>

@@ -427,3 +427,55 @@ export async function runDueDateTimezoneBackfillOnce(): Promise<{ ran: boolean; 
 
   return { ran: true, reprocessed };
 }
+
+// يُستدعى فورًا عند حفظ تعديل قناة يغيّر reciterNameConstant أو handle (لا عند الإقلاع — هذا فعل
+// إداري يتكرر بتكرار التعديل، لا خلل كود يُصلَح مرة واحدة). يعيد فحص مقاطع هذه القناة تحديدًا التي
+// تحمل العلامة *1 ووصلت لحالة "لم تُوثَّق"، بالبيانات القناة المحدَّثة فعلًا (بعد التصحيح) وبيانات
+// المقاطع المحفوظة محليًا — بلا اتصال جديد بيوتيوب.
+export async function reprocessChannelNeedsAttentionVideos(channel: YoutubeChannel, trialMode: boolean): Promise<number> {
+  const affectedRows = await db
+    .select({
+      id: youtubeVideosTable.id,
+      title: youtubeVideosTable.title,
+      description: youtubeVideosTable.description,
+      url: youtubeVideosTable.url,
+      publishedAt: youtubeVideosTable.publishedAt,
+    })
+    .from(youtubeVideosTable)
+    .where(and(
+      eq(youtubeVideosTable.channelRowId, channel.id),
+      eq(youtubeVideosTable.hasMarker, true),
+      or(
+        eq(youtubeVideosTable.status, "needs_review"),
+        eq(youtubeVideosTable.status, "no_task"),
+        eq(youtubeVideosTable.status, "trial_would_review"),
+        eq(youtubeVideosTable.status, "trial_no_task"),
+      ),
+    ));
+
+  let reprocessed = 0;
+  for (const row of affectedRows) {
+    if (!hasStandaloneMarkerLine(row.description)) continue;
+
+    const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
+      channel,
+      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      trialMode,
+    );
+
+    await db.update(youtubeVideosTable).set({
+      extractedPrayer,
+      extractedHijriDay,
+      extractedHijriMonth,
+      matchedTaskId: decision.matchedTaskId,
+      createdProofId: decision.createdProofId,
+      status: decision.status,
+      decisionReason: `${decision.reason} — أُعيد فحصه تلقائيًا بعد تعديل بيانات القناة`,
+      processedAt: new Date(),
+    }).where(eq(youtubeVideosTable.id, row.id));
+
+    reprocessed += 1;
+  }
+
+  return reprocessed;
+}
