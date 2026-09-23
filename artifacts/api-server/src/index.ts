@@ -4,6 +4,7 @@ import { startTelegramScheduler } from "./services/telegram-scheduler";
 import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
+import { runShortDurationMarkerBackfillOnce } from "./services/youtube-monitor";
 
 // حماية على مستوى العملية: تمنع توقّف الخادم بسبب أخطاء عابرة غير متوقّعة.
 // في Node، الوعد الفاشل دون معالجة (unhandled rejection) يُنهي العملية افتراضيًا؛
@@ -61,6 +62,23 @@ try {
   logger.info("youtube monitor tables ensured");
 } catch (err) {
   logger.error({ err }, "تعذّر ضمان جداول مراقبة يوتيوب عند الإقلاع — سيُعاد المحاولة عند أول فحص");
+}
+
+// إصلاح لمرة واحدة: مقاطع تجاهلها خلل سابق بسبب قِصر مدتها رغم حملها العلامة *1.
+// آمنة للتكرار (تتحقق من علامة youtube_settings أولًا)، وتُستهلك فقط عند وجود مقاطع متضررة فعلًا.
+try {
+  await Promise.race([
+    runShortDurationMarkerBackfillOnce().then((result) => {
+      if (result.ran && result.reprocessed > 0) {
+        logger.info({ reprocessed: result.reprocessed }, "أُعيد فحص مقاطع يوتيوب قصيرة كانت مُتجاهَلة رغم حملها العلامة *1");
+      }
+    }),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("runShortDurationMarkerBackfillOnce timed out")), 20_000).unref();
+    }),
+  ]);
+} catch (err) {
+  logger.error({ err }, "تعذّرت إعادة فحص المقاطع القصيرة ذات العلامة عند الإقلاع — سيُعاد المحاولة في الإقلاع التالي");
 }
 
 app.listen(port, (err) => {

@@ -1,10 +1,11 @@
-import { eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, like } from "drizzle-orm";
 import {
   db,
   activityLogTable,
   taskProofsTable,
   tasksTable,
   youtubeChannelsTable,
+  youtubeSettingsTable,
   youtubeVideosTable,
   type YoutubeChannel,
 } from "@workspace/db";
@@ -124,31 +125,23 @@ async function documentTask(taskId: number, videoUrl: string, publishedAt: Date)
   return { documented: true, createdProofId };
 }
 
-async function decideForVideo(
+type DecisionOutcome = { decision: Decision; extractedPrayer: string | null; extractedHijriDay: number | null; extractedHijriMonth: number | null };
+
+// كل ما يحدث بعد التأكد من وجود العلامة *1: قراءة العنوان ثم المطابقة ثم التوثيق أو المراجعة.
+// مستخرجة في دالة مستقلة لأن إعادة الفحص التلقائية (runShortDurationMarkerBackfillOnce) تستدعيها
+// أيضًا على بيانات مخزَّنة محليًا (بلا تفاصيل يوتيوب كاملة كالخصوصية والمدة)، فلا نكرّر منطق
+// المطابقة والتوثيق في مكانين.
+async function decideAfterMarkerConfirmed(
   channel: YoutubeChannel,
-  video: YoutubeVideoDetails,
-  url: string,
+  video: { title: string; url: string; publishedAt: Date },
   trialMode: boolean,
-): Promise<{ decision: Decision; extractedPrayer: string | null; extractedHijriDay: number | null; extractedHijriMonth: number | null }> {
-  const notExtracted = { extractedPrayer: null, extractedHijriDay: null, extractedHijriMonth: null } as const;
-
-  if (video.privacyStatus !== "public") {
-    return { decision: { status: "ignored", reason: `المقطع غير عام (${video.privacyStatus})`, matchedTaskId: null, createdProofId: null }, ...notExtracted };
-  }
-  if (video.isLiveOngoingOrUpcoming) {
-    return { decision: { status: "ignored", reason: "بث مباشر جارٍ أو مجدول لم ينتهِ بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
-  }
-  if (video.durationSeconds > 0 && video.durationSeconds < SHORT_VIDEO_THRESHOLD_SECONDS) {
-    return { decision: { status: "ignored", reason: `مدة قصيرة (${video.durationSeconds} ثانية) — على الأرجح مقطع Short`, matchedTaskId: null, createdProofId: null }, ...notExtracted };
-  }
-
-  if (!hasStandaloneMarkerLine(video.description)) {
-    return { decision: { status: "no_marker", reason: "لا يوجد سطر مستقل نصّه *1 في الوصف بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
-  }
-
+): Promise<DecisionOutcome> {
   const parsed = parseYoutubeTitle(video.title, channel.reciterNameConstant);
   if (!parsed.ok) {
-    return { decision: { status: "needs_review", reason: parsed.reason, matchedTaskId: null, createdProofId: null }, ...notExtracted };
+    return {
+      decision: { status: "needs_review", reason: parsed.reason, matchedTaskId: null, createdProofId: null },
+      extractedPrayer: null, extractedHijriDay: null, extractedHijriMonth: null,
+    };
   }
 
   const extracted = { extractedPrayer: parsed.prayer, extractedHijriDay: parsed.hijriDay, extractedHijriMonth: parsed.hijriMonth };
@@ -177,11 +170,41 @@ async function decideForVideo(
     return { decision: { status: "trial_would_document", reason: match.reason, matchedTaskId: match.taskId, createdProofId: null }, ...extracted };
   }
 
-  const result = await documentTask(match.taskId, url, video.publishedAt);
+  const result = await documentTask(match.taskId, video.url, video.publishedAt);
   if (!result.documented) {
     return { decision: { status: "needs_review", reason: result.reason ?? "تعذّر التوثيق التلقائي", matchedTaskId: match.taskId, createdProofId: null }, ...extracted };
   }
   return { decision: { status: "documented", reason: match.reason, matchedTaskId: match.taskId, createdProofId: result.createdProofId }, ...extracted };
+}
+
+async function decideForVideo(
+  channel: YoutubeChannel,
+  video: YoutubeVideoDetails,
+  url: string,
+  trialMode: boolean,
+): Promise<DecisionOutcome> {
+  const notExtracted = { extractedPrayer: null, extractedHijriDay: null, extractedHijriMonth: null } as const;
+
+  if (video.privacyStatus !== "public") {
+    return { decision: { status: "ignored", reason: `المقطع غير عام (${video.privacyStatus})`, matchedTaskId: null, createdProofId: null }, ...notExtracted };
+  }
+  if (video.isLiveOngoingOrUpcoming) {
+    return { decision: { status: "ignored", reason: "بث مباشر جارٍ أو مجدول لم ينتهِ بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
+  }
+
+  const hasMarker = hasStandaloneMarkerLine(video.description);
+
+  // العلامة *1 تأكيد صريح من المدير بأن المقطع صالح للتوثيق، فتتجاوز شرط المدة القصيرة
+  // (تلاواتنا الحقيقية أحيانًا قصيرة جدًا). المقطع القصير بلا علامة يبقى يُتجاهل كما كان دائمًا.
+  if (video.durationSeconds > 0 && video.durationSeconds < SHORT_VIDEO_THRESHOLD_SECONDS && !hasMarker) {
+    return { decision: { status: "ignored", reason: `مدة قصيرة (${video.durationSeconds} ثانية) — على الأرجح مقطع Short`, matchedTaskId: null, createdProofId: null }, ...notExtracted };
+  }
+
+  if (!hasMarker) {
+    return { decision: { status: "no_marker", reason: "لا يوجد سطر مستقل نصّه *1 في الوصف بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
+  }
+
+  return decideAfterMarkerConfirmed(channel, { title: video.title, url, publishedAt: video.publishedAt }, trialMode);
 }
 
 async function processChannel(channel: YoutubeChannel, trialMode: boolean): Promise<number> {
@@ -275,4 +298,67 @@ export async function runYoutubeMonitorTick(): Promise<{ processed: number; skip
   }
 
   return { processed, skippedNoKey, channelsChecked };
+}
+
+// إصلاح لمرة واحدة (يُستدعى عند أول إقلاع بعد نشر إصلاح خلل "المقطع القصير يتجاهل العلامة *1"):
+// يعيد فحص كل مقطع سبق أن وصل لحالة "تجاهل" بسبب مدته القصيرة تحديدًا ويحمل العلامة *1 المخزَّنة
+// أصلًا، باستخدام العنوان والوصف المحفوظين محليًا (بلا أي اتصال جديد بيوتيوب). لا يلمس أي صف آخر:
+// الشرط الثلاثي (status='ignored' + hasMarker=true + السبب "قصيرة") مطابق تمامًا لتوقيع هذا الخلل
+// وحده، فلا يعيد فحص مقاطع تجاهلت لأنها خاصة أو بثًا جاريًا. علامة youtube_settings تمنع تكراره في
+// كل إقلاع — وهو مصمَّم أصلًا ليكون آمنًا للتكرار حتى بلا العلامة (الصفوف المُصلَحة لا تطابق الشرط
+// نفسه في المرة التالية).
+export async function runShortDurationMarkerBackfillOnce(): Promise<{ ran: boolean; reprocessed: number }> {
+  await ensureYoutubeMonitorSchema();
+  const settings = await getYoutubeSettings();
+  if (settings.shortDurationMarkerBackfillDone) return { ran: false, reprocessed: 0 };
+
+  const affectedRows = await db
+    .select({
+      id: youtubeVideosTable.id,
+      title: youtubeVideosTable.title,
+      description: youtubeVideosTable.description,
+      url: youtubeVideosTable.url,
+      publishedAt: youtubeVideosTable.publishedAt,
+      channelRowId: youtubeVideosTable.channelRowId,
+    })
+    .from(youtubeVideosTable)
+    .where(and(
+      eq(youtubeVideosTable.status, "ignored"),
+      eq(youtubeVideosTable.hasMarker, true),
+      like(youtubeVideosTable.decisionReason, "%قصيرة%"),
+    ));
+
+  let reprocessed = 0;
+  for (const row of affectedRows) {
+    // تأكيد إضافي مباشرةً على النص المخزَّن، بنفس دالة الفحص الحيّ — لا نثق بالعلم المخزَّن وحده.
+    if (!hasStandaloneMarkerLine(row.description)) continue;
+
+    const [channel] = await db.select().from(youtubeChannelsTable).where(eq(youtubeChannelsTable.id, row.channelRowId)).limit(1);
+    if (!channel) continue;
+
+    const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
+      channel,
+      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      settings.trialMode,
+    );
+
+    await db.update(youtubeVideosTable).set({
+      extractedPrayer,
+      extractedHijriDay,
+      extractedHijriMonth,
+      matchedTaskId: decision.matchedTaskId,
+      createdProofId: decision.createdProofId,
+      status: decision.status,
+      decisionReason: `${decision.reason} — أُعيد فحصه تلقائيًا بعد إصلاح خلل تجاهل المقاطع القصيرة ذات العلامة *1`,
+      processedAt: new Date(),
+    }).where(eq(youtubeVideosTable.id, row.id));
+
+    reprocessed += 1;
+  }
+
+  await db.update(youtubeSettingsTable)
+    .set({ shortDurationMarkerBackfillDone: true, updatedAt: new Date() })
+    .where(eq(youtubeSettingsTable.id, settings.id));
+
+  return { ran: true, reprocessed };
 }

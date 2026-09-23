@@ -7,6 +7,9 @@ export const youtubeSettingsTable = pgTable("youtube_settings", {
   // مفعَّل افتراضيًا عند أول تشغيل: يسجّل القرارات دون توثيق فعلي حتى يُطفأ يدويًا من صفحة الإدارة.
   trialMode: boolean("trial_mode").notNull().default(true),
   checkIntervalMinutes: integer("check_interval_minutes").notNull().default(10),
+  // علامة داخلية لمرة واحدة: هل تمت إعادة فحص المقاطع القصيرة التي تجاهلها خلل سابق رغم حملها
+  // العلامة *1؟ تمنع تكرار إعادة الفحص في كل إقلاع بعد أن تُنفَّذ مرة واحدة.
+  shortDurationMarkerBackfillDone: boolean("short_duration_marker_backfill_done").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
