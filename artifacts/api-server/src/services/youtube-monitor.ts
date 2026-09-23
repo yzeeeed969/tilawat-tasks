@@ -1,4 +1,4 @@
-import { and, eq, inArray, like } from "drizzle-orm";
+import { and, eq, inArray, like, or } from "drizzle-orm";
 import {
   db,
   activityLogTable,
@@ -358,6 +358,71 @@ export async function runShortDurationMarkerBackfillOnce(): Promise<{ ran: boole
 
   await db.update(youtubeSettingsTable)
     .set({ shortDurationMarkerBackfillDone: true, updatedAt: new Date() })
+    .where(eq(youtubeSettingsTable.id, settings.id));
+
+  return { ran: true, reprocessed };
+}
+
+// إصلاح لمرة واحدة (يُستدعى عند أول إقلاع بعد نشر إصلاح خلل تفسير توقيت due_date عند حساب الهجري):
+// يعيد فحص كل مقطع يحمل العلامة *1 ووصل لحالة "لم يُوثَّق" (بحاجة مراجعة/بلا مهمة، أو مكافئاتهما
+// في وضع التجربة)، لأن أيًّا منها قد يكون تضرَّر من نفس الخلل (تاريخ هجري محسوب خطأً بمقدار يوم).
+// يستخدم decideAfterMarkerConfirmed (وهي الآن تعتمد على القاعدة المُصلَحة عبر matchVideoToTask)
+// على البيانات المحفوظة محليًا فقط — بلا أي اتصال جديد بيوتيوب. علامة منفصلة عن إصلاح المدة
+// القصيرة أعلاه، فلا تتعارض معها ولا تُعاد الأخرى بسببها.
+export async function runDueDateTimezoneBackfillOnce(): Promise<{ ran: boolean; reprocessed: number }> {
+  await ensureYoutubeMonitorSchema();
+  const settings = await getYoutubeSettings();
+  if (settings.dueDateTimezoneBackfillDone) return { ran: false, reprocessed: 0 };
+
+  const affectedRows = await db
+    .select({
+      id: youtubeVideosTable.id,
+      title: youtubeVideosTable.title,
+      description: youtubeVideosTable.description,
+      url: youtubeVideosTable.url,
+      publishedAt: youtubeVideosTable.publishedAt,
+      channelRowId: youtubeVideosTable.channelRowId,
+    })
+    .from(youtubeVideosTable)
+    .where(and(
+      eq(youtubeVideosTable.hasMarker, true),
+      or(
+        eq(youtubeVideosTable.status, "needs_review"),
+        eq(youtubeVideosTable.status, "no_task"),
+        eq(youtubeVideosTable.status, "trial_would_review"),
+        eq(youtubeVideosTable.status, "trial_no_task"),
+      ),
+    ));
+
+  let reprocessed = 0;
+  for (const row of affectedRows) {
+    if (!hasStandaloneMarkerLine(row.description)) continue;
+
+    const [channel] = await db.select().from(youtubeChannelsTable).where(eq(youtubeChannelsTable.id, row.channelRowId)).limit(1);
+    if (!channel) continue;
+
+    const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
+      channel,
+      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      settings.trialMode,
+    );
+
+    await db.update(youtubeVideosTable).set({
+      extractedPrayer,
+      extractedHijriDay,
+      extractedHijriMonth,
+      matchedTaskId: decision.matchedTaskId,
+      createdProofId: decision.createdProofId,
+      status: decision.status,
+      decisionReason: `${decision.reason} — أُعيد فحصه تلقائيًا بعد إصلاح خلل تفسير توقيت تاريخ المهمة`,
+      processedAt: new Date(),
+    }).where(eq(youtubeVideosTable.id, row.id));
+
+    reprocessed += 1;
+  }
+
+  await db.update(youtubeSettingsTable)
+    .set({ dueDateTimezoneBackfillDone: true, updatedAt: new Date() })
     .where(eq(youtubeSettingsTable.id, settings.id));
 
   return { ran: true, reprocessed };

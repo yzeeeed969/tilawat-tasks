@@ -62,6 +62,7 @@ async function runYoutubeMonitorSchemaEnsure() {
     )
   `);
   await db.execute(sql`ALTER TABLE youtube_settings ADD COLUMN IF NOT EXISTS short_duration_marker_backfill_done boolean NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE youtube_settings ADD COLUMN IF NOT EXISTS due_date_timezone_backfill_done boolean NOT NULL DEFAULT false`);
 
   await seedBandarBalilahChannel();
 }

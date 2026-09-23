@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { and, desc, eq, inArray, isNull, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   db,
   platformsTable,
@@ -271,6 +271,9 @@ router.get("/youtube/tasks-without-video", async (_req, res) => {
       id: tasksTable.id,
       title: tasksTable.title,
       dueDate: tasksTable.dueDate,
+      // اليوم الميلادي الحرفي من PostgreSQL مباشرة (to_char) — لا كائن Date — بلا أي اعتماد على
+      // توقيت عملية Node (انظر lib/hijri.ts).
+      dueDateKey: sql<string | null>`to_char(${tasksTable.dueDate}, 'YYYY-MM-DD')`,
       platformId: tasksTable.platformId,
       reciterId: tasksTable.reciterId,
     })
@@ -283,8 +286,11 @@ router.get("/youtube/tasks-without-video", async (_req, res) => {
     ))
     .orderBy(tasksTable.dueDate);
 
-  // "فات موعدها" بتوقيت الرياض: نستبعد يوم اليوم نفسه، فقط ما قبله فعليًا.
-  const pastDue = rows.filter((task) => task.dueDate && riyadhDayKey(task.dueDate) < todayKey);
+  // "فات موعدها" بتوقيت الرياض: نستبعد يوم اليوم نفسه، فقط ما قبله فعليًا. مقارنة نصّية مباشرة
+  // بين مفتاحَي يوم (YYYY-MM-DD)، بلا أي كائن Date وسيط.
+  const pastDue = rows
+    .filter((task) => task.dueDateKey && task.dueDateKey < todayKey)
+    .map(({ dueDateKey: _dueDateKey, ...task }) => task);
   res.json(pastDue);
 });
 

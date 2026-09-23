@@ -4,7 +4,7 @@ import { startTelegramScheduler } from "./services/telegram-scheduler";
 import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
-import { runShortDurationMarkerBackfillOnce } from "./services/youtube-monitor";
+import { runShortDurationMarkerBackfillOnce, runDueDateTimezoneBackfillOnce } from "./services/youtube-monitor";
 
 // حماية على مستوى العملية: تمنع توقّف الخادم بسبب أخطاء عابرة غير متوقّعة.
 // في Node، الوعد الفاشل دون معالجة (unhandled rejection) يُنهي العملية افتراضيًا؛
@@ -19,6 +19,14 @@ process.on("uncaughtException", (err) => {
   logger.error({ err }, "Uncaught exception — سيُعاد تشغيل الخادم تلقائيًا");
   process.exit(1);
 });
+
+// سطر تشخيصي: توقيت عملية Node الفعلي على هذا الخادم. اكتشفنا أن تفسير أعمدة timestamp بلا منطقة
+// زمنية (مثل tasks.due_date) يعتمد على هذا التوقيت، وقد لا يكون UTC كما قد يُفترَض — هذا السطر
+// يوثّقه صراحةً في السجلات بدل أن يبقى لغزًا.
+logger.info(
+  { timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone, tzOffsetMinutes: new Date().getTimezoneOffset() },
+  "توقيت عملية Node عند الإقلاع",
+);
 
 const rawPort = process.env["PORT"];
 
@@ -79,6 +87,23 @@ try {
   ]);
 } catch (err) {
   logger.error({ err }, "تعذّرت إعادة فحص المقاطع القصيرة ذات العلامة عند الإقلاع — سيُعاد المحاولة في الإقلاع التالي");
+}
+
+// إصلاح لمرة واحدة منفصل: مقاطع وصلت لحالة "لم تُوثَّق" بسبب خلل تفسير توقيت due_date عند حساب
+// التاريخ الهجري (انظر lib/hijri.ts). لا يتعارض مع الإصلاح أعلاه ولا يُعيد تشغيله.
+try {
+  await Promise.race([
+    runDueDateTimezoneBackfillOnce().then((result) => {
+      if (result.ran && result.reprocessed > 0) {
+        logger.info({ reprocessed: result.reprocessed }, "أُعيد فحص مقاطع يوتيوب تضرّرت من خلل تفسير توقيت تاريخ المهمة");
+      }
+    }),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("runDueDateTimezoneBackfillOnce timed out")), 20_000).unref();
+    }),
+  ]);
+} catch (err) {
+  logger.error({ err }, "تعذّرت إعادة فحص المقاطع المتأثرة بخلل التوقيت عند الإقلاع — سيُعاد المحاولة في الإقلاع التالي");
 }
 
 app.listen(port, (err) => {

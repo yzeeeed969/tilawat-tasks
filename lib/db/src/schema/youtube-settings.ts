@@ -10,6 +10,9 @@ export const youtubeSettingsTable = pgTable("youtube_settings", {
   // علامة داخلية لمرة واحدة: هل تمت إعادة فحص المقاطع القصيرة التي تجاهلها خلل سابق رغم حملها
   // العلامة *1؟ تمنع تكرار إعادة الفحص في كل إقلاع بعد أن تُنفَّذ مرة واحدة.
   shortDurationMarkerBackfillDone: boolean("short_duration_marker_backfill_done").notNull().default(false),
+  // علامة داخلية لمرة واحدة منفصلة: هل أُعيد فحص المقاطع التي وصلت لحالة "لم تُوثَّق" (مراجعة/بلا
+  // مهمة) بسبب خلل تفسير توقيت due_date عند حساب التاريخ الهجري؟ لا تتعارض مع العلامة أعلاه.
+  dueDateTimezoneBackfillDone: boolean("due_date_timezone_backfill_done").notNull().default(false),
   createdAt: timestamp("created_at").notNull().defaultNow(),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });

@@ -1,7 +1,7 @@
-import { and, eq, isNull } from "drizzle-orm";
+import { and, eq, isNull, sql } from "drizzle-orm";
 import { db, tasksTable } from "@workspace/db";
 import { type PrayerCode } from "../lib/prayer";
-import { arabicWeekdayOf, hijriPartsOf, isPublishedWithinTaskWindow } from "../lib/hijri";
+import { arabicWeekdayOf, hijriPartsOf, isPublishedWithinTaskWindow, safeAnchorFromDateKey } from "../lib/hijri";
 
 export type MatchInput = {
   platformId: number;
@@ -24,7 +24,9 @@ export async function matchVideoToTask(input: MatchInput): Promise<MatchResult> 
   const candidates = await db
     .select({
       id: tasksTable.id,
-      dueDate: tasksTable.dueDate,
+      // نقرأ اليوم الميلادي الحرفي مباشرة من PostgreSQL (to_char) بدل كائن Date — بلا أي تفسير
+      // توقيت من جانب Node (انظر lib/hijri.ts: safeAnchorFromDateKey لسبب هذا الاختيار).
+      dueDateKey: sql<string | null>`to_char(${tasksTable.dueDate}, 'YYYY-MM-DD')`,
       weeklyQuotaRequired: tasksTable.weeklyQuotaRequired,
     })
     .from(tasksTable)
@@ -42,13 +44,13 @@ export async function matchVideoToTask(input: MatchInput): Promise<MatchResult> 
 
   // مهام الحصة الأسبوعية لا تكتمل بمقطع واحد — تُستبعد من التوثيق التلقائي دائمًا وتذهب للمراجعة
   // إن كانت هي المرشّح الوحيد المطابق للتاريخ.
-  const eligible = candidates.filter((task) => task.weeklyQuotaRequired == null && task.dueDate);
+  const eligible = candidates.filter((task) => task.weeklyQuotaRequired == null && task.dueDateKey);
 
   const matches: typeof eligible = [];
   const quotaMatchesByDate: typeof candidates = [];
 
   for (const task of eligible) {
-    const dueDate = task.dueDate as Date;
+    const dueDate = safeAnchorFromDateKey(task.dueDateKey as string);
     const hijri = hijriPartsOf(dueDate);
     if (hijri.day !== input.hijriDay || hijri.month !== input.hijriMonth) continue;
     if (input.dayNameInTitle && arabicWeekdayOf(dueDate) !== input.dayNameInTitle) continue;
@@ -57,8 +59,9 @@ export async function matchVideoToTask(input: MatchInput): Promise<MatchResult> 
   }
 
   for (const task of candidates) {
-    if (task.weeklyQuotaRequired == null || !task.dueDate) continue;
-    const hijri = hijriPartsOf(task.dueDate);
+    if (task.weeklyQuotaRequired == null || !task.dueDateKey) continue;
+    const dueDate = safeAnchorFromDateKey(task.dueDateKey);
+    const hijri = hijriPartsOf(dueDate);
     if (hijri.day === input.hijriDay && hijri.month === input.hijriMonth) quotaMatchesByDate.push(task);
   }
 

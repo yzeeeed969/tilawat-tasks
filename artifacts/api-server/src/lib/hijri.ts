@@ -24,6 +24,15 @@ const RIYADH_DAY_KEY_FORMATTER = new Intl.DateTimeFormat("en-CA", {
   day: "2-digit",
 });
 
+// يبني كائن Date "آمن" من يوم ميلادي حرفي (YYYY-MM-DD) — القراءة الصحيحة الوحيدة لعمود
+// timestamp بلا منطقة زمنية: نطلب من PostgreSQL نفسه الرقم الحرفي المخزَّن (بلا أي تفسير توقيت،
+// عبر to_char) ثم نبني ظُهر ذلك اليوم بتوقيت UTC. هامش الأمان (±11 ساعة تقريبًا) قبل أن تضيف/تطرح
+// دوال الهجري توقيت الرياض (+3) يضمن عدم عبور حدّ يوم إطلاقًا. هذا يجعل الحساب مستقلًّا تمامًا عن
+// توقيت عملية Node المحلي — الذي أثبتنا أنه لا يمكن الوثوق به لتفسير هذا النوع من الأعمدة.
+export function safeAnchorFromDateKey(dateKey: string): Date {
+  return new Date(`${dateKey}T12:00:00Z`);
+}
+
 export function hijriPartsOf(date: Date): { day: number; month: number; year: number } {
   const parts = HIJRI_PARTS_FORMATTER.formatToParts(date);
   const get = (type: string) => Number(parts.find((p) => p.type === type)?.value ?? NaN);
