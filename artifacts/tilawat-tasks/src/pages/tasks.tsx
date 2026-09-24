@@ -7004,7 +7004,10 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               onClose={() => setEditingTask(null)}
             >
               <DialogHeader className="px-6 pt-6 pb-4 border-b border-border shrink-0">
-                <DialogTitle className="text-xl font-bold">تعديل المهمة</DialogTitle>
+                <DialogTitle className="text-xl font-bold flex items-center gap-2">
+                  تعديل المهمة
+                  {editingTask?.id && <span className="text-sm font-normal text-muted-foreground">#{editingTask.id}</span>}
+                </DialogTitle>
               </DialogHeader>
               <div className="flex-1 overflow-y-auto px-6 py-4">
                 <Form {...editForm}>
@@ -7995,6 +7998,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         <div className="flex flex-col gap-1">
                           <div className="flex items-center gap-2 flex-wrap">
                             <span>{task.title}</span>
+                            <span className="text-[10px] text-muted-foreground/70">#{task.id}</span>
                             <WeeklyQuotaBadge task={task} />
                             <MemberCreatedTaskBadge task={task} />
                             {task.recurrence && task.recurrence !== "none" && (

@@ -467,7 +467,7 @@ function TasksWithoutVideoTab() {
     <div className="space-y-2">
       {data.map((task) => (
         <div key={task.id} className="flex items-center justify-between rounded-md border border-border bg-background p-3 text-sm">
-          <span>{task.title}</span>
+          <span>{task.title} <span className="text-xs text-muted-foreground">#{task.id}</span></span>
           <span className="text-xs text-muted-foreground">
             {task.dueDate ? new Date(task.dueDate).toLocaleDateString("ar-SA", { timeZone: "Asia/Riyadh" }) : "—"}
           </span>

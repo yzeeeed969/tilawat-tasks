@@ -1,4 +1,4 @@
-import { and, eq, inArray, like, or } from "drizzle-orm";
+import { and, eq, gte, inArray, like, or } from "drizzle-orm";
 import {
   db,
   activityLogTable,
@@ -35,6 +35,9 @@ const TERMINAL_STATUSES = new Set([
 // أقل مدة (ثوانٍ) لاعتبار المقطع تلاوة كاملة لا مقطعًا قصيرًا (Short) يُتجاهل.
 const SHORT_VIDEO_THRESHOLD_SECONDS = 180;
 const MAX_RECENT_VIDEOS_PER_CHECK = 15;
+// نافذة إعادة الفحص الدورية لمقاطع "بحاجة مراجعة"/"بلا مهمة": مقاطع أقدم من هذا تخرج من دائرة
+// إعادة الفحص التلقائي إلى الأبد (تبقى قابلة للربط اليدوي دائمًا، بلا حد زمني لذلك).
+const RECENT_REVIEW_RECHECK_DAYS = 3;
 // علامة التوثيق: نجمة + "توثيق" ملتصقة + نجمة، في سطر مستقل. مطابقة حرفية صارمة بعد trim() للسطر
 // (تتجاهل مسافات خارج حدود العلامة فقط — بداية/نهاية السطر — لا أي مسافة داخلها).
 // * توثيق* / *توثيق * / *توث يق* كلها مرفوضة؛ فقط "*توثيق*" الحرفية تُقبل.
@@ -213,12 +216,22 @@ async function decideForVideo(
 
 async function processChannel(channel: YoutubeChannel, trialMode: boolean): Promise<number> {
   const resolvedChannel = await ensureChannelResolved(channel);
-  if (!resolvedChannel.uploadsPlaylistId) return 0;
+
+  // إعادة فحص دورية آمنة (بلا اتصال بيوتيوب، القاعدة الصارمة نفسها): تلتقط مهمة ظهرت متأخرة
+  // (أُنشئت بعد أول فحص للمقطع، أو أُعيدت من مكتملة إلى معلّقة) خلال أيام قليلة من نشر المقطع.
+  // مستقلة تمامًا عن نجاح جلب المقاطع الجديدة أدناه، فتعمل حتى لو فشل الاتصال بيوتيوب هذه الدورة.
+  const publishedSince = new Date(Date.now() - RECENT_REVIEW_RECHECK_DAYS * 24 * 60 * 60 * 1000);
+  let processed = await reprocessChannelNeedsAttentionVideos(resolvedChannel, trialMode, {
+    publishedSince,
+    reasonSuffix: `أُعيد فحصه تلقائيًا ضمن إعادة الفحص الدورية (خلال ${RECENT_REVIEW_RECHECK_DAYS} أيام من النشر)`,
+  });
+
+  if (!resolvedChannel.uploadsPlaylistId) return processed;
 
   const videoIds = await fetchRecentVideoIds(resolvedChannel.uploadsPlaylistId, MAX_RECENT_VIDEOS_PER_CHECK);
   if (videoIds.length === 0) {
     await db.update(youtubeChannelsTable).set({ lastCheckedAt: new Date() }).where(eq(youtubeChannelsTable.id, resolvedChannel.id));
-    return 0;
+    return processed;
   }
 
   const existingRows = await db
@@ -234,7 +247,6 @@ async function processChannel(channel: YoutubeChannel, trialMode: boolean): Prom
   });
   const details = await fetchVideosDetails(idsNeedingDetails);
 
-  let processed = 0;
   for (const video of details) {
     const url = `https://www.youtube.com/watch?v=${video.videoId}`;
     const alreadyKnown = existingByVideoId.has(video.videoId);
@@ -496,11 +508,33 @@ export async function runHashtagNameBackfillOnce(): Promise<{ ran: boolean; repr
   return { ran: true, reprocessed };
 }
 
-// يُستدعى فورًا عند حفظ تعديل قناة يغيّر reciterNameConstant أو handle (لا عند الإقلاع — هذا فعل
-// إداري يتكرر بتكرار التعديل، لا خلل كود يُصلَح مرة واحدة). يعيد فحص مقاطع هذه القناة تحديدًا التي
-// تحمل العلامة *توثيق* ووصلت لحالة "لم تُوثَّق"، بالبيانات القناة المحدَّثة فعلًا (بعد التصحيح) وبيانات
-// المقاطع المحفوظة محليًا — بلا اتصال جديد بيوتيوب.
-export async function reprocessChannelNeedsAttentionVideos(channel: YoutubeChannel, trialMode: boolean): Promise<number> {
+// يعيد فحص مقاطع قناة معيّنة (بحاجة مراجعة/بلا مهمة، أو مكافئاتهما، وتحمل العلامة *توثيق*) —
+// بالقاعدة الحيّة نفسها (decideAfterMarkerConfirmed) وبياناتها المحفوظة محليًا فقط، بلا اتصال
+// جديد بيوتيوب. مُستخدَمة في حالتين مختلفتين بنفس المنطق تمامًا، يفرّقهما الخيارات فقط:
+//   1) فورًا عند حفظ تعديل قناة يغيّر reciterNameConstant أو handle — بلا حد زمني (نصحّح كل شيء).
+//   2) ضمن كل دورة فحص عادية/"افحص الآن" — بحد زمني (آخر RECENT_REVIEW_RECHECK_DAYS أيام من
+//      النشر) حتى تلتقط تلقائيًا مهمة ظهرت متأخرة، بلا حلقة إعادة معالجة لا نهائية.
+export async function reprocessChannelNeedsAttentionVideos(
+  channel: YoutubeChannel,
+  trialMode: boolean,
+  options?: { publishedSince?: Date; reasonSuffix?: string },
+): Promise<number> {
+  const reasonSuffix = options?.reasonSuffix ?? "أُعيد فحصه تلقائيًا بعد تعديل بيانات القناة";
+
+  const conditions = [
+    eq(youtubeVideosTable.channelRowId, channel.id),
+    eq(youtubeVideosTable.hasMarker, true),
+    or(
+      eq(youtubeVideosTable.status, "needs_review"),
+      eq(youtubeVideosTable.status, "no_task"),
+      eq(youtubeVideosTable.status, "trial_would_review"),
+      eq(youtubeVideosTable.status, "trial_no_task"),
+    ),
+  ];
+  if (options?.publishedSince) {
+    conditions.push(gte(youtubeVideosTable.publishedAt, options.publishedSince));
+  }
+
   const affectedRows = await db
     .select({
       id: youtubeVideosTable.id,
@@ -510,16 +544,7 @@ export async function reprocessChannelNeedsAttentionVideos(channel: YoutubeChann
       publishedAt: youtubeVideosTable.publishedAt,
     })
     .from(youtubeVideosTable)
-    .where(and(
-      eq(youtubeVideosTable.channelRowId, channel.id),
-      eq(youtubeVideosTable.hasMarker, true),
-      or(
-        eq(youtubeVideosTable.status, "needs_review"),
-        eq(youtubeVideosTable.status, "no_task"),
-        eq(youtubeVideosTable.status, "trial_would_review"),
-        eq(youtubeVideosTable.status, "trial_no_task"),
-      ),
-    ));
+    .where(and(...conditions));
 
   let reprocessed = 0;
   for (const row of affectedRows) {
@@ -538,7 +563,7 @@ export async function reprocessChannelNeedsAttentionVideos(channel: YoutubeChann
       matchedTaskId: decision.matchedTaskId,
       createdProofId: decision.createdProofId,
       status: decision.status,
-      decisionReason: `${decision.reason} — أُعيد فحصه تلقائيًا بعد تعديل بيانات القناة`,
+      decisionReason: `${decision.reason} — ${reasonSuffix}`,
       processedAt: new Date(),
     }).where(eq(youtubeVideosTable.id, row.id));
 
