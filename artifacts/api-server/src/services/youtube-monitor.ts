@@ -432,6 +432,70 @@ export async function runDueDateTimezoneBackfillOnce(): Promise<{ ran: boolean; 
   return { ran: true, reprocessed };
 }
 
+// إصلاح لمرة واحدة (يُستدعى عند أول إقلاع بعد نشر إصلاح خلل مطابقة اسم الشيخ حين يُكتب كوسم
+// يوتيوب مركّب مثل #ماهر_المعيقلي بدل "ماهر المعيقلي"): يعيد فحص كل مقطع في كل القنوات يحمل
+// العلامة *توثيق* ووصل لحالة "لم يُوثَّق"، بالقاعدة المُصلَحة (parseYoutubeTitle الآن يتعرّف على
+// صيغة الوسم) وبياناته المحفوظة محليًا فقط — بلا أي اتصال جديد بيوتيوب. علامة منفصلة عن
+// الإصلاحين السابقين، فلا تتعارض معهما ولا تُعاد أيّ منهما بسببها.
+export async function runHashtagNameBackfillOnce(): Promise<{ ran: boolean; reprocessed: number }> {
+  await ensureYoutubeMonitorSchema();
+  const settings = await getYoutubeSettings();
+  if (settings.hashtagNameBackfillDone) return { ran: false, reprocessed: 0 };
+
+  const affectedRows = await db
+    .select({
+      id: youtubeVideosTable.id,
+      title: youtubeVideosTable.title,
+      description: youtubeVideosTable.description,
+      url: youtubeVideosTable.url,
+      publishedAt: youtubeVideosTable.publishedAt,
+      channelRowId: youtubeVideosTable.channelRowId,
+    })
+    .from(youtubeVideosTable)
+    .where(and(
+      eq(youtubeVideosTable.hasMarker, true),
+      or(
+        eq(youtubeVideosTable.status, "needs_review"),
+        eq(youtubeVideosTable.status, "no_task"),
+        eq(youtubeVideosTable.status, "trial_would_review"),
+        eq(youtubeVideosTable.status, "trial_no_task"),
+      ),
+    ));
+
+  let reprocessed = 0;
+  for (const row of affectedRows) {
+    if (!hasStandaloneMarkerLine(row.description)) continue;
+
+    const [channel] = await db.select().from(youtubeChannelsTable).where(eq(youtubeChannelsTable.id, row.channelRowId)).limit(1);
+    if (!channel) continue;
+
+    const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
+      channel,
+      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      settings.trialMode,
+    );
+
+    await db.update(youtubeVideosTable).set({
+      extractedPrayer,
+      extractedHijriDay,
+      extractedHijriMonth,
+      matchedTaskId: decision.matchedTaskId,
+      createdProofId: decision.createdProofId,
+      status: decision.status,
+      decisionReason: `${decision.reason} — أُعيد فحصه تلقائيًا بعد إصلاح خلل مطابقة اسم الشيخ في صيغة الوسم`,
+      processedAt: new Date(),
+    }).where(eq(youtubeVideosTable.id, row.id));
+
+    reprocessed += 1;
+  }
+
+  await db.update(youtubeSettingsTable)
+    .set({ hashtagNameBackfillDone: true, updatedAt: new Date() })
+    .where(eq(youtubeSettingsTable.id, settings.id));
+
+  return { ran: true, reprocessed };
+}
+
 // يُستدعى فورًا عند حفظ تعديل قناة يغيّر reciterNameConstant أو handle (لا عند الإقلاع — هذا فعل
 // إداري يتكرر بتكرار التعديل، لا خلل كود يُصلَح مرة واحدة). يعيد فحص مقاطع هذه القناة تحديدًا التي
 // تحمل العلامة *توثيق* ووصلت لحالة "لم تُوثَّق"، بالبيانات القناة المحدَّثة فعلًا (بعد التصحيح) وبيانات

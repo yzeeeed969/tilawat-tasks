@@ -4,7 +4,7 @@ import { startTelegramScheduler } from "./services/telegram-scheduler";
 import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
-import { runShortDurationMarkerBackfillOnce, runDueDateTimezoneBackfillOnce } from "./services/youtube-monitor";
+import { runShortDurationMarkerBackfillOnce, runDueDateTimezoneBackfillOnce, runHashtagNameBackfillOnce } from "./services/youtube-monitor";
 
 // حماية على مستوى العملية: تمنع توقّف الخادم بسبب أخطاء عابرة غير متوقّعة.
 // في Node، الوعد الفاشل دون معالجة (unhandled rejection) يُنهي العملية افتراضيًا؛
@@ -104,6 +104,23 @@ try {
   ]);
 } catch (err) {
   logger.error({ err }, "تعذّرت إعادة فحص المقاطع المتأثرة بخلل التوقيت عند الإقلاع — سيُعاد المحاولة في الإقلاع التالي");
+}
+
+// إصلاح لمرة واحدة منفصل: مقاطع فشلت مطابقة اسم الشيخ فيها بسبب كتابته كوسم يوتيوب مركّب
+// (# و_) بدل مسافة عادية. لا يتعارض مع الإصلاحين أعلاه ولا يُعيد تشغيلهما.
+try {
+  await Promise.race([
+    runHashtagNameBackfillOnce().then((result) => {
+      if (result.ran && result.reprocessed > 0) {
+        logger.info({ reprocessed: result.reprocessed }, "أُعيد فحص مقاطع يوتيوب تضرّرت من خلل مطابقة اسم الشيخ في صيغة الوسم");
+      }
+    }),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("runHashtagNameBackfillOnce timed out")), 20_000).unref();
+    }),
+  ]);
+} catch (err) {
+  logger.error({ err }, "تعذّرت إعادة فحص المقاطع المتأثرة بخلل اسم الوسم عند الإقلاع — سيُعاد المحاولة في الإقلاع التالي");
 }
 
 app.listen(port, (err) => {

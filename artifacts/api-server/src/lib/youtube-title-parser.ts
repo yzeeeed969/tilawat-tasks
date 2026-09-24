@@ -24,6 +24,18 @@ function normalizeDigits(text: string): string {
   return text.replace(/[٠-٩]/g, (d) => EASTERN_ARABIC_DIGITS[d] ?? d);
 }
 
+// نسخة مطبَّعة **لفحص وجود اسم الشيخ فقط** — لا تُستخدَم لأي استخراج آخر (الصلاة/التاريخ تُقرآن
+// من النص الأصلي دائمًا). تتعرّف على الاسم سواء كُتب عاديًا بمسافة ("ماهر المعيقلي") أو كوسم واحد
+// مركّب ("#ماهر_المعيقلي" — شائع في عناوين يوتيوب): نزيل #، ونحوّل _ إلى مسافة، ثم نوحّد أي
+// مسافات متتالية ناتجة عن ذلك. تبقى المطابقة نصًّا حرفيًا كاملًا بعد التطبيع، لا تخمينًا جزئيًا.
+function normalizeForNameCheck(text: string): string {
+  return text
+    .replace(/#/g, " ")
+    .replace(/_/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 // كلمات الصلاة الصريحة (فجر/مغرب/عشاء). نستبعد أي ظهور مسبوق مباشرة بـ"ال" بلا مسافة
 // (اسم سورة مثل "الفجر"/"المغرب" لا يوجد لكن للاطراد؛ الحالة الحقيقية المرصودة: "الفجر" كسورة
 // ضمن "سورتي الفجر والبلد") — القناة تكتب علامة الصلاة نفسها بصيغة "عارية" دائمًا.
@@ -41,7 +53,9 @@ const DATE_REGEX = /(\d{1,2})\s*-\s*(\d{1,2})\s*-\s*1448\s*(?:هـ)?/g;
 export function parseYoutubeTitle(rawTitle: string, shaikhConstant: string): TitleParseResult {
   const title = normalizeDigits(rawTitle ?? "").trim();
 
-  if (!shaikhConstant || !title.includes(shaikhConstant)) {
+  const titleForNameCheck = normalizeForNameCheck(title);
+  const shaikhConstantForNameCheck = normalizeForNameCheck(shaikhConstant);
+  if (!shaikhConstantForNameCheck || !titleForNameCheck.includes(shaikhConstantForNameCheck)) {
     return { ok: false, reason: `العنوان لا يحتوي الاسم الثابت "${shaikhConstant}"` };
   }
 
