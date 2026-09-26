@@ -136,33 +136,14 @@ const WEEKDAY_OPTIONS = [
   { value: "6", label: "السبت" },
 ] as const;
 
-function isApplicationPlatformName(name?: string | null) {
-  if (!name) return false;
-  const normalized = name.trim().toLowerCase();
-  return (
-    /تطبيق/.test(normalized) ||
-    /app|application/i.test(normalized) ||
-    (/تلاوات/.test(normalized) && /الحرمين/.test(normalized))
-  );
-}
-
-function normalizePlatformLabel(value?: string | null) {
-  return String(value ?? "")
-    .normalize("NFKC")
-    .replace(/[\u0610-\u061A\u064B-\u065F\u0670\u06D6-\u06ED\u200E\u200F\u202A-\u202E\u2066-\u2069ـ]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .toLowerCase();
-}
-
-function isTaskFlowSourcePlatformName(name?: string | null) {
-  const normalized = normalizePlatformLabel(name);
-  if (!normalized) return false;
-  return (
-    normalized.includes("تطبيق تلاوات الحرمين") ||
-    (normalized.includes("تلاوات") && normalized.includes("الحرمين")) ||
-    (/\b(app|application)\b/i.test(normalized) && /\b(tilawat|haramain)\b/i.test(normalized))
-  );
+// منصة «تشمل كل القرّاء» (تطبيق تلاوات الحرمين): علَم صريح يُضبط من الإعدادات ← المنصات،
+// بدل مطابقة الاسم القديمة (التي كانت تطابق أي اسم فيه "app" مثل WhatsApp).
+// نبحث بالمعرّف في قائمة المنصات الكاملة أولًا، لأن بعض القوائم تحوي نسخًا مختصرة {id, name} بلا العلَم.
+type CoversAllPlatform = { id?: number; coversAllReciters?: boolean | null };
+function platformCoversAllReciters(platform?: CoversAllPlatform | null, platformsList?: ReadonlyArray<CoversAllPlatform> | null) {
+  if (!platform) return false;
+  const listed = platform.id !== undefined ? platformsList?.find((item) => item.id === platform.id) : undefined;
+  return Boolean((listed ?? platform).coversAllReciters);
 }
 
 function isPlaceholderApplicationReciter(name?: string | null) {
@@ -728,38 +709,6 @@ const TASK_FORM_STABILITY_MODE = false;
 const USE_SAFE_PHASE_ONE_TASK_FORM = true;
 const ENABLE_MEMBER_CREATED_TASKS = true;
 const ENABLE_TASK_DEPENDENCIES = true;
-const TASK_FLOW_DIAGNOSTIC_VERSION = "cache-fix-20260619";
-type TaskFlowPreviewItem = {
-  key: string;
-  platformId: number;
-  platformName: string;
-  pageId: number;
-  pageName: string;
-  reciterName: string;
-  memberIds: number[];
-  memberNames: string[];
-  pageMemberOptions: Array<{ id: number; name: string }>;
-  dueDate: string;
-  title: string;
-  warnings: string[];
-  existingTaskId?: number;
-};
-type TaskFlowCreateResult = {
-  parentTaskId?: number;
-  traceId?: string;
-  apiCalled?: boolean;
-  requestStatus?: number;
-  error?: string;
-  summary?: {
-    firstDate: string | null;
-    lastDate: string | null;
-    daysCount: number;
-    enabledPagesCount: number;
-    expectedTasks: number;
-  };
-  created: Array<{ taskId: number; platformName: string; pageName: string; dueDate?: string; memberIds?: number[]; memberNames?: string[] }>;
-  skipped: Array<{ pageId?: number; platformName?: string; pageName?: string; reason: string; existingTaskId?: number; dueDate?: string; memberIds?: number[]; memberNames?: string[] }>;
-};
 type DeleteSeriesScope = "single" | "from_this_forward" | "entire_series";
 type DeleteSeriesPreview = {
   total: number;
@@ -768,35 +717,6 @@ type DeleteSeriesPreview = {
   firstDate: string | null;
   lastDate: string | null;
   title: string;
-};
-type TaskFlowActionEligibility = {
-  canShow: boolean;
-  reasons: string[];
-  debug: {
-    taskId: number | null;
-    isAdmin: boolean;
-    deletedAt: unknown;
-    platformId: number | null;
-    platformName: string | null;
-    platformNameFallback: string | null;
-    sourcePlatformId: number | null;
-    sourcePlatformName: string | null;
-    reciterId: number | null;
-    reciterName: string | null;
-  };
-};
-type FlowChangeAction = "delete_safe_children" | "delete_safe_and_regenerate" | "keep_children";
-type FlowChangeImpact = {
-  parentTaskId: number;
-  currentReciterId: number | null;
-  newReciterId: number;
-  totalChildren: number;
-  deletableChildren: number;
-  protectedChildren: number;
-  newReciterRulesConfigured: boolean;
-  enabledPagesCount: number;
-  pagesWithoutAssigneesCount: number;
-  pagesWithoutAssignees: Array<{ pageId: number; pageName: string; platformName: string }>;
 };
 type UrlDialogState = {
   taskId: number;
@@ -880,37 +800,6 @@ class TaskDialogErrorBoundary extends Component<TaskDialogErrorBoundaryProps, Ta
       </div>
     );
   }
-}
-
-// أنواع شاشة اختيار القارئ للمنصات الناقصة
-type ReciterDecisionKind = "no_member" | "multi_member" | "no_page";
-type ReciterDecisionRow = {
-  taskId: number;
-  platformId: number;
-  platformName: string;
-  kind: ReciterDecisionKind;
-  candidateMembers: Array<{ id: number; name: string }>;
-};
-type PendingReciterDecisions = {
-  baseTaskId: number;
-  creationGroupId: number;
-  newReciterId: number;
-  newReciterName: string;
-  autoAppliedCount: number;
-  decisions: ReciterDecisionRow[];
-};
-type ReciterDecisionChoice =
-  | { action: "assign"; memberId: number }
-  | { action: "delete" }
-  | { action: "keep" };
-
-// رسالة نتيجة نشر القارئ للمجموعة عند عدم وجود منصات تحتاج قرارًا (تحديث تلقائي فقط).
-function reciterPropagationToast(
-  propagation: { autoAppliedCount?: number } | null | undefined,
-  fallbackTitle: string,
-): { title: string } {
-  const applied = Number(propagation?.autoAppliedCount ?? 0);
-  return { title: applied > 0 ? `تم تغيير القارئ ونشره إلى ${applied} مهمة تابعة` : fallbackTitle };
 }
 
 const EDIT_SCOPE_MESSAGES: Record<EditTaskScope, string> = {
@@ -1041,319 +930,6 @@ function taskDateKey(value: unknown) {
   const date = value instanceof Date ? value : new Date(String(value));
   if (Number.isNaN(date.getTime())) return "";
   return format(date, "yyyy-MM-dd");
-}
-
-function normalizeTaskFlowDate(value: unknown) {
-  if (!value) return null;
-  const date = value instanceof Date ? new Date(value) : new Date(String(value));
-  if (Number.isNaN(date.getTime())) return null;
-  date.setHours(0, 0, 0, 0);
-  return date;
-}
-
-function taskFlowDateKeys(task: TaskWithDetails | null | undefined) {
-  const singleDate = normalizeTaskFlowDate((task as any)?.dueDate ?? (task as any)?.startDate);
-  const startDate = normalizeTaskFlowDate((task as any)?.startDate);
-  const endDate = normalizeTaskFlowDate((task as any)?.endDate);
-  if (startDate && endDate && endDate.getTime() >= startDate.getTime()) {
-    const dates: string[] = [];
-    let cursor = startDate;
-    while (cursor.getTime() <= endDate.getTime()) {
-      dates.push(taskDateKey(cursor));
-      cursor = addDays(cursor, 1);
-    }
-    return dates;
-  }
-  return singleDate ? [taskDateKey(singleDate)] : [];
-}
-
-function buildFlowChildPreviewTitle(parentTask: TaskWithDetails, targetPlatformName: string) {
-  const sourcePlatformName = parentTask.platform?.name;
-  const title = String(parentTask.title ?? "").trim();
-  if (title) {
-    if (sourcePlatformName && title.includes(sourcePlatformName)) {
-      return title.replace(sourcePlatformName, targetPlatformName);
-    }
-    const parts = title.split(/\s+—\s+/).map((part) => part.trim()).filter(Boolean);
-    if (parts.length >= 2) return [...parts.slice(0, -1), targetPlatformName].join(" — ");
-  }
-  const reciterName = (parentTask as any).reciter?.name;
-  return [extractAppPrayerFromTitle(parentTask.title), reciterName, targetPlatformName].filter(Boolean).join(" — ") || targetPlatformName;
-}
-
-function TaskFlowPreviewPanel({
-  canPreview,
-  loading,
-  error,
-  items,
-  parentTask,
-  onPreview,
-  creating,
-  createResult,
-  onCreateChildren,
-  onAssigneesChange,
-}: {
-  canPreview: boolean;
-  loading: boolean;
-  error: string | null;
-  items: TaskFlowPreviewItem[] | null;
-  parentTask?: TaskWithDetails | null;
-  onPreview: () => void;
-  creating: boolean;
-  createResult: TaskFlowCreateResult | null;
-  onCreateChildren: () => void;
-  onAssigneesChange: (pageId: number, memberIds: number[]) => void;
-}) {
-  if (!canPreview) return null;
-  const readyItemsCount = items?.filter((item) => item.warnings.length === 0).length ?? 0;
-  const parentTaskMembers = parentTask
-    ? ((parentTask.members && parentTask.members.length > 0 ? parentTask.members : [parentTask.member]).filter(Boolean) as Array<{ id: number; name: string }>)
-    : [];
-  const flowDateKeys = taskFlowDateKeys(parentTask);
-  const flowFirstDate = flowDateKeys[0] || null;
-  const flowLastDate = flowDateKeys[flowDateKeys.length - 1] || null;
-  const expectedTasksCount = (items?.length ?? 0) * flowDateKeys.length;
-  const createdByPlatform = createResult?.created.reduce((map, item) => {
-    const key = item.platformName || "منصة غير معروفة";
-    map.set(key, (map.get(key) ?? 0) + 1);
-    return map;
-  }, new Map<string, number>());
-  const skippedByPlatform = createResult?.skipped.reduce((map, item) => {
-    const key = `${item.platformName ?? "منصة غير معروفة"} — ${item.reason}`;
-    map.set(key, (map.get(key) ?? 0) + 1);
-    return map;
-  }, new Map<string, number>());
-
-  return (
-    <div className="space-y-3 rounded-md border border-dashed border-sidebar-primary/30 bg-sidebar-primary/5 p-3">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div className="space-y-1">
-          <p className="text-sm font-semibold text-foreground">إنشاء المهام التابعة</p>
-          <p className="text-xs leading-5 text-muted-foreground">
-            اقترح مهام المنصات التابعة من المهمة الأصلية المحفوظة، ثم اعتمد إنشاء العناصر الجاهزة فقط.
-          </p>
-        </div>
-        <Button type="button" variant="outline" size="sm" onClick={onPreview} disabled={loading}>
-          {loading ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Layers className="ml-2 h-4 w-4" />}
-          اقتراح مهام المنصات التابعة لهذا القارئ
-        </Button>
-      </div>
-
-      {parentTask && (
-        <div className="rounded-md border bg-background px-3 py-2 text-xs leading-5 text-muted-foreground">
-          <div className="font-semibold text-foreground">بيانات المهمة الأصلية المحفوظة</div>
-          <div><span className="font-medium text-foreground">العنوان: </span>{parentTask.title}</div>
-          <div><span className="font-medium text-foreground">المنصة الأصلية: </span>{parentTask.platform?.name ?? "غير محددة"}</div>
-          <div><span className="font-medium text-foreground">القارئ: </span>{(parentTask as any).reciter?.name ?? "غير محدد"}</div>
-          <div><span className="font-medium text-foreground">الصلاة: </span>{extractAppPrayerFromTitle(parentTask.title) ?? "غير محددة في العنوان"}</div>
-          <div><span className="font-medium text-foreground">تاريخ الاستحقاق: </span>{taskDateKey((parentTask as any).dueDate) || "غير محدد"}</div>
-          <div><span className="font-medium text-foreground">تاريخ البداية: </span>{taskDateKey((parentTask as any).startDate) || "غير محدد"}</div>
-          <div><span className="font-medium text-foreground">تاريخ النهاية: </span>{taskDateKey((parentTask as any).endDate) || "غير محدد"}</div>
-          <div><span className="font-medium text-foreground">المسؤولون الحاليون: </span>{parentTaskMembers.map((member) => member.name).join("، ") || "غير محدد"}</div>
-        </div>
-      )}
-
-      {error && (
-        <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-800">
-          {error}
-        </div>
-      )}
-
-      {items && (
-        <div className="space-y-2">
-          {items.length > 0 && (
-            <div className="rounded-md border border-sidebar-primary/20 bg-background px-3 py-2 text-xs leading-5">
-              <div className="font-semibold text-foreground">ملخص النطاق المتوقع</div>
-              <div>من: {flowFirstDate ?? "غير محدد"} — إلى: {flowLastDate ?? "غير محدد"}</div>
-              <div>عدد الأيام: {flowDateKeys.length}</div>
-              <div>عدد المنصات التابعة: {items.length}</div>
-              <div className="font-semibold text-sidebar-primary">إجمالي المهام المتوقع: {expectedTasksCount}</div>
-            </div>
-          )}
-          {items.length === 0 ? (
-            <div className="rounded-md border bg-background px-3 py-2 text-xs text-muted-foreground">
-              لا توجد صفحات تابعة لهذا القارئ على منصات أخرى.
-            </div>
-          ) : (
-            items.map((item) => {
-              const isReady = item.warnings.length === 0;
-              return (
-                <div key={item.key} className="rounded-md border bg-background p-3 text-sm">
-                  <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <PlatformIcon name={item.platformName} className="h-4 w-4 shrink-0" />
-                      <span className="font-semibold">{item.platformName}</span>
-                      <span className="text-muted-foreground">-</span>
-                      <span className="truncate text-muted-foreground">{item.pageName}</span>
-                    </div>
-                    <Badge variant={isReady ? "default" : "secondary"} className={isReady ? "bg-green-600" : ""}>
-                      {isReady ? "جاهزة" : "تحتاج مراجعة"}
-                    </Badge>
-                  </div>
-
-                  <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-                    <div><span className="font-medium text-foreground">القارئ: </span>{item.reciterName}</div>
-                    <div><span className="font-medium text-foreground">النطاق: </span>{flowFirstDate ?? item.dueDate} — {flowLastDate ?? item.dueDate}</div>
-                    <div><span className="font-medium text-foreground">عدد المهام لهذه المنصة: </span>{flowDateKeys.length}</div>
-                    <div className="sm:col-span-2"><span className="font-medium text-foreground">اسم المهمة: </span>{item.title}</div>
-                    <div className="sm:col-span-2">
-                      <span className="font-medium text-foreground">المسؤولون: </span>
-                      {item.memberNames.length > 0 ? item.memberNames.join("، ") : "لا يوجد مسؤول"}
-                    </div>
-                  </div>
-
-                  {item.pageMemberOptions.length > 0 && !createResult && (
-                    <div className="mt-2 rounded-md border bg-muted/20 px-2 py-2">
-                      <p className="mb-2 text-xs font-semibold text-foreground">تعديل مسؤولي هذه المهمة فقط</p>
-                      <div className="grid gap-2 sm:grid-cols-2">
-                        {item.pageMemberOptions.map((member) => {
-                          const selected = item.memberIds.includes(member.id);
-                          return (
-                            <label key={member.id} className="flex items-center gap-2 text-xs">
-                              <Checkbox
-                                checked={selected}
-                                onCheckedChange={(checked) => {
-                                  const nextIds = new Set(item.memberIds);
-                                  Boolean(checked) ? nextIds.add(member.id) : nextIds.delete(member.id);
-                                  onAssigneesChange(item.pageId, [...nextIds]);
-                                }}
-                              />
-                              <span>{member.name}</span>
-                            </label>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  )}
-
-                  {item.warnings.length > 0 && (
-                    <div className="mt-2 space-y-1 rounded-md border border-amber-200 bg-amber-50 px-2 py-1.5 text-xs leading-5 text-amber-800">
-                      {item.warnings.map((warning) => (
-                        <div key={warning} className="flex items-start gap-1.5">
-                          <CircleDashed className="mt-0.5 h-3 w-3 shrink-0" />
-                          <span>{warning}</span>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
-
-          {createResult && (
-            <div className={cn(
-              "space-y-2 rounded-md border px-3 py-2 text-xs leading-5",
-              createResult.apiCalled === false
-                ? "border-red-200 bg-red-50 text-red-900"
-                : "border-green-200 bg-green-50 text-green-900"
-            )}>
-              <div className="font-semibold">
-                {createResult.apiCalled === false ? "لم يتم إرسال طلب إنشاء المهام التابعة." : "تم استدعاء API بنجاح."}
-              </div>
-              {createResult.error && (
-                <div><span className="font-medium">السبب: </span>{createResult.error}</div>
-              )}
-              {createResult.traceId && (
-                <div className="break-all"><span className="font-medium">traceId: </span><code>{createResult.traceId}</code></div>
-              )}
-              {createResult.requestStatus !== undefined && (
-                <div><span className="font-medium">HTTP status: </span>{createResult.requestStatus}</div>
-              )}
-              <div className="font-semibold">المهام المنشأة: {createResult.created.length}</div>
-              <div className="font-semibold">العناصر المتخطاة: {createResult.skipped.length}</div>
-              {createResult.summary && (
-                <div className="rounded border border-green-200 bg-white/60 px-2 py-1">
-                  <div>النطاق: {createResult.summary.firstDate ?? "غير محدد"} — {createResult.summary.lastDate ?? "غير محدد"}</div>
-                  <div>الأيام: {createResult.summary.daysCount}</div>
-                  <div>المنصات: {createResult.summary.enabledPagesCount}</div>
-                  <div>الإجمالي المتوقع: {createResult.summary.expectedTasks}</div>
-                </div>
-              )}
-              {createdByPlatform && createdByPlatform.size > 0 && (
-                <div className="space-y-1">
-                  <div className="font-medium">توزيع المنشأ حسب المنصة:</div>
-                  {[...createdByPlatform.entries()].map(([platformName, count]) => (
-                    <div key={platformName}>{platformName}: {count} مهمة</div>
-                  ))}
-                </div>
-              )}
-              {skippedByPlatform && skippedByPlatform.size > 0 && (
-                <div className="space-y-1">
-                  <div className="font-medium">أسباب التخطي حسب المنصة:</div>
-                  {[...skippedByPlatform.entries()].map(([label, count]) => (
-                    <div key={label}>{label}: {count}</div>
-                  ))}
-                </div>
-              )}
-              {createResult.created.length > 0 && (
-                <div className="space-y-1">
-                  <div className="font-medium">المهام المنشأة:</div>
-                  {createResult.created.map((item) => (
-                    <div key={item.taskId} className="rounded border border-green-200 bg-white/60 px-2 py-1">
-                      <div>{item.platformName} - {item.pageName}</div>
-                      {item.dueDate && <div>التاريخ: {item.dueDate}</div>}
-                      <div>taskId: {item.taskId}</div>
-                      <div>المسؤولون: {item.memberNames?.length ? item.memberNames.join("، ") : item.memberIds?.length ? item.memberIds.join(", ") : "غير معروف"}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-              {createResult.skipped.length > 0 && (
-                <div className="space-y-1">
-                  <div className="font-medium">العناصر المتخطاة:</div>
-                  {createResult.skipped.map((item, index) => (
-                    <div key={`${item.pageId ?? item.platformName ?? "skipped"}-${index}`} className="rounded border border-amber-200 bg-white/60 px-2 py-1">
-                      <div>{item.platformName ?? "منصة غير معروفة"} - {item.pageName ?? "صفحة غير معروفة"}</div>
-                      <div>السبب: {item.reason}</div>
-                      {item.dueDate && <div>التاريخ: {item.dueDate}</div>}
-                      {item.existingTaskId && <div>existingTaskId: {item.existingTaskId}</div>}
-                      <div>المسؤولون: {item.memberNames?.length ? item.memberNames.join("، ") : item.memberIds?.length ? item.memberIds.join(", ") : "غير معروف"}</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-
-          {createResult && (
-            <div className="space-y-2 rounded-md border border-green-200 bg-green-50 px-3 py-2 text-xs leading-5 text-green-900">
-              <div className="font-semibold">
-                تم إنشاء {createResult.created.length} مهمة تابعة، وتخطي {createResult.skipped.length} عنصر.
-              </div>
-              {createResult.created.length > 0 && (
-                <div>
-                  <span className="font-medium">المهام المنشأة: </span>
-                  {createResult.created.map((item) => `${item.platformName} - ${item.pageName}`).join("، ")}
-                </div>
-              )}
-              {createResult.skipped.length > 0 && (
-                <div>
-                  <span className="font-medium">المتخطى: </span>
-                  {createResult.skipped.map((item) => `${item.platformName ?? item.pageName ?? "عنصر"} (${item.reason})`).join("، ")}
-                </div>
-              )}
-            </div>
-          )}
-
-          {items.length > 0 && !createResult && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="w-full text-[0px]"
-              disabled={readyItemsCount === 0 || creating}
-              onClick={onCreateChildren}
-            >
-              {creating && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
-              <span className="text-sm">اعتماد وإنشاء المهام التابعة</span>
-              الاعتماد سيُضاف لاحقًا
-            </Button>
-          )}
-        </div>
-      )}
-    </div>
-  );
 }
 
 function MemberSelfTaskFormFields({
@@ -1569,8 +1145,6 @@ function AdminTaskMobileCard({
   onProof,
   onManageProofs,
   onDuplicate,
-  onFlowChildren,
-  flowEligibility,
   onStatusChange,
   onDelete,
 }: {
@@ -1584,8 +1158,6 @@ function AdminTaskMobileCard({
   onProof: () => void;
   onManageProofs: () => void;
   onDuplicate: () => void;
-  onFlowChildren: () => void;
-  flowEligibility: TaskFlowActionEligibility;
   onStatusChange: (status: TaskStatus) => void;
   onDelete: () => void;
 }) {
@@ -1680,7 +1252,6 @@ function AdminTaskMobileCard({
             <DropdownMenuItem onClick={onDuplicate} className="cursor-pointer flex items-center gap-2">
               <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
             </DropdownMenuItem>
-            <TaskFlowActionMenuItems eligibility={flowEligibility} onOpen={onFlowChildren} />
             <DropdownMenuSeparator />
             <DropdownMenuItem onClick={() => onStatusChange("pending")} className="cursor-pointer flex items-center gap-2">
               <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
@@ -1696,57 +1267,6 @@ function AdminTaskMobileCard({
         </DropdownMenu>
       </div>
     </div>
-  );
-}
-
-function TaskFlowActionMenuItems({
-  eligibility,
-  onOpen,
-}: {
-  eligibility: TaskFlowActionEligibility;
-  onOpen: () => void;
-}) {
-  void eligibility;
-  void onOpen;
-  return null;
-  const reasonText = eligibility.reasons.join("، ") || "جاهزة";
-  const debug = eligibility.debug;
-  const debugText = [
-    `taskId=${debug.taskId ?? "null"}`,
-    `isAdmin=${debug.isAdmin}`,
-    `deletedAt=${debug.deletedAt ? String(debug.deletedAt) : "null"}`,
-    `platformId=${debug.platformId ?? "null"}`,
-    `platform.name=${debug.platformName ?? "null"}`,
-    `platformName=${debug.platformNameFallback ?? "null"}`,
-    `sourcePlatformId=${debug.sourcePlatformId ?? "null"}`,
-    `sourcePlatformName=${debug.sourcePlatformName ?? "null"}`,
-    `reciterId=${debug.reciterId ?? "null"}`,
-    `reciter.name=${debug.reciterName ?? "null"}`,
-  ].join(" | ");
-
-  return (
-    <>
-      <DropdownMenuItem disabled className="whitespace-normal opacity-100">
-        <span className="flex min-w-0 flex-col gap-1 text-xs leading-4">
-          <span className="font-semibold text-foreground">تشخيص المهام التابعة</span>
-          <span className="text-muted-foreground">{reasonText}</span>
-          <span dir="ltr" className="text-[10px] text-muted-foreground">{debugText}</span>
-        </span>
-      </DropdownMenuItem>
-      <DropdownMenuItem
-        disabled={!eligibility.canShow}
-        onClick={eligibility.canShow ? onOpen : undefined}
-        className="cursor-pointer flex items-start gap-2"
-      >
-        <Layers className="mt-0.5 h-4 w-4 text-sidebar-primary" />
-        <span className="flex min-w-0 flex-col">
-          <span>المهام التابعة</span>
-          {!eligibility.canShow && (
-            <span className="text-[10px] leading-4 text-muted-foreground">{reasonText}</span>
-          )}
-        </span>
-      </DropdownMenuItem>
-    </>
   );
 }
 
@@ -2082,9 +1602,9 @@ function MultiPlatformAssignmentsFields({
   // الصلاة واحدة للمجموعة: تُحدَّد في مهمة التطبيق الأساسية وتُطبَّق على كل الصفوف (عرض فقط).
   // لا يظهر السطر إلا إن كانت الأساسية على منصة التطبيق وصلاتها مدعومة للتخزين.
   const mainPlatformId = toPositiveNumber(watch("platformId"));
-  const mainPlatformName = (platforms ?? []).find((platform) => platform.id === mainPlatformId)?.name;
+  const mainPlatform = (platforms ?? []).find((platform) => platform.id === mainPlatformId);
   const mainAppPrayer = watch("appPrayer");
-  const basePrayerLabel = isApplicationPlatformName(mainPlatformName) && prayerCodeFromLabel(mainAppPrayer)
+  const basePrayerLabel = platformCoversAllReciters(mainPlatform as CoversAllPlatform | undefined) && prayerCodeFromLabel(mainAppPrayer)
     ? (mainAppPrayer ?? null)
     : null;
   const rows = Array.isArray(assignments) ? assignments : [];
@@ -2264,7 +1784,6 @@ function BasicTaskFormFields({
   excludeTaskId,
   currentTask,
   showDependency = false,
-  taskFlowPreviewSlot,
   multiPlatformSlot,
 }: {
   platforms: { id: number; name: string }[] | undefined;
@@ -2274,7 +1793,6 @@ function BasicTaskFormFields({
   excludeTaskId?: number;
   currentTask?: TaskWithDetails | null;
   showDependency?: boolean;
-  taskFlowPreviewSlot?: ReactNode;
   multiPlatformSlot?: ReactNode;
 }) {
   const { watch, setValue } = useFormContext<TaskFormValues>();
@@ -2338,7 +1856,7 @@ function BasicTaskFormFields({
 
   const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
   const selectedPage = pageOptions.find((page) => page.id === pageId);
-  const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+  const isApplicationPlatform = platformCoversAllReciters(selectedPlatform as CoversAllPlatform | undefined, platforms as ReadonlyArray<CoversAllPlatform> | undefined);
 
   const dependencyOptions = useMemo(
     () => buildTaskDependencySelectOptions(allTasks, excludeTaskId, dependsOnTaskId),
@@ -2465,7 +1983,6 @@ function BasicTaskFormFields({
         )}
       />
 
-      {taskFlowPreviewSlot}
 
       {!isApplicationPlatform && toPositiveNumber(platformId) !== null && pageOptions.length > 0 && (
         <PlatformPageSelectField
@@ -2847,7 +2364,7 @@ function EditTaskFormFields({
 
   const selectedPlatform = platformOptions.find((platform) => platform.id === platformId);
   const selectedPage = pageOptions.find((page) => page.id === pageId);
-  const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+  const isApplicationPlatform = platformCoversAllReciters(selectedPlatform as CoversAllPlatform | undefined, platforms as ReadonlyArray<CoversAllPlatform> | undefined);
 
   const editWarnings = [
     !platformId ? "هذه المهمة لا تحتوي منصة محفوظة؛ اختر منصة قبل الحفظ." : null,
@@ -3284,7 +2801,7 @@ function TaskFormFields({
     ]);
   }, [platforms, currentTask, platformId]);
   const selectedPlatform = platformOptions.find((p) => p.id === platformId);
-  const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+  const isApplicationPlatform = platformCoversAllReciters(selectedPlatform as CoversAllPlatform | undefined, platforms as ReadonlyArray<CoversAllPlatform> | undefined);
   const applicationReciters = useMemo(
     () => mergeById<Reciter>([
       ...(reciters?.filter((r) => !isPlaceholderApplicationReciter(r.name)) ?? []),
@@ -3912,8 +3429,6 @@ function ReciterGroupedView({
   filterPlatform,
   filterMosque,
   onEdit,
-  onFlowChildren,
-  getFlowEligibility,
   onDelete,
   onStatusChange,
   updateTaskPending,
@@ -3923,8 +3438,6 @@ function ReciterGroupedView({
   filterPlatform: string;
   filterMosque: string;
   onEdit: (t: TaskWithDetails) => void;
-  onFlowChildren: (t: TaskWithDetails) => void;
-  getFlowEligibility: (t: TaskWithDetails) => TaskFlowActionEligibility;
   onDelete: (id: number) => void;
   onStatusChange: (id: number, status: TaskStatus) => void;
   updateTaskPending: boolean;
@@ -4007,8 +3520,7 @@ function ReciterGroupedView({
                     reciter={reciter}
                     tasks={reciterTasks}
                     onEdit={onEdit}
-                    onFlowChildren={onFlowChildren}
-                    getFlowEligibility={getFlowEligibility}
+
                     onDelete={onDelete}
                     onStatusChange={onStatusChange}
                     updateTaskPending={updateTaskPending}
@@ -4033,8 +3545,6 @@ function ReciterGroupedView({
               reciter={undefined}
               tasks={grouped["none"]["none"]}
               onEdit={onEdit}
-              onFlowChildren={onFlowChildren}
-              getFlowEligibility={getFlowEligibility}
               onDelete={onDelete}
               onStatusChange={onStatusChange}
               updateTaskPending={updateTaskPending}
@@ -4050,8 +3560,6 @@ function ReciterTaskCard({
   reciter,
   tasks,
   onEdit,
-  onFlowChildren,
-  getFlowEligibility,
   onDelete,
   onStatusChange,
   updateTaskPending,
@@ -4059,8 +3567,6 @@ function ReciterTaskCard({
   reciter: Reciter | undefined;
   tasks: TaskWithDetails[];
   onEdit: (t: TaskWithDetails) => void;
-  onFlowChildren: (t: TaskWithDetails) => void;
-  getFlowEligibility: (t: TaskWithDetails) => TaskFlowActionEligibility;
   onDelete: (id: number) => void;
   onStatusChange: (id: number, status: TaskStatus) => void;
   updateTaskPending: boolean;
@@ -4156,7 +3662,6 @@ function ReciterTaskCard({
                           <DropdownMenuItem onClick={() => onEdit(task)} className="cursor-pointer flex items-center gap-2">
                             <Pencil className="h-4 w-4 text-sidebar-primary" />تعديل
                           </DropdownMenuItem>
-                          <TaskFlowActionMenuItems eligibility={getFlowEligibility(task)} onOpen={() => onFlowChildren(task)} />
                           <DropdownMenuSeparator />
                           <DropdownMenuItem onClick={() => onStatusChange(task.id, "pending")} className="cursor-pointer flex items-center gap-2">
                             <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
@@ -4230,22 +3735,11 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [activeTab, setActiveTab] = useState<"active" | "trash">("active");
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<TaskWithDetails | null>(null);
-  const [flowDialogTask, setFlowDialogTask] = useState<TaskWithDetails | null>(null);
   const [editTaskScope, setEditTaskScope] = useState<EditTaskScope>("series");
   const [urlDialog, setUrlDialog] = useState<UrlDialogState | null>(null);
   const [proofsDialogTaskId, setProofsDialogTaskId] = useState<number | null>(null);
   const [proofSaving, setProofSaving] = useState(false);
   const [substitutionTask, setSubstitutionTask] = useState<TaskWithDetails | null>(null);
-  const [quickReciterTask, setQuickReciterTask] = useState<TaskWithDetails | null>(null);
-  const [quickReciterId, setQuickReciterId] = useState("");
-  const [quickReciterMemberId, setQuickReciterMemberId] = useState("");
-  const [quickReciterMemberOptions, setQuickReciterMemberOptions] = useState<Array<{ id: number; name: string; role?: string | null }>>([]);
-  const [quickReciterHasLinkedMembers, setQuickReciterHasLinkedMembers] = useState(false);
-  const [quickReciterMembersLoading, setQuickReciterMembersLoading] = useState(false);
-  const [quickReciterSaving, setQuickReciterSaving] = useState(false);
-  const [reciterDecisions, setReciterDecisions] = useState<PendingReciterDecisions | null>(null);
-  const [reciterDecisionChoices, setReciterDecisionChoices] = useState<Record<number, ReciterDecisionChoice>>({});
-  const [reciterDecisionsSaving, setReciterDecisionsSaving] = useState(false);
   const [deleteSeriesTask, setDeleteSeriesTask] = useState<TaskWithDetails | null>(null);
   const [deleteSeriesScope, setDeleteSeriesScope] = useState<DeleteSeriesScope>("single");
   const [deleteSeriesPending, setDeleteSeriesPending] = useState(false);
@@ -4264,11 +3758,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<number>>(new Set());
   const [bulkReassignId, setBulkReassignId] = useState("none");
   const [bulkPending, setBulkPending] = useState(false);
-  const [taskFlowPreview, setTaskFlowPreview] = useState<TaskFlowPreviewItem[] | null>(null);
-  const [taskFlowPreviewLoading, setTaskFlowPreviewLoading] = useState(false);
-  const [taskFlowPreviewError, setTaskFlowPreviewError] = useState<string | null>(null);
-  const [taskFlowCreatePending, setTaskFlowCreatePending] = useState(false);
-  const [taskFlowCreateResult, setTaskFlowCreateResult] = useState<TaskFlowCreateResult | null>(null);
 
   const queryClient = useQueryClient();
   const { toast } = useToast();
@@ -4480,66 +3969,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const { data: reciters } = useListReciters({}, { query: { queryKey: getListRecitersQueryKey() } });
   const currentMemberName = members?.find((member) => member.id === user?.memberId)?.name ?? user?.displayName ?? user?.username ?? null;
 
-  useEffect(() => {
-    let cancelled = false;
-
-    async function loadLinkedMembers() {
-      if (!quickReciterTask || !quickReciterId || !members) return;
-      const reciterId = Number(quickReciterId);
-      if (!Number.isFinite(reciterId)) return;
-
-      setQuickReciterMembersLoading(true);
-      try {
-        const platformId = taskPlatformId(quickReciterTask);
-        if (!platformId) throw new Error("Missing platform id for quick reciter change");
-        const pagesRes = await fetch(`/api/platforms/${platformId}/pages`, { credentials: "include" });
-        let linkedMemberIds: number[] = [];
-        if (pagesRes.ok) {
-          const pages = (await pagesRes.json()) as Array<{ id: number; reciterId?: number | null }>;
-          const page = pages.find((pg) => pg.reciterId === reciterId);
-          if (page) {
-            const membersRes = await fetch(`/api/platforms/${quickReciterTask.platform.id}/pages/${page.id}/members`, { credentials: "include" });
-            if (membersRes.ok) linkedMemberIds = await membersRes.json();
-          }
-        }
-
-        if (cancelled) return;
-        const linkedOptions = linkedMemberIds.length > 0
-          ? members.filter((member) => linkedMemberIds.includes(member.id))
-          : [];
-        const options = linkedOptions.length > 0 ? linkedOptions : members;
-        const isOriginalReciter = quickReciterTask.reciter?.id === reciterId;
-        setQuickReciterHasLinkedMembers(linkedOptions.length > 0);
-        setQuickReciterMemberOptions(options);
-        setQuickReciterMemberId((current) =>
-          linkedOptions.length > 0
-            ? options[0] ? String(options[0].id) : ""
-            : isOriginalReciter && options.some((member) => String(member.id) === current)
-              ? current
-              : ""
-        );
-      } catch {
-        if (cancelled) return;
-        const reciterId = Number(quickReciterId);
-        const isOriginalReciter = quickReciterTask.reciter?.id === reciterId;
-        setQuickReciterHasLinkedMembers(false);
-        setQuickReciterMemberOptions(members);
-        setQuickReciterMemberId((current) =>
-          isOriginalReciter && members.some((member) => String(member.id) === current)
-            ? current
-            : ""
-        );
-      } finally {
-        if (!cancelled) setQuickReciterMembersLoading(false);
-      }
-    }
-
-    loadLinkedMembers();
-    return () => {
-      cancelled = true;
-    };
-  }, [quickReciterTask, quickReciterId, members]);
-
   const updateTask = useUpdateTask();
   const createTask = useCreateTask();
   const deleteTask = useDeleteTask();
@@ -4597,574 +4026,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const createDueDate = createForm.watch("dueDate");
   const createSelectedPlatform = platforms?.find((platform) => platform.id === createPlatformId);
   const createSelectedReciter = reciters?.find((reciter) => reciter.id === createReciterId);
-  const taskFlowSourcePlatformIds = useMemo(
-    () => new Set((platforms ?? []).filter((platform) => isTaskFlowSourcePlatformName((platform as any).name)).map((platform) => platform.id)),
-    [platforms]
-  );
-  const taskFlowSourcePlatform = useMemo(
-    () => (platforms ?? []).find((platform) => isTaskFlowSourcePlatformName((platform as any).name)) ?? null,
-    [platforms]
-  );
-
-  const isTaskFlowSourceTask = (task: TaskWithDetails | null | undefined) => {
-    const platformId = taskPlatformId(task);
-    if (platformId && taskFlowSourcePlatformIds.has(platformId)) return true;
-    return isTaskFlowSourcePlatformName((task as any)?.platform?.name ?? (task as any)?.platformName);
-  };
-  const canPreviewTaskFlow = Boolean(
-    isAdmin &&
-    !isAdminMemberPreview &&
-    isCreateOpen &&
-    createSelectedPlatform &&
-    isApplicationPlatformName(createSelectedPlatform.name) &&
-    createSelectedReciter
-  );
-
-  useEffect(() => {
-    setTaskFlowPreview(null);
-    setTaskFlowPreviewError(null);
-    setTaskFlowCreateResult(null);
-  }, [canPreviewTaskFlow, createPlatformId, createReciterId, createStartDate, createDueDate]);
-
-  const handlePreviewTaskFlow = async () => {
-    if (!canPreviewTaskFlow || !createSelectedReciter || !createSelectedPlatform) return;
-
-    const values = createForm.getValues();
-    const sourcePlatformId = Number(values.platformId);
-    const reciterId = Number(values.reciterId);
-    const dueDate = taskDateKey(values.startDate || values.dueDate || new Date());
-    const loadedTasks = dependencyCandidateTasks ?? rawTasks ?? [];
-    const buildPreviewItem = async (
-      platform: { id: number; name: string },
-      page: { id: number; name?: string | null },
-      defaultAssigneeIds: number[] = [],
-      pageMemberOptions: Array<{ id: number; name: string }> = [],
-    ) => {
-      const allowedMemberIds = new Set(pageMemberOptions.map((member) => member.id));
-      const memberIds = [...new Set(defaultAssigneeIds)].filter((memberId) => allowedMemberIds.has(memberId));
-      const memberNames = pageMemberOptions
-        .filter((member) => memberIds.includes(member.id))
-        .map((member) => member.name);
-      const title = `${platform.name} — ${createSelectedReciter.name}`;
-      const normalizedTitle = normalizeTaskPreviewTitle(title);
-      const duplicateTask = loadedTasks.find((task) => {
-        const taskPlatform = taskPlatformId(task);
-        const taskReciter = taskReciterId(task);
-        const taskDate = taskDateKey((task as any).startDate ?? (task as any).dueDate);
-        const taskTitle = normalizeTaskPreviewTitle((task as any).title);
-        const titleMatches =
-          taskTitle === normalizedTitle ||
-          (taskTitle.length > 0 && normalizedTitle.includes(taskTitle)) ||
-          (normalizedTitle.length > 0 && taskTitle.includes(normalizedTitle));
-
-        return taskPlatform === platform.id && taskReciter === reciterId && taskDate === dueDate && titleMatches;
-      });
-      const warnings: string[] = [];
-      if (pageMemberOptions.length === 0) warnings.push("تحذير: لا يوجد أعضاء مرتبطون بهذه الصفحة.");
-      if (memberIds.length === 0) warnings.push("تحذير: لم يتم اختيار مسؤول لهذه المهمة.");
-      if (memberIds.length === 0) warnings.push("تحذير: لا يوجد مسؤول مرتبط بهذه الصفحة.");
-      if (duplicateTask) warnings.push(`تحذير: توجد مهمة مشابهة مسبقًا #${duplicateTask.id}.`);
-
-      return {
-        key: `${platform.id}-${page.id}`,
-        platformId: platform.id,
-        platformName: platform.name,
-        pageId: page.id,
-        pageName: page.name ?? `صفحة #${page.id}`,
-        reciterName: createSelectedReciter.name,
-        memberIds,
-        memberNames,
-        pageMemberOptions,
-        dueDate,
-        title,
-        warnings,
-        existingTaskId: duplicateTask?.id,
-      } satisfies TaskFlowPreviewItem;
-    };
-    setTaskFlowPreviewLoading(true);
-    setTaskFlowPreviewError(null);
-    setTaskFlowCreateResult(null);
-
-    try {
-      const previewItems: TaskFlowPreviewItem[] = [];
-      const rulesResponse = await fetch(`/api/reciters/${reciterId}/task-flow-rules`, { credentials: "include" });
-      if (!rulesResponse.ok) throw new Error("Failed to load reciter task flow rules");
-      {
-        const rulesPayload = (await rulesResponse.json()) as {
-          configured?: boolean;
-          rules?: Array<{
-            pageId: number;
-            enabled: boolean;
-            defaultAssigneeIds?: number[];
-            pageMembers?: Array<{ id: number; name: string }>;
-            page: { id: number; name?: string | null; platformId: number };
-            platform: { id: number; name: string };
-          }>;
-        };
-
-        if (!rulesPayload.configured) {
-          setTaskFlowPreview([]);
-          setTaskFlowPreviewError("قواعد تدفق المهام لهذا القارئ غير مهيأة. اضبطها من صفحة القراء أولًا.");
-          return;
-        }
-
-        const enabledRules = (rulesPayload.rules ?? []).filter((rule) =>
-          rule.enabled &&
-          rule.platform.id !== sourcePlatformId
-        );
-
-        for (const rule of enabledRules) {
-          previewItems.push(await buildPreviewItem(
-            rule.platform,
-            rule.page,
-            rule.defaultAssigneeIds ?? [],
-            rule.pageMembers ?? [],
-          ));
-        }
-
-        setTaskFlowPreview(previewItems);
-        if (previewItems.length === 0) {
-          setTaskFlowPreviewError("لا توجد صفحات مفعلة في قواعد تدفق المهام لهذا القارئ.");
-        }
-        return;
-      }
-
-    } catch (error) {
-      console.error("[task-flow-preview] failed to generate preview", error);
-      setTaskFlowPreview(null);
-      setTaskFlowPreviewError("تعذر توليد معاينة مهام المنصات التابعة. حدث الصفحة ثم حاول مرة أخرى.");
-    } finally {
-      setTaskFlowPreviewLoading(false);
-    }
-  };
-
-  const handleTaskFlowAssigneesChange = (pageId: number, memberIds: number[]) => {
-    setTaskFlowPreview((previous) => previous?.map((item) => {
-      if (item.pageId !== pageId) return item;
-      const allowedIds = new Set(item.pageMemberOptions.map((member) => member.id));
-      const nextMemberIds = [...new Set(memberIds)].filter((memberId) => allowedIds.has(memberId));
-      const nextMemberNames = item.pageMemberOptions
-        .filter((member) => nextMemberIds.includes(member.id))
-        .map((member) => member.name);
-      const warnings = item.warnings.filter((warning) =>
-        !warning.includes("مسؤول") &&
-        !warning.includes("أعضاء مرتبطون") &&
-        !warning.includes("ظ…ط³ط¤ظˆظ„")
-      );
-      if (item.pageMemberOptions.length === 0) warnings.push("تحذير: لا يوجد أعضاء مرتبطون بهذه الصفحة.");
-      if (nextMemberIds.length === 0) warnings.push("تحذير: لم يتم اختيار مسؤول لهذه المهمة.");
-      return {
-        ...item,
-        memberIds: nextMemberIds,
-        memberNames: nextMemberNames,
-        warnings,
-      };
-    }) ?? null);
-    setTaskFlowCreateResult(null);
-  };
-
-  const getTaskFlowActionEligibility = (task: TaskWithDetails | null | undefined): TaskFlowActionEligibility => {
-    const taskId = toPositiveNumber((task as any)?.id);
-    const platformId = taskPlatformId(task);
-    const platformName = ((task as any)?.platform?.name ?? null) as string | null;
-    const platformNameFallback = ((task as any)?.platformName ?? null) as string | null;
-    const reciterId = taskReciterId(task);
-    const reciterName = ((task as any)?.reciter?.name ?? (task as any)?.reciterName ?? null) as string | null;
-    const deletedAt = (task as any)?.deletedAt ?? null;
-    const sourcePlatformId = taskFlowSourcePlatform?.id ?? null;
-    const sourcePlatformName = taskFlowSourcePlatform?.name ?? null;
-    const isSourcePlatform = isTaskFlowSourceTask(task);
-    const reasons: string[] = [];
-
-    if (!isAdmin) reasons.push("المستخدم ليس مديرًا");
-    if (!taskId) reasons.push("لا يوجد taskId");
-    if (deletedAt) reasons.push("المهمة محذوفة");
-    if (!platformId && !platformName && !platformNameFallback) reasons.push("لا توجد بيانات منصة على المهمة");
-    if (!isSourcePlatform) {
-      reasons.push(sourcePlatformId ? "platformId غير مطابق لمنصة تطبيق تلاوات الحرمين" : "لم يتم العثور على منصة تطبيق تلاوات الحرمين في قائمة المنصات");
-    }
-    if (!reciterId) reasons.push("لا يوجد قارئ");
-
-    return {
-      canShow: reasons.length === 0,
-      reasons,
-      debug: {
-        taskId,
-        isAdmin,
-        deletedAt,
-        platformId,
-        platformName,
-        platformNameFallback,
-        sourcePlatformId,
-        sourcePlatformName,
-        reciterId,
-        reciterName,
-      },
-    };
-  };
-
-  const canShowTaskFlowAction = (task: TaskWithDetails | null | undefined) => {
-    return getTaskFlowActionEligibility(task).canShow;
-  };
-
-  const canUseSavedTaskFlow = canShowTaskFlowAction;
-
-  const openFlowChildrenDialog = (task: TaskWithDetails) => {
-    if (!canUseSavedTaskFlow(task)) return;
-    setTaskFlowPreview(null);
-    setTaskFlowPreviewError(null);
-    setTaskFlowCreateResult(null);
-    setFlowDialogTask(task);
-  };
-
-  const handlePreviewSavedTaskFlow = async (task: TaskWithDetails) => {
-    if (!canUseSavedTaskFlow(task)) return;
-    const sourcePlatformId = taskPlatformId(task);
-    const reciterId = taskReciterId(task);
-    const reciterName = (task as any).reciter?.name ?? "";
-    const flowDateKeys = taskFlowDateKeys(task);
-    const firstFlowDate = flowDateKeys[0] ?? "";
-    if (!sourcePlatformId || !reciterId || flowDateKeys.length === 0) {
-      setTaskFlowPreview([]);
-      setTaskFlowPreviewError("المهمة الأصلية المحفوظة لا تحتوي منصة أو قارئًا أو تاريخ استحقاق صالحًا.");
-      return;
-    }
-
-    setTaskFlowPreviewLoading(true);
-    setTaskFlowPreviewError(null);
-    setTaskFlowCreateResult(null);
-
-    try {
-      const rulesResponse = await fetch(`/api/reciters/${reciterId}/task-flow-rules`, { credentials: "include" });
-      if (!rulesResponse.ok) throw new Error("Failed to load reciter task flow rules");
-      const rulesPayload = (await rulesResponse.json()) as {
-        configured?: boolean;
-        rules?: Array<{
-          pageId: number;
-          enabled: boolean;
-          defaultAssigneeIds?: number[];
-          pageMembers?: Array<{ id: number; name: string }>;
-          page: { id: number; name?: string | null; platformId: number };
-          platform: { id: number; name: string };
-        }>;
-      };
-
-      if (!rulesPayload.configured) {
-        setTaskFlowPreview([]);
-        setTaskFlowPreviewError("قواعد تدفق المهام لهذا القارئ غير مهيأة. اضبطها من صفحة القراء أولًا.");
-        return;
-      }
-
-      const loadedTasks = (dependencyCandidateTasks ?? rawTasks ?? []).filter((item) => item.id !== task.id);
-      const previewItems: TaskFlowPreviewItem[] = [];
-      const enabledRules = (rulesPayload.rules ?? []).filter((rule) =>
-        rule.enabled &&
-        rule.platform.id !== sourcePlatformId
-      );
-
-      for (const rule of enabledRules) {
-        const pageMemberOptions = rule.pageMembers ?? [];
-        const allowedMemberIds = new Set(pageMemberOptions.map((member) => member.id));
-        const memberIds = [...new Set(rule.defaultAssigneeIds ?? [])].filter((memberId) => allowedMemberIds.has(memberId));
-        const memberNames = pageMemberOptions
-          .filter((member) => memberIds.includes(member.id))
-          .map((member) => member.name);
-        const title = buildFlowChildPreviewTitle(task, rule.platform.name);
-        const normalizedTitle = normalizeTaskPreviewTitle(title);
-        const duplicateTasks = loadedTasks.filter((candidate) => {
-          const candidateDate = taskDateKey((candidate as any).dueDate ?? (candidate as any).startDate);
-          const candidateTitle = normalizeTaskPreviewTitle((candidate as any).title);
-          const titleMatches =
-            candidateTitle === normalizedTitle ||
-            (candidateTitle.length > 0 && normalizedTitle.includes(candidateTitle)) ||
-            (normalizedTitle.length > 0 && candidateTitle.includes(normalizedTitle));
-          return (
-            taskPlatformId(candidate) === rule.platform.id &&
-            taskReciterId(candidate) === reciterId &&
-            taskPageId(candidate) === rule.page.id &&
-            flowDateKeys.includes(candidateDate) &&
-            titleMatches
-          );
-        });
-        const duplicateTask = duplicateTasks[0];
-        const warnings: string[] = [];
-        if (pageMemberOptions.length === 0) warnings.push("تحذير: لا يوجد أعضاء مرتبطون بهذه الصفحة.");
-        if (memberIds.length === 0) warnings.push("تحذير: لم يتم اختيار مسؤول لهذه المهمة.");
-        if (duplicateTasks.length >= flowDateKeys.length) warnings.push("تحذير: توجد مهام مشابهة مسبقًا لكل أيام النطاق.");
-
-        previewItems.push({
-          key: `${rule.platform.id}-${rule.page.id}`,
-          platformId: rule.platform.id,
-          platformName: rule.platform.name,
-          pageId: rule.page.id,
-          pageName: rule.page.name ?? `صفحة #${rule.page.id}`,
-          reciterName,
-          memberIds,
-          memberNames,
-          pageMemberOptions,
-          dueDate: firstFlowDate,
-          title,
-          warnings,
-          existingTaskId: duplicateTask?.id,
-        });
-      }
-
-      setTaskFlowPreview(previewItems);
-      if (previewItems.length === 0) {
-        setTaskFlowPreviewError("لا توجد صفحات مفعلة في قواعد تدفق المهام لهذا القارئ.");
-      }
-    } catch (error) {
-      console.error("[task-flow-preview] failed to generate saved-task preview", error);
-      setTaskFlowPreview(null);
-      setTaskFlowPreviewError("تعذر توليد معاينة مهام المنصات التابعة. حدث الصفحة ثم حاول مرة أخرى.");
-    } finally {
-      setTaskFlowPreviewLoading(false);
-    }
-  };
-
-  const handleCreateSavedTaskFlowChildren = async (task: TaskWithDetails) => {
-    if (!canUseSavedTaskFlow(task)) {
-      setTaskFlowCreateResult({ apiCalled: false, error: "هذه الميزة متاحة للمدير فقط ولمهام تطبيق تلاوات الحرمين المحفوظة التي لها قارئ.", created: [], skipped: [] });
-      return;
-    }
-    if (!taskFlowPreview || taskFlowPreview.length === 0) {
-      setTaskFlowCreateResult({ apiCalled: false, error: "لا توجد عناصر معاينة جاهزة لإرسالها.", created: [], skipped: [] });
-      return;
-    }
-    if (!taskFlowPreview.some((item) => item.warnings.length === 0)) {
-      setTaskFlowCreateResult({ apiCalled: false, error: "لا توجد عناصر جاهزة للإنشاء؛ كل عناصر المعاينة تحتوي تحذيرات.", created: [], skipped: [] });
-      return;
-    }
-
-    setTaskFlowCreatePending(true);
-    const traceId = `task-flow-${task.id}-${Date.now()}`;
-    try {
-      const assignments = taskFlowPreview.map((item) => ({ pageId: item.pageId, memberIds: item.memberIds }));
-      const response = await fetch(`/api/tasks/${task.id}/flow-children`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "X-Task-Flow-Trace-Id": traceId },
-        body: JSON.stringify({ assignments }),
-      });
-      const responseText = await response.text();
-      const result = responseText ? JSON.parse(responseText) as TaskFlowCreateResult : { created: [], skipped: [] };
-      if (!response.ok) throw new Error(`Flow children request failed: ${response.status}`);
-
-      const previewForResult = (entry: { pageId?: number; platformName?: string; pageName?: string }) =>
-        taskFlowPreview.find((item) =>
-          (entry.pageId && item.pageId === entry.pageId) ||
-          (item.platformName === entry.platformName && item.pageName === entry.pageName)
-        );
-
-      setTaskFlowCreateResult({
-        ...result,
-        apiCalled: true,
-        requestStatus: response.status,
-        traceId: result.traceId ?? traceId,
-        parentTaskId: task.id,
-        created: result.created.map((item) => {
-          const previewItem = previewForResult(item);
-          return { ...item, memberIds: previewItem?.memberIds, memberNames: previewItem?.memberNames };
-        }),
-        skipped: result.skipped.map((item) => {
-          const previewItem = previewForResult(item);
-          return { ...item, memberIds: previewItem?.memberIds, memberNames: previewItem?.memberNames };
-        }),
-      });
-      await invalidateTasks();
-      toast({
-        title: `تم إنشاء ${result.created.length} مهمة تابعة`,
-        description: result.skipped.length > 0 ? `تم تخطي ${result.skipped.length} عنصر.` : undefined,
-      });
-    } catch (error) {
-      console.error("[task-flow-create] failed to create saved-task flow children", { error, taskId: task.id });
-      setTaskFlowCreateResult({
-        apiCalled: true,
-        traceId,
-        error: error instanceof Error ? error.message : "حدث خطأ غير معروف أثناء اعتماد التدفق.",
-        created: [],
-        skipped: [],
-      });
-    } finally {
-      setTaskFlowCreatePending(false);
-    }
-  };
-
-  const handleCreateTaskFlowChildren = async (data: TaskFormValues) => {
-    const showTaskFlowNotSent = (error: string) => {
-      setTaskFlowCreateResult({
-        apiCalled: false,
-        error,
-        created: [],
-        skipped: [],
-      });
-      toast({ title: "لم يتم إرسال طلب إنشاء المهام التابعة", description: error, variant: "destructive" });
-    };
-
-    if (!canPreviewTaskFlow) {
-      showTaskFlowNotSent("الزر غير جاهز: منصة التطبيق أو القارئ غير محددين، أو المستخدم ليس مديرًا.");
-      return;
-    }
-    if (!taskFlowPreview || taskFlowPreview.length === 0) {
-      showTaskFlowNotSent("لا توجد عناصر معاينة جاهزة لإرسالها.");
-      return;
-    }
-    if (!taskFlowPreview.some((item) => item.warnings.length === 0)) {
-      showTaskFlowNotSent("لا توجد عناصر جاهزة للإنشاء؛ كل عناصر المعاينة تحتوي تحذيرات.");
-      return;
-    }
-    if ((data.seriesType && data.seriesType !== "temporary") || (data.recurrence && data.recurrence !== "none") || data.endDate) {
-      showTaskFlowNotSent("اعتماد التدفق متاح للمهمة الحالية فقط، وليس للنطاقات أو السلاسل.");
-      toast({ title: "اعتماد التدفق متاح للمهمة الحالية فقط، وليس للنطاقات أو السلاسل.", variant: "destructive" });
-      return;
-    }
-    if (!data.platformId || !data.memberIds?.length || !data.startDate || Number.isNaN(new Date(data.startDate).getTime())) {
-      showTaskFlowNotSent("بيانات المهمة الأصلية غير مكتملة: المنصة أو المسؤول أو التاريخ ناقص.");
-      toast({ title: "أكمل بيانات المهمة الأصلية قبل الاعتماد", variant: "destructive" });
-      return;
-    }
-    const confirmed = window.confirm("سيتم إنشاء المهمة الأصلية أولًا، ثم إنشاء المهام التابعة الجاهزة فقط. هل تريد المتابعة؟");
-    if (!confirmed) {
-      showTaskFlowNotSent("تم إلغاء التأكيد قبل إرسال الطلب.");
-      return;
-    }
-
-    const selectedPlatform = platforms?.find((p) => p.id === data.platformId);
-    const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
-    const reciter = reciters?.find((r) => r.id === data.reciterId);
-    if (!isApplicationPlatform || !data.reciterId || !data.appPrayer) {
-      showTaskFlowNotSent("يجب اختيار تطبيق تلاوات الحرمين والقارئ والصلاة قبل الاعتماد.");
-      toast({ title: "اختر تطبيق تلاوات الحرمين والقارئ والصلاة قبل الاعتماد", variant: "destructive" });
-      return;
-    }
-
-    setTaskFlowCreatePending(true);
-    setIsCreateSubmitting(true);
-    let apiRequestStarted = false;
-    let activeTraceId: string | undefined;
-    let activeRequestStatus: number | undefined;
-    try {
-      const pageId = await ensureApplicationReciterPage(data.platformId, data.reciterId, data.memberIds);
-      const taskDate = new Date(data.startDate).toISOString();
-      const taskTitle = [data.appPrayer, reciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || "مهمة جديدة";
-      const parentTask = await createTask.mutateAsync({
-        data: {
-          title: taskTitle,
-          description: data.description,
-          platformId: data.platformId,
-          memberIds: data.memberIds,
-          reciterId: data.reciterId,
-          status: "pending",
-          priority: data.priority ?? "normal",
-          progress: data.progress ?? 0,
-          seriesType: "temporary",
-          startDate: taskDate,
-          dueDate: taskDate,
-          recurrence: "none",
-          recurrenceIntervalDays: null,
-          recurrenceDurationDays: null,
-          recurrenceDays: null,
-          weeklyQuotaRequired: null,
-          pageId,
-          expandDailyInstances: false,
-          recurrencePattern: "none",
-          dependsOnTaskId: ENABLE_TASK_DEPENDENCIES ? data.dependsOnTaskId ?? null : null,
-          source: "admin_created",
-        } as any,
-      });
-
-      const traceId = `task-flow-${parentTask.id}-${Date.now()}`;
-      activeTraceId = traceId;
-      const assignments = taskFlowPreview.map((item) => ({
-        pageId: item.pageId,
-        memberIds: item.memberIds,
-      }));
-      console.info("[task-flow-create] flow-children request", {
-        traceId,
-        parentTaskId: parentTask.id,
-        assignments,
-      });
-      apiRequestStarted = true;
-      const response = await fetch(`/api/tasks/${parentTask.id}/flow-children`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json", "X-Task-Flow-Trace-Id": traceId },
-        body: JSON.stringify({ assignments }),
-      });
-      activeRequestStatus = response.status;
-      const responseText = await response.text();
-      let result: TaskFlowCreateResult;
-      try {
-        result = responseText ? JSON.parse(responseText) : { created: [], skipped: [] };
-      } catch (parseError) {
-        console.error("[task-flow-create] flow-children non-json response", {
-          traceId,
-          parentTaskId: parentTask.id,
-          status: response.status,
-          responseText,
-          parseError,
-        });
-        throw parseError;
-      }
-      console.info("[task-flow-create] flow-children response", {
-        traceId,
-        parentTaskId: parentTask.id,
-        status: response.status,
-        result,
-      });
-      if (!response.ok) {
-        throw new Error(`Flow children request failed: ${response.status}`);
-      }
-      const previewForResult = (entry: { pageId?: number; platformName?: string; pageName?: string }) =>
-        taskFlowPreview.find((item) =>
-          (entry.pageId && item.pageId === entry.pageId) ||
-          (item.platformName === entry.platformName && item.pageName === entry.pageName)
-        );
-      setTaskFlowCreateResult({
-        ...result,
-        apiCalled: true,
-        requestStatus: response.status,
-        traceId: result.traceId ?? traceId,
-        parentTaskId: parentTask.id,
-        created: result.created.map((item) => {
-          const previewItem = previewForResult(item);
-          return {
-            ...item,
-            memberIds: previewItem?.memberIds,
-            memberNames: previewItem?.memberNames,
-          };
-        }),
-        skipped: result.skipped.map((item) => {
-          const previewItem = previewForResult(item);
-          return {
-            ...item,
-            memberIds: previewItem?.memberIds,
-            memberNames: previewItem?.memberNames,
-          };
-        }),
-      });
-      invalidateTasks();
-      queryClient.invalidateQueries({ queryKey: ["page-members"] });
-      toast({
-        title: `تم إنشاء ${result.created.length} مهمة تابعة`,
-        description: result.skipped.length > 0 ? `تم تخطي ${result.skipped.length} عنصر بسبب التحذيرات أو التكرار.` : undefined,
-      });
-    } catch (error) {
-      console.error("[task-flow-create] failed to create flow children", { error, data });
-      setTaskFlowCreateResult({
-        apiCalled: apiRequestStarted,
-        traceId: activeTraceId,
-        requestStatus: activeRequestStatus,
-        error: error instanceof Error ? error.message : "حدث خطأ غير معروف أثناء اعتماد التدفق.",
-        created: [],
-        skipped: [],
-      });
-      toast({ title: "تعذر اعتماد وإنشاء المهام التابعة", variant: "destructive" });
-    } finally {
-      setTaskFlowCreatePending(false);
-      setIsCreateSubmitting(false);
-    }
-  };
 
   const openEditDialog = (task: TaskWithDetails) => {
     try {
@@ -5207,9 +4068,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       console.info("[tasks-dialog] edit defaults", defaultValues);
       editForm.reset(defaultValues);
       setEditTaskScope((task as any).seriesId ? "series" : "single");
-      setTaskFlowPreview(null);
-      setTaskFlowPreviewError(null);
-      setTaskFlowCreateResult(null);
       setEditingTask(task);
     } catch (error) {
       console.error("[tasks-dialog] failed to prepare edit form", {
@@ -5281,74 +4139,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       invalidateTasks(); clearSel();
       toast({ title: `تم إسناد ${selectedTaskIds.size} مهمة لـ ${members?.find((m) => m.id === mId)?.name}` });
     } finally { setBulkPending(false); }
-  };
-
-  const chooseFlowChangeAction = (impact: FlowChangeImpact): FlowChangeAction | null => {
-    const warnings = [
-      `تم العثور على ${impact.totalChildren} مهام متدفقة مرتبطة بالقارئ السابق.`,
-      `القابلة للحذف: ${impact.deletableChildren}`,
-      `المحمية ولن تمس: ${impact.protectedChildren}`,
-      impact.newReciterRulesConfigured
-        ? `القارئ الجديد لديه ${impact.enabledPagesCount} صفحات مفعلة في التدفق.`
-        : "القارئ الجديد لا يملك قواعد تدفق مهيأة.",
-      impact.pagesWithoutAssigneesCount > 0
-        ? `تنبيه: ${impact.pagesWithoutAssigneesCount} صفحة مفعلة بلا مسؤول افتراضي.`
-        : null,
-      "",
-      "اختر الإجراء:",
-      "1 = حذف التوابع غير المكتملة وغير الموثقة فقط",
-      "2 = حذف الآمن ثم إعادة توليد توابع للقارئ الجديد",
-      "3 = الإبقاء على التوابع الحالية",
-    ].filter(Boolean).join("\n");
-    const choice = window.prompt(warnings, "3");
-    if (choice === null) return null;
-    if (choice.trim() === "1") return "delete_safe_children";
-    if (choice.trim() === "2") return "delete_safe_and_regenerate";
-    return "keep_children";
-  };
-
-  const fetchFlowChangeImpact = async (taskId: number, newReciterId: number) => {
-    const response = await fetch(`/api/tasks/${taskId}/flow-change-impact?newReciterId=${newReciterId}`, {
-      credentials: "include",
-    });
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error("Failed to load flow change impact");
-    const impact = (await response.json()) as FlowChangeImpact;
-    return impact.totalChildren > 0 ? impact : null;
-  };
-
-  const runFlowChangeAction = async (taskId: number, newReciterId: number, action: FlowChangeAction) => {
-    const response = await fetch(`/api/tasks/${taskId}/flow-change-action`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      body: JSON.stringify({ newReciterId, action }),
-    });
-    if (!response.ok) throw new Error("Failed to apply flow change action");
-    return response.json() as Promise<{
-      deletedChildIds: number[];
-      protectedChildIds: number[];
-      regenerated: { created: unknown[]; skipped: unknown[] };
-    }>;
-  };
-
-  const prepareFlowReciterChange = async (task: TaskWithDetails, newReciterId: number | null) => {
-    const oldReciterId = taskReciterId(task);
-    if (!isAdmin || !oldReciterId || !newReciterId || oldReciterId === newReciterId) {
-      return false;
-    }
-    const impact = await fetchFlowChangeImpact(task.id, newReciterId);
-    if (!impact) return false;
-    const action = chooseFlowChangeAction(impact);
-    if (!action) throw new Error("FLOW_CHANGE_CANCELLED");
-    if (action !== "keep_children") {
-      const result = await runFlowChangeAction(task.id, newReciterId, action);
-      toast({
-        title: "تم تنفيذ قرار التوابع المتدفقة",
-        description: `حذف آمن: ${result.deletedChildIds.length}، محمي: ${result.protectedChildIds.length}، جديد: ${result.regenerated.created.length}`,
-      });
-    }
-    return true;
   };
 
   const onCreateSubmit = async (data: TaskFormValues) => {
@@ -5428,7 +4218,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       : null;
     const weeklyQuotaRequired = isWeeklyQuota ? Number(data.weeklyQuotaRequired ?? 3) : null;
     const selectedPlatform = platforms?.find((p) => p.id === data.platformId);
-    const isApplicationPlatform = isApplicationPlatformName(selectedPlatform?.name);
+    const isApplicationPlatform = platformCoversAllReciters(selectedPlatform as CoversAllPlatform | undefined, platforms as ReadonlyArray<CoversAllPlatform> | undefined);
     let pageId = data.pageId ?? null;
 
     if (!isMemberSelfTask && isApplicationPlatform && !data.reciterId) {
@@ -5531,81 +4321,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   const onEditSubmit = async (data: TaskFormValues) => {
     if (!editingTask) return;
-    if (TASK_FORM_STABILITY_MODE) {
-      if (!data.platformId) {
-        toast({ title: "اختر المنصة أولًا", variant: "destructive" });
-        return;
-      }
-      const memberIdsForStableUpdate = data.memberIds?.length ? data.memberIds : taskAssignedMemberIds(editingTask);
-      if (!memberIdsForStableUpdate.length) {
-        toast({ title: "اختر العضو المسؤول", variant: "destructive" });
-        return;
-      }
-      if (!data.startDate || Number.isNaN(new Date(data.startDate).getTime())) {
-        toast({ title: "اختر تاريخ المهمة", variant: "destructive" });
-        return;
-      }
-      const selectedPlatform = platforms?.find((platform) => platform.id === data.platformId);
-      const selectedReciter = reciters?.find((reciter) => reciter.id === data.reciterId);
-      const explicitTitle = typeof data.title === "string" ? data.title.trim() : "";
-      const taskTitle = explicitTitle || [selectedReciter?.name, selectedPlatform?.name].filter(Boolean).join(" — ") || "مهمة جديدة";
-      const taskDate = new Date(data.startDate).toISOString();
-
-      let flowChangeAcknowledged = false;
-      try {
-        flowChangeAcknowledged = await prepareFlowReciterChange(editingTask, data.reciterId ?? null);
-      } catch (error) {
-        if ((error as Error).message !== "FLOW_CHANGE_CANCELLED") {
-          toast({ title: "تعذر فحص أثر تغيير القارئ", variant: "destructive" });
-        }
-        return;
-      }
-
-      const groupId = (editingTask as any).creationGroupId;
-      const currentTaskIso = (editingTask as any).startDate
-        ? new Date((editingTask as any).startDate).toISOString()
-        : (editingTask as any).dueDate
-          ? new Date((editingTask as any).dueDate).toISOString()
-          : null;
-      const dateChanged = !currentTaskIso || taskDate.slice(0, 10) !== currentTaskIso.slice(0, 10);
-      let stableUpdateScope: "single" | "group" = "single";
-      if (isAdmin && groupId && dateChanged) {
-        const applyToGroup = window.confirm(
-          "هل تريد تطبيق نفس التعديل على باقي المهام المرتبطة؟\nسيُطبَّق التاريخ الجديد على كل مهام هذه المجموعة."
-        );
-        stableUpdateScope = applyToGroup ? "group" : "single";
-      }
-
-      updateTask.mutate(
-        {
-          id: editingTask.id,
-          data: {
-            title: taskTitle,
-            platformId: data.platformId,
-            memberIds: memberIdsForStableUpdate,
-            reciterId: data.reciterId ?? null,
-            pageId: data.pageId ?? null,
-            startDate: taskDate,
-            dueDate: taskDate,
-            updateScope: stableUpdateScope,
-            flowChangeAcknowledged,
-          } as any,
-        },
-        {
-          onSuccess: (result) => {
-            invalidateTasks();
-            setEditingTask(null);
-            if ((result as any)?.pendingReciterDecisions) {
-              openReciterDecisions((result as any).pendingReciterDecisions as PendingReciterDecisions);
-            } else {
-              toast(reciterPropagationToast((result as any)?.reciterPropagation, "تم تحديث المهمة بنجاح"));
-            }
-          },
-          onError: () => toast({ title: "حدث خطأ أثناء تحديث المهمة", variant: "destructive" }),
-        }
-      );
-      return;
-    }
     const hasSeries = Boolean((editingTask as any).seriesId);
     const effectiveEditScope: EditTaskScope = hasSeries ? editTaskScope : "single";
     if (hasSeries) {
@@ -5624,20 +4339,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     const memberIdsForUpdate = data.memberIds?.length ? data.memberIds : taskAssignedMemberIds(editingTask);
     // إن غيّر المستخدم الصلاة فعلًا في مهمة على منصة التطبيق، نحدّث رمزها المخزَّن كي لا يخالف العنوان.
     // لا نرسل شيئًا إن لم تتغيّر، فلا تُلمس المهام القديمة (prayer = NULL) بمجرد حفظ تعديل آخر.
-    const editPlatformName = platforms?.find((platform) => platform.id === data.platformId)?.name;
+    const editPlatform = platforms?.find((platform) => platform.id === data.platformId);
     const prayerEditFields =
-      isApplicationPlatformName(editPlatformName) && (data.appPrayer ?? null) !== taskAppPrayerLabel(editingTask as any)
+      platformCoversAllReciters(editPlatform) && (data.appPrayer ?? null) !== taskAppPrayerLabel(editingTask as any)
         ? { prayer: prayerCodeFromLabel(data.appPrayer) }
         : {};
-    let flowChangeAcknowledged = false;
-    try {
-      flowChangeAcknowledged = await prepareFlowReciterChange(editingTask, data.reciterId ?? null);
-    } catch (error) {
-      if ((error as Error).message !== "FLOW_CHANGE_CANCELLED") {
-        toast({ title: "تعذر فحص أثر تغيير القارئ", variant: "destructive" });
-      }
-      return;
-    }
+    // القارئ لا يُرسل إلا لمهمة بلا قارئ بعد (تحديده أول مرة). تغيير قارئ قائم يتم عبر «النيابة» فقط.
+    const reciterEditFields = taskReciterId(editingTask) === null ? { reciterId: data.reciterId ?? null } : {};
     updateTask.mutate(
       {
         id: editingTask.id,
@@ -5646,7 +4354,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           description: data.description,
           platformId: data.platformId,
           memberIds: memberIdsForUpdate,
-          reciterId: data.reciterId ?? null,
+          ...reciterEditFields,
           status: data.status as TaskStatus | undefined,
           priority: data.priority ?? "normal",
           progress: data.progress ?? 0,
@@ -5662,7 +4370,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           ...prayerEditFields,
           updateScope: effectiveEditScope,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : undefined,
-          flowChangeAcknowledged,
         } as any,
       },
       {
@@ -5957,141 +4664,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     setSubstitutionTask(task);
   };
 
-  const openQuickReciterDialog = (task: TaskWithDetails) => {
-    logTaskDialogOpen("quick-reciter", taskDialogDiagnostic(task));
-    const taskMembers = taskAssignedMembers(task);
-    const reciterId = taskReciterId(task);
-    setQuickReciterTask(task);
-    setQuickReciterId(reciterId ? String(reciterId) : "none");
-    setQuickReciterMemberOptions(taskMembers);
-    setQuickReciterMemberId(taskMembers[0] ? String(taskMembers[0].id) : "");
-    setQuickReciterHasLinkedMembers(false);
-  };
-
-  const closeQuickReciterDialog = () => {
-    setQuickReciterTask(null);
-    setQuickReciterId("");
-    setQuickReciterMemberId("");
-    setQuickReciterMemberOptions([]);
-    setQuickReciterHasLinkedMembers(false);
-    setQuickReciterMembersLoading(false);
-  };
-
-  const handleQuickReciterChange = async () => {
-    if (!quickReciterTask) return;
-    const reciterId = Number(quickReciterId);
-    const memberId = Number(quickReciterMemberId);
-    if (!Number.isFinite(reciterId) || reciterId <= 0) {
-      toast({ title: "اختر القارئ الجديد", variant: "destructive" });
-      return;
-    }
-    if (!Number.isFinite(memberId) || memberId <= 0) {
-      toast({ title: "اختر العضو المسؤول", variant: "destructive" });
-      return;
-    }
-
-    try {
-      setQuickReciterSaving(true);
-      let response = await fetch(`/api/tasks/${quickReciterTask.id}/quick-reciter`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ reciterId, memberId }),
-      });
-      if (!response.ok) {
-        const error = await response.json().catch(() => null);
-        if (response.status === 409 && error?.error === "flow_change_required" && error?.impact) {
-          const action = chooseFlowChangeAction(error.impact as FlowChangeImpact);
-          if (!action) return;
-          if (action !== "keep_children") {
-            await runFlowChangeAction(quickReciterTask.id, reciterId, action);
-          }
-          response = await fetch(`/api/tasks/${quickReciterTask.id}/quick-reciter`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ reciterId, memberId, flowChangeAcknowledged: true }),
-          });
-          if (response.ok) {
-            await invalidateTasks();
-            toast({ title: "تم تغيير القارئ وتنفيذ قرار التوابع" });
-            closeQuickReciterDialog();
-            return;
-          }
-        }
-        throw new Error(error?.error ?? "Failed to change reciter");
-      }
-      await invalidateTasks();
-      const result = await response.json().catch(() => null);
-      closeQuickReciterDialog();
-      if (result?.pendingReciterDecisions) {
-        openReciterDecisions(result.pendingReciterDecisions as PendingReciterDecisions);
-      } else {
-        toast(reciterPropagationToast(result?.reciterPropagation, "تم تغيير القارئ وإسناد المهمة للعضو المسؤول"));
-      }
-    } catch (error) {
-      toast({
-        title: error instanceof Error ? error.message : "حدث خطأ أثناء تغيير القارئ",
-        variant: "destructive",
-      });
-    } finally {
-      setQuickReciterSaving(false);
-    }
-  };
-
-  const openReciterDecisions = (payload: PendingReciterDecisions) => {
-    setReciterDecisions(payload);
-    setReciterDecisionChoices({});
-  };
-
-  // هل حُسمت كل الصفوف؟ (assign يحتاج عضوًا، no_page يحتاج delete أو keep)
-  const reciterDecisionsComplete = (() => {
-    if (!reciterDecisions) return false;
-    return reciterDecisions.decisions.every((row) => {
-      const choice = reciterDecisionChoices[row.taskId];
-      if (!choice) return false;
-      if (choice.action === "assign") return Number.isInteger(choice.memberId) && choice.memberId > 0;
-      return true;
-    });
-  })();
-
-  const applyReciterDecisions = async () => {
-    if (!reciterDecisions || !reciterDecisionsComplete) return;
-    setReciterDecisionsSaving(true);
-    try {
-      const resolutions = reciterDecisions.decisions.map((row) => {
-        const choice = reciterDecisionChoices[row.taskId];
-        if (choice.action === "assign") return { taskId: row.taskId, action: "assign", memberId: choice.memberId };
-        return { taskId: row.taskId, action: choice.action };
-      });
-      const response = await fetch(`/api/tasks/${reciterDecisions.baseTaskId}/reciter-decisions`, {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          creationGroupId: reciterDecisions.creationGroupId,
-          newReciterId: reciterDecisions.newReciterId,
-          resolutions,
-        }),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(payload?.error ?? "Failed to apply reciter decisions");
-      await invalidateTasks();
-      const parts = [
-        payload?.assigned ? `أُسند: ${payload.assigned}` : null,
-        payload?.deleted ? `حُذف: ${payload.deleted}` : null,
-        payload?.kept ? `أُبقي: ${payload.kept}` : null,
-      ].filter(Boolean);
-      toast({ title: "تم تطبيق قرارات القارئ", description: parts.length ? parts.join(" · ") : undefined });
-      setReciterDecisions(null);
-      setReciterDecisionChoices({});
-    } catch (error) {
-      toast({ title: error instanceof Error ? error.message : "تعذّر تطبيق القرارات", variant: "destructive" });
-    } finally {
-      setReciterDecisionsSaving(false);
-    }
-  };
-
   const handleSubmissionUrl = async (data: { url: string }) => {
     if (!urlDialog) return;
     const taskId = urlDialog.taskId;
@@ -6158,7 +4730,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               <div className="min-w-0">
                 <h2 className="text-2xl font-bold tracking-tight text-foreground">المهام</h2>
                 <p className="mt-1 text-sm text-muted-foreground">إدارة ومتابعة مهام الفريق</p>
-                {false && <p className="mt-1 text-[11px] font-semibold text-amber-700">نسخة تشخيص المهام التابعة: {TASK_FLOW_DIAGNOSTIC_VERSION}</p>}
                 {view === "list" && activeTab === "active" && (
                   <p className="mt-2 inline-flex rounded-full border border-sidebar-primary/20 bg-sidebar-primary/5 px-2.5 py-1 text-xs font-semibold text-sidebar-primary">
                     يعرض {adminListShown} من {adminListTotal} مهمة
@@ -6261,9 +4832,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           <p className="text-muted-foreground mt-2">
             {!isAdmin ? "مهامك المسندة إليك — ضع علامة ✓ عند إتمام كل مهمة" : "إدارة ومتابعة مهام الفريق"}
           </p>
-          {false && isAdmin && (
-            <p className="mt-1 text-xs font-semibold text-amber-700">نسخة تشخيص المهام التابعة: {TASK_FLOW_DIAGNOSTIC_VERSION}</p>
-          )}
         </div>
 
         {/* View toggle + create */}
@@ -6350,10 +4918,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     memberId: user?.memberId,
                     defaultValues: createForm.getValues(),
                   });
-                } else {
-                  setTaskFlowPreview(null);
-                  setTaskFlowPreviewError(null);
-                  setTaskFlowCreateResult(null);
                 }
                 setIsCreateOpen(open);
               }}
@@ -6751,270 +5315,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         </DialogContent>
       </Dialog>
 
-      {/* Reciter decisions dialog (إلزامي — لا يُغلق قبل حسم كل الصفوف) */}
-      <Dialog open={!!reciterDecisions} onOpenChange={() => { /* شاشة إلزامية: تجاهل أي محاولة إغلاق */ }}>
-        <DialogContent
-          className="sm:max-w-[560px] max-h-[90vh] overflow-y-auto [&>button]:hidden"
-          dir="rtl"
-          onEscapeKeyDown={(event) => event.preventDefault()}
-          onInteractOutside={(event) => event.preventDefault()}
-        >
-          <DialogHeader>
-            <DialogTitle className="text-xl font-bold">توزيع المسؤولين على المنصات</DialogTitle>
-          </DialogHeader>
-          {reciterDecisions && (
-            <div className="space-y-4">
-              <div className="rounded-md border border-sidebar-primary/20 bg-sidebar-primary/5 p-3 text-sm leading-6">
-                <div>القارئ الجديد: <span className="font-semibold">{reciterDecisions.newReciterName}</span></div>
-                {reciterDecisions.autoAppliedCount > 0 && (
-                  <div className="text-muted-foreground">تم تحديث {reciterDecisions.autoAppliedCount} منصة تلقائيًا. المنصات أدناه تحتاج قرارك.</div>
-                )}
-              </div>
-
-              <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
-                يجب حسم كل المنصات أدناه قبل المتابعة — لا يمكن إغلاق هذه الشاشة قبل إكمالها.
-              </div>
-
-              <div className="space-y-3">
-                {reciterDecisions.decisions.map((row) => {
-                  const choice = reciterDecisionChoices[row.taskId];
-                  return (
-                    <div key={row.taskId} className="space-y-2 rounded-lg border border-border bg-background p-3">
-                      <div className="flex items-center justify-between gap-2">
-                        <p className="text-sm font-semibold">{row.platformName}</p>
-                        <Badge variant="outline" className="text-[10px]">
-                          {row.kind === "no_page" ? "لا توجد صفحة" : row.kind === "no_member" ? "بلا عضو مربوط" : "أكثر من عضو"}
-                        </Badge>
-                      </div>
-
-                      {row.kind === "no_page" ? (
-                        <div className="space-y-2">
-                          <p className="text-xs text-destructive">القارئ الجديد ليس له صفحة على هذه المنصة.</p>
-                          <div className="grid grid-cols-2 gap-2">
-                            <button
-                              type="button"
-                              onClick={() => setReciterDecisionChoices((prev) => ({ ...prev, [row.taskId]: { action: "keep" } }))}
-                              className={cn(
-                                "rounded-md border p-2 text-sm transition-colors",
-                                choice?.action === "keep" ? "border-sidebar-primary bg-sidebar-primary/10 text-sidebar-primary font-semibold" : "border-border hover:bg-muted/40"
-                              )}
-                            >
-                              إبقاؤها كما هي
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => setReciterDecisionChoices((prev) => ({ ...prev, [row.taskId]: { action: "delete" } }))}
-                              className={cn(
-                                "rounded-md border p-2 text-sm transition-colors",
-                                choice?.action === "delete" ? "border-destructive bg-destructive/10 text-destructive font-semibold" : "border-border hover:bg-muted/40"
-                              )}
-                            >
-                              حذف هذه المهمة
-                            </button>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="space-y-1">
-                          <Label className="text-xs text-muted-foreground">اختر المسؤول {row.kind === "multi_member" ? "(من المربوطين)" : "(من كل الأعضاء)"}</Label>
-                          <select
-                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus:outline-none focus:ring-1 focus:ring-ring"
-                            value={choice?.action === "assign" ? String(choice.memberId) : ""}
-                            onChange={(event) => {
-                              const memberId = Number(event.target.value);
-                              if (Number.isInteger(memberId) && memberId > 0) {
-                                setReciterDecisionChoices((prev) => ({ ...prev, [row.taskId]: { action: "assign", memberId } }));
-                              }
-                            }}
-                          >
-                            <option value="" disabled>اختر المسؤول</option>
-                            {row.candidateMembers.map((member) => (
-                              <option key={member.id} value={String(member.id)}>{member.name}</option>
-                            ))}
-                          </select>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-
-              <Button
-                type="button"
-                className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
-                onClick={applyReciterDecisions}
-                disabled={!reciterDecisionsComplete || reciterDecisionsSaving}
-              >
-                {reciterDecisionsSaving && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}
-                تأكيد وتطبيق
-              </Button>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
-
-      {/* Quick reciter change dialog */}
-      <Dialog open={!!quickReciterTask} onOpenChange={(open) => { if (!open) closeQuickReciterDialog(); }}>
-        <DialogContent className="sm:max-w-[520px]" dir="rtl">
-          <TaskDialogErrorBoundary
-            dialogName="تغيير القارئ"
-            resetKey={`${quickReciterTask?.id ?? "closed"}-${quickReciterId}-${quickReciterMemberOptions.length}`}
-            onClose={closeQuickReciterDialog}
-          >
-            <DialogHeader>
-              <DialogTitle className="text-xl font-bold flex items-center gap-2">
-                <MicVocal className="h-5 w-5 text-sidebar-primary" />
-                تغيير القارئ لهذه المهمة فقط
-              </DialogTitle>
-            </DialogHeader>
-            {quickReciterTask && (
-              <div className="space-y-4">
-                <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3 text-sm text-sidebar-foreground">
-                  سيتم تغيير القارئ والعضو المسؤول لهذه المهمة فقط، وستختفي من قائمة العضو السابق. لن تتغير السلسلة أو التاريخ أو الحالة أو الشواهد.
-                </div>
-                {quickReciterTask.status === "completed" && (
-                  <div className="rounded-lg border border-green-200 bg-green-50 p-3 text-xs text-green-700">
-                    هذه المهمة مكتملة. سيبقى الإكمال والشواهد كما هي.
-                  </div>
-                )}
-                <div className="space-y-2">
-                  <label className="text-sm font-medium">القارئ الجديد</label>
-                  <Select
-                    value={quickReciterId || "none"}
-                    onValueChange={(value) => {
-                      if (value === "none") return;
-                      setQuickReciterId(value);
-                      if (taskReciterId(quickReciterTask) !== Number(value)) {
-                        setQuickReciterMemberId("");
-                      }
-                    }}
-                  >
-                    <SelectTrigger className="bg-background">
-                      <SelectValue placeholder="اختر القارئ" />
-                    </SelectTrigger>
-                    <SelectContent dir="rtl">
-                      <SelectItem value="none" disabled>
-                        اختر القارئ
-                      </SelectItem>
-                      {(reciters ?? []).filter((reciter) => !isPlaceholderApplicationReciter(reciter.name)).map((reciter) => (
-                        <SelectItem key={reciter.id} value={String(reciter.id)}>
-                          {reciter.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <label className="text-sm font-medium">العضو المسؤول</label>
-                    {quickReciterMembersLoading && (
-                      <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        جار فحص الربط
-                      </span>
-                    )}
-                  </div>
-                  <Select
-                    value={quickReciterMemberId || "none"}
-                    onValueChange={(value) => {
-                      if (value === "none") return;
-                      setQuickReciterMemberId(value);
-                    }}
-                  >
-                    <SelectTrigger className="bg-background">
-                      <SelectValue placeholder="اختر العضو" />
-                    </SelectTrigger>
-                    <SelectContent dir="rtl">
-                      <SelectItem value="none" disabled>
-                        اختر العضو
-                      </SelectItem>
-                      {quickReciterMemberOptions.map((member) => (
-                        <SelectItem key={member.id} value={String(member.id)}>
-                          {member.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  <p className={cn("text-xs", quickReciterHasLinkedMembers ? "text-green-700" : "text-amber-700")}>
-                    {quickReciterHasLinkedMembers
-                      ? "تم عرض العضو أو الأعضاء المرتبطين بهذا القارئ في هذه المنصة."
-                      : "لا يوجد ربط محدد لهذا القارئ، اختر العضو المسؤول يدويًا قبل التأكيد."}
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground font-semibold"
-                  disabled={
-                    quickReciterSaving ||
-                    quickReciterMembersLoading ||
-                    !quickReciterMemberId ||
-                    quickReciterMemberId === "none" ||
-                    !quickReciterId ||
-                    quickReciterId === "none"
-                  }
-                  onClick={handleQuickReciterChange}
-                >
-                  {quickReciterSaving ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Check className="ml-2 h-4 w-4" />}
-                  تأكيد تغيير القارئ
-                </Button>
-              </div>
-            )}
-          </TaskDialogErrorBoundary>
-        </DialogContent>
-      </Dialog>
-
-      {/* Task flow children dialog */}
-      {isAdmin && (
-        <Dialog open={!!flowDialogTask} onOpenChange={(open) => {
-          if (!open) {
-            setFlowDialogTask(null);
-            setTaskFlowPreview(null);
-            setTaskFlowPreviewError(null);
-            setTaskFlowCreateResult(null);
-          }
-        }}>
-          <DialogContent className="sm:max-w-[640px] flex flex-col max-h-[90vh] p-0" dir="rtl">
-            <DialogHeader className="px-6 pt-6 pb-3 border-b border-border">
-              <DialogTitle className="text-xl font-bold">المهام التابعة</DialogTitle>
-            </DialogHeader>
-            <div className="flex-1 overflow-y-auto px-6 py-4 space-y-4">
-              {flowDialogTask && (
-                <>
-                  <div className="rounded-lg border bg-muted/30 p-3 text-sm leading-6">
-                    <div className="mb-2 font-bold text-foreground">المهمة الأصلية</div>
-                    <div><span className="font-medium">العنوان: </span>{flowDialogTask.title}</div>
-                    <div><span className="font-medium">المنصة الأصلية: </span>{flowDialogTask.platform?.name ?? "غير محددة"}</div>
-                    <div><span className="font-medium">القارئ: </span>{(flowDialogTask as any).reciter?.name ?? "غير محدد"}</div>
-                    <div><span className="font-medium">تاريخ الاستحقاق: </span>{taskDateKey((flowDialogTask as any).dueDate) || "غير محدد"}</div>
-                    <div><span className="font-medium">تاريخ البداية: </span>{taskDateKey((flowDialogTask as any).startDate) || "غير محدد"}</div>
-                    <div><span className="font-medium">تاريخ النهاية: </span>{taskDateKey((flowDialogTask as any).endDate) || "غير محدد"}</div>
-                    <div><span className="font-medium">الصلاة: </span>{extractAppPrayerFromTitle(flowDialogTask.title) ?? "غير محددة في العنوان"}</div>
-                    <div>
-                      <span className="font-medium">المسؤولون الحاليون: </span>
-                      {((flowDialogTask.members && flowDialogTask.members.length > 0 ? flowDialogTask.members : [flowDialogTask.member]).filter(Boolean) as Array<{ id: number; name: string }>)
-                        .map((member) => member.name)
-                        .join("، ") || "غير محدد"}
-                    </div>
-                  </div>
-
-                  <TaskFlowPreviewPanel
-                    canPreview={canUseSavedTaskFlow(flowDialogTask)}
-                    loading={taskFlowPreviewLoading}
-                    error={taskFlowPreviewError}
-                    items={taskFlowPreview}
-                    parentTask={flowDialogTask}
-                    onPreview={() => handlePreviewSavedTaskFlow(flowDialogTask)}
-                    creating={taskFlowCreatePending}
-                    createResult={taskFlowCreateResult}
-                    onCreateChildren={() => handleCreateSavedTaskFlowChildren(flowDialogTask)}
-                    onAssigneesChange={handleTaskFlowAssigneesChange}
-                  />
-                </>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
-      )}
-
       {isAdmin && (
         <ReciterSubstitutionDialog
           task={substitutionTask ? { id: substitutionTask.id, title: substitutionTask.title, reciter: (substitutionTask.reciter as Reciter | null | undefined) ?? null } : null}
@@ -7031,9 +5331,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         <Dialog open={!!editingTask} onOpenChange={(open) => {
           if (!open) {
             setEditingTask(null);
-            setTaskFlowPreview(null);
-            setTaskFlowPreviewError(null);
-            setTaskFlowCreateResult(null);
           }
         }}>
           <DialogContent className="sm:max-w-[480px] flex flex-col max-h-[90vh] p-0" dir="rtl">
@@ -7804,8 +6101,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           filterPlatform={filterPlatform}
           filterMosque={filterMosque}
           onEdit={openEditDialog}
-          onFlowChildren={openFlowChildrenDialog}
-          getFlowEligibility={getTaskFlowActionEligibility}
           onDelete={handleDelete}
           onStatusChange={handleStatusChange}
           updateTaskPending={updateTask.isPending}
@@ -7991,8 +6286,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     onProof={() => openUrlDialog(task)}
                     onManageProofs={() => openProofsDialog(task)}
                     onDuplicate={() => handleDuplicate(task.id)}
-                    onFlowChildren={() => openFlowChildrenDialog(task)}
-                    flowEligibility={getTaskFlowActionEligibility(task)}
                     onStatusChange={(status) => handleStatusChange(task.id, status)}
                     onDelete={() => handleDelete(task.id)}
                   />
@@ -8127,7 +6420,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               <DropdownMenuItem onClick={() => handleDuplicate(task.id)} className="cursor-pointer flex items-center gap-2">
                                 <Copy className="h-4 w-4 text-violet-500" />نسخ المهمة
                               </DropdownMenuItem>
-                              <TaskFlowActionMenuItems eligibility={getTaskFlowActionEligibility(task)} onOpen={() => openFlowChildrenDialog(task)} />
                               <DropdownMenuSeparator />
                               <DropdownMenuItem onClick={() => handleStatusChange(task.id, "pending")} className="cursor-pointer flex items-center gap-2">
                                 <CircleDashed className="h-4 w-4 text-gray-500" />قيد الانتظار
