@@ -1,4 +1,4 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, tasksTable, taskMembersTable, taskSeriesTable } from "@workspace/db";
 
 const GENERATION_WINDOW_DAYS = 60;
@@ -202,12 +202,24 @@ export async function syncActiveSeries() {
     if (series.recurrenceType !== "weekly" && series.recurrenceType !== "monthly") continue;
     if (!isNearGenerationEnd(series.generateUntil)) continue;
 
-    const [templateTask] = await db
+    // القالب: آخر مهمة في السلسلة غير محذوفة وليست نيابة — كي لا تُولَّد الأسابيع القادمة للنائب
+    // أو بمسؤوله/صفحته. إن لم توجد (كل الحديث منها نيابة/محذوف) نأخذ آخر مهمة ليست نيابة ولو محذوفة،
+    // فهي ما زالت تحمل القارئ والمسؤول المجدولين أصلًا.
+    const [liveTemplate] = await db
       .select()
       .from(tasksTable)
-      .where(eq(tasksTable.seriesId, series.id))
+      .where(and(eq(tasksTable.seriesId, series.id), isNull(tasksTable.deletedAt), isNull(tasksTable.substitutionId)))
       .orderBy(desc(tasksTable.dueDate))
       .limit(1);
+    const [fallbackTemplate] = liveTemplate
+      ? [liveTemplate]
+      : await db
+        .select()
+        .from(tasksTable)
+        .where(and(eq(tasksTable.seriesId, series.id), isNull(tasksTable.substitutionId)))
+        .orderBy(desc(tasksTable.dueDate))
+        .limit(1);
+    const templateTask = liveTemplate ?? fallbackTemplate;
 
     if (!templateTask) continue;
 

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, taskCreationGroupsTable } from "@workspace/db";
+import { db, tasksTable, membersTable, platformsTable, taskMembersTable, recitersTable, notificationsTable, activityLogTable, usersTable, taskSeriesTable, taskProofsTable, platformPagesTable, pageMembersTable, taskDependenciesTable, taskCreationGroupsTable, reciterSubstitutionItemsTable } from "@workspace/db";
 import { eq, and, inArray, isNull, isNotNull, ilike, or, sql, desc } from "drizzle-orm";
 import {
   CreateTaskBody,
@@ -102,6 +102,18 @@ function nextDueDate(currentDue: Date | null, recurrence: string, intervalDays?:
     }
   }
   return next;
+}
+
+// لقطة المهمة قبل أول نيابة مسّتها (القارئ/المسؤول/الصفحة/العنوان المجدولة أصلًا).
+async function preSubstitutionSnapshot(taskId: number) {
+  const [item] = await db
+    .select({ before: reciterSubstitutionItemsTable.before })
+    .from(reciterSubstitutionItemsTable)
+    .where(and(eq(reciterSubstitutionItemsTable.taskId, taskId), eq(reciterSubstitutionItemsTable.action, "reassigned")))
+    .orderBy(reciterSubstitutionItemsTable.id)
+    .limit(1);
+  const before = item?.before as { reciterId: number | null; memberId: number; memberIds?: number[]; pageId: number | null; title: string } | null | undefined;
+  return before ?? null;
 }
 
 // Helper: spawn a new recurring task after one is completed
@@ -1816,21 +1828,32 @@ router.put("/tasks/:id", async (req, res) => {
       .from(taskMembersTable)
       .where(eq(taskMembersTable.taskId, id));
 
-    const memberIds = currentMemberIds.length > 0
+    let memberIds = currentMemberIds.length > 0
       ? currentMemberIds.map((r) => r.memberId)
       : [currentTask.memberId];
+
+    // مهمة مُنابة: التكرار القادم يعود للقارئ المجدول أصلًا (ومسؤوله وصفحته وعنوانه) لا للنائب.
+    const preSubstitution = currentTask.substitutionId ? await preSubstitutionSnapshot(id) : null;
+    if (preSubstitution) {
+      memberIds = preSubstitution.memberIds?.length ? preSubstitution.memberIds : [preSubstitution.memberId];
+    }
 
     await spawnRecurringTask(
       {
         ...currentTask,
-        reciterId: ("reciterId" in body ? body.reciterId : currentTask.reciterId) ?? null,
+        ...(preSubstitution
+          ? { memberId: preSubstitution.memberId, pageId: preSubstitution.pageId, title: preSubstitution.title }
+          : {}),
+        reciterId: preSubstitution
+          ? preSubstitution.reciterId
+          : ("reciterId" in body ? body.reciterId : currentTask.reciterId) ?? null,
         recurrence: effectiveRecurrence,
         recurrenceIntervalDays: effectiveInterval,
         recurrenceDurationDays: body.recurrenceDurationDays ?? currentTask.recurrenceDurationDays,
         recurrenceDays: (body as any).recurrenceDays ?? (currentTask as any).recurrenceDays ?? null,
         endDate: (body as any).endDate ? new Date((body as any).endDate) : (currentTask as any).endDate ?? null,
       },
-      body.memberIds ?? memberIds
+      preSubstitution ? memberIds : body.memberIds ?? memberIds
     );
   }
 
