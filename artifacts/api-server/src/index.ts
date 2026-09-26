@@ -3,6 +3,7 @@ import { logger } from "./lib/logger";
 import { startTelegramScheduler } from "./services/telegram-scheduler";
 import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
+import { ensureReciterSubstitutionSchema } from "./services/reciter-substitution-schema";
 import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
 import { runShortDurationMarkerBackfillOnce, runDueDateTimezoneBackfillOnce, runHashtagNameBackfillOnce } from "./services/youtube-monitor";
 
@@ -48,12 +49,14 @@ if (Number.isNaN(port) || port <= 0) {
 // الضمان تلقائيًا عند أول طلب على مسارات المهام.
 try {
   await Promise.race([
-    ensureTaskPrayerSchema(),
+    // أعمدة النيابة (tasks.substitution_id / original_reciter_id / platforms.covers_all_reciters)
+    // معرَّفة في Drizzle أيضًا، فتُضمن هنا مع عمود الصلاة وللسبب نفسه.
+    Promise.all([ensureTaskPrayerSchema(), ensureReciterSubstitutionSchema()]),
     new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("ensureTaskPrayerSchema timed out")), 20_000).unref();
     }),
   ]);
-  logger.info("tasks.prayer column ensured");
+  logger.info("tasks.prayer + reciter substitution columns ensured");
 } catch (err) {
   logger.error({ err }, "تعذّر ضمان عمود tasks.prayer عند الإقلاع — سيُعاد المحاولة عند أول طلب مهام");
 }

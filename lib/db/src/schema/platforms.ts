@@ -9,6 +9,8 @@ export const platformsTable = pgTable("platforms", {
   color: text("color").notNull(),
   isMain: boolean("is_main").notNull().default(false),
   baselinePostsCount: integer("baseline_posts_count").notNull().default(0),
+  // المنصة تشمل كل القرّاء (تطبيق تلاوات الحرمين): القارئ متاح عليها دائمًا في النيابة حتى بلا صفحة خاصة به.
+  coversAllReciters: boolean("covers_all_reciters").notNull().default(false),
 });
 
 export const insertPlatformSchema = createInsertSchema(platformsTable).omit({ id: true });

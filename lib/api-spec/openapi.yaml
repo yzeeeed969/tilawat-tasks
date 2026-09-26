@@ -897,6 +897,9 @@ components:
         baselinePostsCount:
           type: integer
           minimum: 0
+        coversAllReciters:
+          type: boolean
+          description: المنصة تشمل كل القرّاء (مثل تطبيق تلاوات الحرمين) — أساس تحديد توفّر القارئ في النيابة
       required:
         - id
         - name
@@ -919,6 +922,8 @@ components:
         baselinePostsCount:
           type: integer
           minimum: 0
+        coversAllReciters:
+          type: boolean
       required:
         - name
         - icon

@@ -18,12 +18,14 @@ import { ensureTaskDependenciesSchema } from "../services/task-dependencies-sche
 import { ensureTaskFlowLinksSchema } from "../services/task-flow-links-schema";
 import { ensureTaskCreationGroupsSchema } from "../services/task-creation-groups-schema";
 import { ensureTaskPrayerSchema } from "../services/task-prayer-schema";
+import { ensureReciterSubstitutionSchema } from "../services/reciter-substitution-schema";
 
 const router = Router();
 
 router.use(async (_req, _res, next) => {
   try {
     await ensureTaskPrayerSchema();
+    await ensureReciterSubstitutionSchema();
     await ensureTaskQuotaSchema();
     await ensureTaskDependenciesSchema();
     await ensureTaskFlowLinksSchema();

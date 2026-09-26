@@ -42,6 +42,8 @@ export interface Platform {
   color: string;
   isMain: boolean;
   baselinePostsCount: number;
+  /** المنصة تشمل كل القرّاء (مثل تطبيق تلاوات الحرمين) — أساس تحديد توفّر القارئ في النيابة */
+  coversAllReciters?: boolean;
 }
 
 export interface CreatePlatformBody {
@@ -50,6 +52,7 @@ export interface CreatePlatformBody {
   color: string;
   isMain?: boolean;
   baselinePostsCount?: number;
+  coversAllReciters?: boolean;
 }
 
 export interface PlatformPage {

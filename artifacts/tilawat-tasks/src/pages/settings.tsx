@@ -27,7 +27,7 @@ import {
   Loader2, Plus, Trash2, Settings as SettingsIcon,
   Shield, MicVocal, UserPlus, CheckCircle, XCircle, Clock,
   ChevronDown, ChevronUp, Pencil, Save, X, Layers, Star, Users,
-  Bell, Send, Link2, RefreshCw, BarChart3,
+  Bell, Send, Link2, RefreshCw, BarChart3, UsersRound,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { PlatformIcon } from "@/lib/platform-icon";
@@ -1092,7 +1092,7 @@ export function RecitersSection() {
 
 // ── Platform Item (with pages management) ────────────────────────────────────
 function PlatformItem({ p, reciters, selected, onToggleSelect }: {
-  p: { id: number; name: string; icon: string; color: string; isMain: boolean; baselinePostsCount?: number | null };
+  p: { id: number; name: string; icon: string; color: string; isMain: boolean; baselinePostsCount?: number | null; coversAllReciters?: boolean | null };
   reciters: { id: number; name: string; mosque: string }[] | undefined;
   selected?: boolean;
   onToggleSelect?: () => void;
@@ -1171,6 +1171,21 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
   const toggleMain = () => {
     updatePlatform.mutate({ id: p.id, data: { name: p.name, icon: p.icon, color: p.color, isMain: !p.isMain, baselinePostsCount: p.baselinePostsCount ?? 0 } }, {
       onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListPlatformsQueryKey() }); },
+    });
+  };
+
+  // «تشمل كل القرّاء»: أساس تحديد توفّر القارئ في النيابة (القارئ متاح عليها دائمًا حتى بلا صفحة خاصة).
+  const toggleCoversAllReciters = () => {
+    const next = !p.coversAllReciters;
+    const message = next
+      ? `تعيين "${p.name}" كمنصة تشمل كل القرّاء؟
+عند النيابة لن تُحذف مهمة هذه المنصة أبدًا بحجّة عدم وجود صفحة للنائب.`
+      : `إلغاء "تشمل كل القرّاء" عن "${p.name}"؟
+عند النيابة ستُحذف مهمة هذه المنصة إن لم توجد صفحة للنائب عليها.`;
+    if (!confirm(message)) return;
+    updatePlatform.mutate({ id: p.id, data: { name: p.name, icon: p.icon, color: p.color, baselinePostsCount: p.baselinePostsCount ?? 0, coversAllReciters: next } }, {
+      onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListPlatformsQueryKey() }); toast({ title: "تم التحديث" }); },
+      onError: () => toast({ title: "حدث خطأ", variant: "destructive" }),
     });
   };
 
@@ -1275,6 +1290,7 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
             <PlatformIcon name={p.name} className="h-5 w-5" />
             <span className="font-bold">{p.name}</span>
             {p.isMain && <span className="text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">رئيسية</span>}
+            {p.coversAllReciters && <span className="text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200 rounded-full px-2 py-0.5">تشمل كل القرّاء</span>}
             <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full px-2 py-0.5">
               تأسيسي: {(p.baselinePostsCount ?? 0).toLocaleString("ar-SA")}
             </span>
@@ -1283,6 +1299,10 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${p.isMain ? "text-amber-500 hover:bg-amber-50" : "text-muted-foreground hover:text-amber-500 hover:bg-amber-50"}`}
               title={p.isMain ? "إلغاء كمنصة رئيسية" : "تعيين كمنصة رئيسية"} onClick={toggleMain}>
               <Star className={`h-3.5 w-3.5 ${p.isMain ? "fill-amber-400" : ""}`} />
+            </Button>
+            <Button variant="ghost" size="icon" className={`h-8 w-8 ${p.coversAllReciters ? "text-sky-600 hover:bg-sky-50" : "text-muted-foreground hover:text-sky-600 hover:bg-sky-50"}`}
+              title={p.coversAllReciters ? "إلغاء «تشمل كل القرّاء»" : "تعيين كمنصة تشمل كل القرّاء"} onClick={toggleCoversAllReciters}>
+              <UsersRound className="h-3.5 w-3.5" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-violet-600 hover:bg-violet-50"
               title="إدارة الصفحات" onClick={() => setPagesOpen((o) => !o)}>

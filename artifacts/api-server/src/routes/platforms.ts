@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { db, platformsTable, platformPagesTable, recitersTable, pageMembersTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
+import { ensureReciterSubstitutionSchema } from "../services/reciter-substitution-schema";
 import { CreatePlatformBody, DeletePlatformParams, UpdatePlatformParams, UpdatePlatformBody, CreatePlatformPageBody, CreatePlatformPageParams } from "@workspace/api-zod";
 
 const router = Router();
@@ -12,6 +13,7 @@ async function ensurePlatformsSchema() {
   if (!platformsSchemaEnsurePromise) {
     platformsSchemaEnsurePromise = db
       .execute(sql`ALTER TABLE platforms ADD COLUMN IF NOT EXISTS baseline_posts_count integer NOT NULL DEFAULT 0`)
+      .then(() => ensureReciterSubstitutionSchema())
       .then(() => {
         platformsSchemaEnsured = true;
       })
@@ -44,6 +46,7 @@ router.post("/platforms", async (req, res) => {
     const [platform] = await db.insert(platformsTable).values({
       ...body,
       baselinePostsCount: normalizeBaselinePostsCount((body as { baselinePostsCount?: unknown }).baselinePostsCount),
+      coversAllReciters: (body as { coversAllReciters?: boolean }).coversAllReciters === true,
     }).returning();
     res.status(201).json(platform);
   } catch (error) {
@@ -62,12 +65,16 @@ router.put("/platforms/:id", async (req, res) => {
       color: string;
       isMain?: boolean;
       baselinePostsCount?: number;
+      coversAllReciters?: boolean;
     } = {
       name: body.name,
       icon: body.icon,
       color: body.color,
       isMain: (body as { isMain?: boolean }).isMain,
     };
+    if (typeof (body as { coversAllReciters?: unknown }).coversAllReciters === "boolean") {
+      updateData.coversAllReciters = (body as { coversAllReciters: boolean }).coversAllReciters;
+    }
     if (Object.prototype.hasOwnProperty.call(body, "baselinePostsCount")) {
       updateData.baselinePostsCount = normalizeBaselinePostsCount((body as { baselinePostsCount?: unknown }).baselinePostsCount);
     }

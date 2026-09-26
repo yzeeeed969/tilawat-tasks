@@ -45,6 +45,10 @@ export const tasksTable = pgTable("tasks", {
   // رمز الصلاة الداخلي (fajr / maghrib / isha / jumuah) — للتخزين والمطابقة فقط، لا يظهر للمستخدم.
   // NULL للمهام القديمة وأي مهمة لم تُحدَّد لها صلاة.
   prayer: text("prayer"),
+  // النيابة: عملية النيابة التي غيّرت قارئ هذه المهمة، والقارئ المجدول أصلًا قبلها.
+  // NULL لكل مهمة لم تمسّها نيابة. لا مفتاح أجنبي هنا تفاديًا لاستيراد دائري مع جداول النيابة.
+  substitutionId: integer("substitution_id"),
+  originalReciterId: integer("original_reciter_id"),
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [

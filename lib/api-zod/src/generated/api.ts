@@ -535,6 +535,7 @@ export const ListPlatformsResponseItem = zod.object({
   color: zod.string(),
   isMain: zod.boolean(),
   baselinePostsCount: zod.number(),
+  coversAllReciters: zod.boolean().optional(),
 });
 export const ListPlatformsResponse = zod.array(ListPlatformsResponseItem);
 
@@ -547,6 +548,7 @@ export const CreatePlatformBody = zod.object({
   color: zod.string(),
   isMain: zod.boolean().optional(),
   baselinePostsCount: zod.number().optional(),
+  coversAllReciters: zod.boolean().optional(),
 });
 
 /**
@@ -562,6 +564,7 @@ export const UpdatePlatformBody = zod.object({
   color: zod.string(),
   isMain: zod.boolean().optional(),
   baselinePostsCount: zod.number().optional(),
+  coversAllReciters: zod.boolean().optional(),
 });
 
 export const UpdatePlatformResponse = zod.object({
@@ -571,6 +574,7 @@ export const UpdatePlatformResponse = zod.object({
   color: zod.string(),
   isMain: zod.boolean(),
   baselinePostsCount: zod.number(),
+  coversAllReciters: zod.boolean().optional(),
 });
 
 /**
