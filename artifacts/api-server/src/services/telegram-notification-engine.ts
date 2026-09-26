@@ -38,6 +38,7 @@ type NotificationType =
   | "telegram_daily_public_summary_manual"
   | "telegram_weekly_member_appreciation"
   | "telegram_task_assigned"
+  | "telegram_reciter_substitution"
   | "telegram_task_dependency_ready"
   | "telegram_weekly_quota_reminder"
   | "telegram_personal_reminder"
@@ -1325,6 +1326,46 @@ export async function notifyTelegramTaskAssigned(task: {
       recipientUserId: recipient.userId,
       recipientMemberId: recipient.memberId,
       taskId: task.id,
+    });
+    if (result.sent) sent += 1;
+  }
+  return { sent };
+}
+
+// النيابة: رسالة واحدة مجمّعة لكل عضو عن كل ما تغيّر في مهامه ضمن عملية نيابة واحدة
+// (إسناد / تغيّر القارئ / إلغاء / نقل لعضو آخر)، بدل رسالة لكل مهمة.
+export async function notifyTelegramReciterSubstitution(input: {
+  memberId: number;
+  heading: string;
+  sections: Array<{ title: string; lines: string[] }>;
+  dedupeKey: string;
+  taskId?: number | null;
+}) {
+  const settings = await getTelegramSettings();
+  if (!settings.enabled) return { sent: 0 };
+
+  const recipients = await getMemberRecipients([input.memberId]);
+  if (recipients.length === 0) return { sent: 0 };
+
+  const text = [
+    `<b>${escapeHtml(input.heading)}</b>`,
+    ...input.sections.flatMap((section) => [
+      "",
+      escapeHtml(section.title),
+      ...section.lines.map((line) => `• ${escapeHtml(line)}`),
+    ]),
+  ].join("\n");
+
+  let sent = 0;
+  for (const recipient of recipients) {
+    const result = await sendLoggedTelegram({
+      type: "telegram_reciter_substitution",
+      dedupeKey: `${input.dedupeKey}:user:${recipient.userId}`,
+      chatId: recipient.chatId,
+      text,
+      recipientUserId: recipient.userId,
+      recipientMemberId: recipient.memberId,
+      taskId: input.taskId ?? null,
     });
     if (result.sent) sent += 1;
   }

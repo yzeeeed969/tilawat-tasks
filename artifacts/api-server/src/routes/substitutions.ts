@@ -1,6 +1,8 @@
 import { Router } from "express";
-import { db, activityLogTable } from "@workspace/db";
+import { inArray } from "drizzle-orm";
+import { db, activityLogTable, membersTable } from "@workspace/db";
 import { ensureReciterSubstitutionSchema } from "../services/reciter-substitution-schema";
+import { dispatchSubstitutionNotifications } from "../services/reciter-substitution-notifications";
 import {
   applySubstitution,
   buildSubstitutionPlan,
@@ -9,7 +11,6 @@ import {
   publicPlan,
   SubstitutionError,
   undoSubstitution,
-  type SubstitutionNotification,
   type SubstitutionScopeKind,
 } from "../services/reciter-substitution";
 
@@ -66,11 +67,42 @@ async function logActivity(req: any, action: string, entityId: number | null, en
   });
 }
 
-// تُستبدل في مرحلة الإشعارات بإرسال فعلي (داخلي + تيليجرام).
-async function dispatchSubstitutionNotifications(
-  _notifications: SubstitutionNotification[],
-  _context: { fromReciterName: string | null; toReciterName: string | null; undo: boolean },
-) {}
+// سجل لكل مهمة مسّتها النيابة بنفس شكل سجلات تعديل المهام، كي تظهر في «التقارير ← تعديلات المهام».
+const TASK_CHANGE_ACTIONS = {
+  reassigned: "task_reciter_substituted",
+  deleted: "task_substitution_deleted",
+  created: "task_substitution_created",
+} as const;
+
+async function logTaskChanges(req: any, result: Awaited<ReturnType<typeof applySubstitution>>) {
+  const user = req.currentUser;
+  if (!user || result.taskChanges.length === 0) return;
+  const memberIds = [...new Set(result.taskChanges.flatMap((c) => [...c.fromMemberIds, ...(c.toMemberId ? [c.toMemberId] : [])]))];
+  const members = memberIds.length > 0
+    ? await db.select({ id: membersTable.id, name: membersTable.name }).from(membersTable).where(inArray(membersTable.id, memberIds))
+    : [];
+  const nameById = new Map(members.map((m) => [m.id, m.name]));
+  await db.insert(activityLogTable).values(result.taskChanges.map((change) => ({
+    userId: user.id,
+    userName: user.displayName ?? user.username,
+    action: TASK_CHANGE_ACTIONS[change.action],
+    entityType: "task",
+    entityId: change.taskId,
+    entityName: change.newTitle,
+    meta: {
+      substitutionId: result.substitutionId,
+      fromReciterName: result.fromReciterName,
+      toReciterName: result.toReciterName,
+      fromMemberIds: change.fromMemberIds,
+      fromMemberNames: change.fromMemberIds.map((id) => nameById.get(id) ?? ""),
+      toMemberId: change.toMemberId,
+      toMemberName: change.toMemberId ? nameById.get(change.toMemberId) ?? null : null,
+      platformName: change.platformName,
+      previousTitle: change.previousTitle,
+      newTitle: change.newTitle,
+    },
+  })));
+}
 
 // فروض القارئ الأصلي لنفس الصلاة في أسبوع المهمة (الأحد → السبت) — لاختيار «أيام محددة».
 router.get("/tasks/:id/substitution/slots", async (req, res) => {
@@ -123,13 +155,15 @@ router.post("/tasks/:id/substitution/apply", async (req, res) => {
       created: result.created,
       protected: result.protected,
     }).catch(() => {});
+    await logTaskChanges(req, result).catch((err) => (req as any).log?.error?.({ err }, "reciter_substitution_task_log_failed"));
     await dispatchSubstitutionNotifications(result.notifications, {
+      substitutionId: result.substitutionId,
       fromReciterName: result.fromReciterName,
       toReciterName: result.toReciterName,
       undo: false,
     }).catch((err) => (req as any).log?.error?.({ err }, "reciter_substitution_notifications_failed"));
 
-    const { notifications: _n, ...summary } = result;
+    const { notifications: _n, taskChanges: _c, ...summary } = result;
     res.json(summary);
   } catch (error) {
     sendError(res, error);
@@ -160,6 +194,7 @@ router.post("/substitutions/:id/undo", async (req, res) => {
       skipped: result.skipped.length,
     }).catch(() => {});
     await dispatchSubstitutionNotifications(result.notifications, {
+      substitutionId,
       fromReciterName: result.fromReciterName,
       toReciterName: result.toReciterName,
       undo: true,

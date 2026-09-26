@@ -226,6 +226,9 @@ async function fetchActivityLogs(): Promise<ActivityLogEntry[]> {
 
 function activityActionLabel(action: string) {
   if (action === "task_quick_reciter_changed") return "تغيير قارئ/مسؤول";
+  if (action === "task_reciter_substituted") return "نيابة (تغيير القارئ)";
+  if (action === "task_substitution_deleted") return "حذف بسبب النيابة";
+  if (action === "task_substitution_created") return "إنشاء بسبب النيابة";
   if (action === "task_updated") return "تعديل مهمة";
   if (action === "task_proof_created") return "إضافة شاهد";
   if (action === "task_proof_updated") return "تعديل شاهد";
@@ -682,7 +685,15 @@ export default function Reports() {
   }, [allTasks]);
 
   const taskChangeRows = useMemo(() => {
-    const taskActions = new Set(["task_quick_reciter_changed", "task_updated", "task_proof_created", "task_proof_updated"]);
+    const taskActions = new Set([
+      "task_quick_reciter_changed",
+      "task_reciter_substituted",
+      "task_substitution_deleted",
+      "task_substitution_created",
+      "task_updated",
+      "task_proof_created",
+      "task_proof_updated",
+    ]);
     return (activityLogs ?? [])
       .filter((log) => log.entityType === "task" && taskActions.has(log.action) && log.entityId)
       .filter((log) => period === "all" ? true : periodInterval ? isWithinInterval(new Date(log.createdAt), periodInterval) : true)

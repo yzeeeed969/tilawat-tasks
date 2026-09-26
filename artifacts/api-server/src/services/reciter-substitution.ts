@@ -644,6 +644,16 @@ export type SubstitutionNotification = {
   prayer: string | null;
 };
 
+export type SubstitutionTaskChange = {
+  taskId: number;
+  action: "reassigned" | "deleted" | "created";
+  platformName: string;
+  previousTitle: string | null;
+  newTitle: string;
+  fromMemberIds: number[];
+  toMemberId: number | null;
+};
+
 export type ApplyResult = {
   substitutionId: number;
   reassigned: number;
@@ -651,6 +661,7 @@ export type ApplyResult = {
   created: number;
   protected: number;
   notifications: SubstitutionNotification[];
+  taskChanges: SubstitutionTaskChange[];
   fromReciterName: string;
   toReciterName: string;
 };
@@ -783,6 +794,7 @@ export async function applySubstitution(input: {
   const fromReciterId = base.reciterId;
   const toReciterId = plan.toReciter.id;
   const notifications: SubstitutionNotification[] = [];
+  const taskChanges: SubstitutionTaskChange[] = [];
   let reassigned = 0;
   let deleted = 0;
   let created = 0;
@@ -823,6 +835,7 @@ export async function applySubstitution(input: {
               after: { ...before, deletedAt: new Date().toISOString(), substitutionId: substitution.id, originalReciterId },
             });
             deleted += 1;
+            taskChanges.push({ taskId: task.id, action: "deleted", platformName: op.row.platformName, previousTitle: task.title, newTitle: task.title, fromMemberIds: beforeMemberIds, toMemberId: null });
             for (const memberId of beforeMemberIds) {
               notifications.push({ memberId, kind: "cancelled", taskId: task.id, title: task.title, platformName: op.row.platformName, dateKey: op.row.slot.date, prayer: op.row.slot.prayer });
             }
@@ -860,6 +873,7 @@ export async function applySubstitution(input: {
             },
           });
           reassigned += 1;
+          taskChanges.push({ taskId: task.id, action: "reassigned", platformName: op.row.platformName, previousTitle: task.title, newTitle, fromMemberIds: beforeMemberIds, toMemberId: op.memberId });
           const common = { taskId: task.id, title: newTitle, platformName: op.row.platformName, dateKey: op.row.slot.date, prayer: op.row.slot.prayer };
           if (beforeMemberIds.includes(op.memberId)) {
             notifications.push({ memberId: op.memberId, kind: "reciter_changed", ...common });
@@ -905,6 +919,7 @@ export async function applySubstitution(input: {
           after: { reciterId: toReciterId, memberId: op.memberId, memberIds: [op.memberId], pageId: op.pageId, title: newTask.title, deletedAt: null, substitutionId: substitution.id, originalReciterId: fromReciterId },
         });
         created += 1;
+        taskChanges.push({ taskId: newTask.id, action: "created", platformName: op.extra.platformName, previousTitle: null, newTitle: newTask.title, fromMemberIds: [], toMemberId: op.memberId });
         notifications.push({ memberId: op.memberId, kind: "assigned", taskId: newTask.id, title: newTask.title, platformName: op.extra.platformName, dateKey: op.extra.slot.date, prayer: op.extra.slot.prayer });
       }
 
@@ -925,6 +940,7 @@ export async function applySubstitution(input: {
     created,
     protected: protectedCount,
     notifications,
+    taskChanges,
     fromReciterName: plan.fromReciter.name,
     toReciterName: plan.toReciter.name,
   };
