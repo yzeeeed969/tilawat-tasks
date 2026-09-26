@@ -18,6 +18,7 @@ import {
   usePermanentDeleteTask,
 } from "@workspace/api-client-react";
 import { CommentsDialog } from "@/components/comments-dialog";
+import { ReciterSubstitutionDialog, TaskSubstitutionHistory } from "@/components/reciter-substitution-dialog";
 
 import { useQueryClient, useQuery } from "@tanstack/react-query";
 import { useIsAdmin, useRole } from "@/lib/roles";
@@ -1564,7 +1565,6 @@ function AdminTaskMobileCard({
   showHijri,
   onToggleSelect,
   onEdit,
-  onQuickReciter,
   onComments,
   onProof,
   onManageProofs,
@@ -1580,7 +1580,6 @@ function AdminTaskMobileCard({
   showHijri: boolean;
   onToggleSelect: () => void;
   onEdit: () => void;
-  onQuickReciter: () => void;
   onComments: () => void;
   onProof: () => void;
   onManageProofs: () => void;
@@ -1629,7 +1628,12 @@ function AdminTaskMobileCard({
         </div>
         <div className="rounded-md bg-muted/40 p-2">
           <span className="block text-muted-foreground">القارئ</span>
-          <span className="mt-1 block font-medium">{reciter?.name ?? "—"}</span>
+          <span className="mt-1 block font-medium">
+            {reciter?.name ?? "—"}
+            {(task as any).substitutionId && (
+              <span className="mr-1 text-[10px] font-semibold rounded-full border border-sky-200 bg-sky-50 text-sky-700 px-1.5 py-0.5">نيابة</span>
+            )}
+          </span>
         </div>
         <div className="rounded-md bg-muted/40 p-2">
           <span className="block text-muted-foreground">المسؤولون</span>
@@ -1656,17 +1660,9 @@ function AdminTaskMobileCard({
       </div>
 
       <div className="mt-3 flex flex-wrap items-center gap-2 border-t border-border pt-3">
-        <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={onEdit}>
-          <Pencil className="h-3.5 w-3.5" />
-          تعديل
-        </Button>
         <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={onProof}>
           <Link2 className="h-3.5 w-3.5" />
           الشاهد
-        </Button>
-        <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={onQuickReciter}>
-          <MicVocal className="h-3.5 w-3.5" />
-          القارئ
         </Button>
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
@@ -1675,6 +1671,9 @@ function AdminTaskMobileCard({
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuItem onClick={onEdit} className="cursor-pointer flex items-center gap-2 font-medium">
+              <Pencil className="h-4 w-4 text-sidebar-primary" />تعديل
+            </DropdownMenuItem>
             <DropdownMenuItem onClick={onComments} className="cursor-pointer flex items-center gap-2">
               <MessageSquare className="h-4 w-4 text-sidebar-primary/70" />التعليقات
             </DropdownMenuItem>
@@ -2777,6 +2776,7 @@ function EditTaskFormFields({
   excludeTaskId,
   currentTask,
   showDependency = false,
+  onRequestSubstitution,
 }: {
   platforms: { id: number; name: string }[] | undefined;
   members: { id: number; name: string; role: string }[] | undefined;
@@ -2785,9 +2785,12 @@ function EditTaskFormFields({
   excludeTaskId?: number;
   currentTask?: TaskWithDetails | null;
   showDependency?: boolean;
+  onRequestSubstitution?: () => void;
 }) {
   const { watch, setValue } = useFormContext<TaskFormValues>();
   const [dependencyOpen, setDependencyOpen] = useState(false);
+  // تغيير قارئ مهمة لها قارئ يتم فقط عبر «النيابة» — الحقل هنا للعرض فقط.
+  const lockedReciter = taskReciterId(currentTask) !== null ? ((currentTask as any)?.reciter as Reciter | null | undefined) : null;
 
   const platformId = toPositiveNumber(watch("platformId"));
   const reciterId = toPositiveNumber(watch("reciterId"));
@@ -2897,6 +2900,21 @@ function EditTaskFormFields({
         )}
       />
 
+      {lockedReciter ? (
+        <div className="space-y-2">
+          <Label>القارئ</Label>
+          <div className="flex items-center justify-between gap-2 rounded-md border bg-muted/30 px-3 py-2">
+            <span className="text-sm font-medium">{lockedReciter.name ?? `القارئ #${taskReciterId(currentTask)}`}</span>
+            {onRequestSubstitution && (
+              <Button type="button" size="sm" variant="outline" className="h-8 gap-1" onClick={onRequestSubstitution}>
+                <MicVocal className="h-3.5 w-3.5" />
+                نيابة (تغيير القارئ)…
+              </Button>
+            )}
+          </div>
+          <p className="text-[11px] text-muted-foreground">تغيير القارئ يتم عبر «النيابة» لتنعكس على كل منصات الفرض والأعضاء بشكل متّسق.</p>
+        </div>
+      ) : (
       <FormField
         name="reciterId"
         render={({ field }) => (
@@ -2931,11 +2949,12 @@ function EditTaskFormFields({
           </FormItem>
         )}
       />
+      )}
 
       {!isApplicationPlatform && platformId !== null && pageOptions.length > 0 && (
         <PlatformPageSelectField
           pageOptions={pageOptions}
-          onLinkedReciterSelect={(linkedReciterId) =>
+          onLinkedReciterSelect={lockedReciter ? undefined : (linkedReciterId) =>
             setValue("reciterId", linkedReciterId, { shouldDirty: true, shouldValidate: true })
           }
         />
@@ -4216,6 +4235,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   const [urlDialog, setUrlDialog] = useState<UrlDialogState | null>(null);
   const [proofsDialogTaskId, setProofsDialogTaskId] = useState<number | null>(null);
   const [proofSaving, setProofSaving] = useState(false);
+  const [substitutionTask, setSubstitutionTask] = useState<TaskWithDetails | null>(null);
   const [quickReciterTask, setQuickReciterTask] = useState<TaskWithDetails | null>(null);
   const [quickReciterId, setQuickReciterId] = useState("");
   const [quickReciterMemberId, setQuickReciterMemberId] = useState("");
@@ -5929,6 +5949,14 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     urlForm.reset({ url: proof.url });
   };
 
+  // النيابة: المسار الوحيد لتغيير قارئ مهمة. يُغلق نافذة التعديل أولًا كي لا يختلط تغيير القارئ بتعديلات أخرى.
+  const openSubstitutionDialog = (task: TaskWithDetails | null) => {
+    if (!task) return;
+    logTaskDialogOpen("reciter-substitution", taskDialogDiagnostic(task));
+    setEditingTask(null);
+    setSubstitutionTask(task);
+  };
+
   const openQuickReciterDialog = (task: TaskWithDetails) => {
     logTaskDialogOpen("quick-reciter", taskDialogDiagnostic(task));
     const taskMembers = taskAssignedMembers(task);
@@ -6987,6 +7015,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         </Dialog>
       )}
 
+      {isAdmin && (
+        <ReciterSubstitutionDialog
+          task={substitutionTask ? { id: substitutionTask.id, title: substitutionTask.title, reciter: (substitutionTask.reciter as Reciter | null | undefined) ?? null } : null}
+          reciters={reciters}
+          onClose={() => setSubstitutionTask(null)}
+          onApplied={async () => {
+            await invalidateTasks();
+          }}
+        />
+      )}
+
       {/* Edit dialog — مدير فقط */}
       {isAdmin && (
         <Dialog open={!!editingTask} onOpenChange={(open) => {
@@ -7041,6 +7080,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
                         excludeTaskId={editingTask?.id}
                         showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
+                        onRequestSubstitution={() => openSubstitutionDialog(editingTask)}
                       />
                     ) : (
                       <TaskFormFields
@@ -7056,6 +7096,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     )}
                   </form>
                 </Form>
+                {editingTask?.id && (
+                  <div className="mt-4">
+                    <TaskSubstitutionHistory
+                      taskId={editingTask.id}
+                      onChanged={async () => {
+                        await invalidateTasks();
+                        setEditingTask(null);
+                      }}
+                    />
+                  </div>
+                )}
               </div>
               <div className="px-6 pb-6 pt-3 border-t border-border shrink-0">
                 <Button
@@ -7936,7 +7987,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     showHijri={showHijri}
                     onToggleSelect={() => toggleTaskSelect(task.id)}
                     onEdit={() => openEditDialog(task)}
-                    onQuickReciter={() => openQuickReciterDialog(task)}
                     onComments={() => openComments(task)}
                     onProof={() => openUrlDialog(task)}
                     onManageProofs={() => openProofsDialog(task)}
@@ -8028,15 +8078,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                           <div className="flex flex-col gap-0.5">
                             <div className="flex items-center gap-1.5">
                               <span className="text-sm font-medium">{reciter.name}</span>
-                              {isAdmin && activeTab === "active" && (
-                                <button
-                                  type="button"
-                                  onClick={() => openQuickReciterDialog(task)}
-                                  className="h-6 w-6 rounded-md inline-flex items-center justify-center text-muted-foreground hover:text-sidebar-primary hover:bg-sidebar-primary/10 transition-colors"
-                                  title="تغيير القارئ لهذه المهمة فقط"
-                                >
-                                  <Pencil className="h-3.5 w-3.5" />
-                                </button>
+                              {(task as any).substitutionId && (
+                                <span className="text-[10px] font-semibold rounded-full border border-sky-200 bg-sky-50 text-sky-700 px-1.5 py-0.5" title="هذه المهمة نيابة">نيابة</span>
                               )}
                             </div>
                             <span className="text-[10px] text-muted-foreground">
@@ -8073,10 +8116,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             </DropdownMenuTrigger>
                             <DropdownMenuContent align="end" className="w-48">
                               <DropdownMenuItem onClick={() => openEditDialog(task)} className="cursor-pointer flex items-center gap-2 font-medium">
-                                <Pencil className="h-4 w-4 text-sidebar-primary" />تعديل المهمة
-                              </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => openQuickReciterDialog(task)} className="cursor-pointer flex items-center gap-2">
-                                <MicVocal className="h-4 w-4 text-sidebar-primary/70" />تغيير القارئ
+                                <Pencil className="h-4 w-4 text-sidebar-primary" />تعديل
                               </DropdownMenuItem>
                               <DropdownMenuItem onClick={() => openComments(task)} className="cursor-pointer flex items-center gap-2">
                                 <MessageSquare className="h-4 w-4 text-sidebar-primary/70" />التعليقات

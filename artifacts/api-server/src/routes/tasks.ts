@@ -356,6 +356,9 @@ const TASK_SELECT = {
   assigneeNote: tasksTable.assigneeNote,
   pageId: tasksTable.pageId,
   prayer: tasksTable.prayer,
+  // النيابة: لإظهار شارة «نيابة» في الواجهة.
+  substitutionId: tasksTable.substitutionId,
+  originalReciterId: tasksTable.originalReciterId,
   deletedAt: tasksTable.deletedAt,
   createdAt: tasksTable.createdAt,
   platform: {
