@@ -127,6 +127,14 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
   const generateUntil = periods.length > 0 ? periods[periods.length - 1].dueDate : input.startDate;
 
   await db.transaction(async (tx: any) => {
+    // قفل صف السلسلة وإعادة فحص حالتها: إن أُوقفت (حذف «هذه وما بعدها/كاملة») لحظة التوليد لا يُكتب شيء.
+    const [seriesRow] = await tx
+      .select({ status: taskSeriesTable.status })
+      .from(taskSeriesTable)
+      .where(eq(taskSeriesTable.id, input.seriesId))
+      .for("update");
+    if (!seriesRow || seriesRow.status !== "active") return;
+
     for (const occurrence of periods) {
       const existing = await tx
         .select({ id: tasksTable.id })
@@ -202,24 +210,14 @@ export async function syncActiveSeries() {
     if (series.recurrenceType !== "weekly" && series.recurrenceType !== "monthly") continue;
     if (!isNearGenerationEnd(series.generateUntil)) continue;
 
-    // القالب: آخر مهمة في السلسلة غير محذوفة وليست نيابة — كي لا تُولَّد الأسابيع القادمة للنائب
-    // أو بمسؤوله/صفحته. إن لم توجد (كل الحديث منها نيابة/محذوف) نأخذ آخر مهمة ليست نيابة ولو محذوفة،
-    // فهي ما زالت تحمل القارئ والمسؤول المجدولين أصلًا.
-    const [liveTemplate] = await db
+    // القالب: آخر مهمة في السلسلة غير محذوفة وليست نيابة فقط. لا قالب من مهام محذوفة أبدًا —
+    // وإلا لعادت سلسلة حُذفت مهامها للتولّد. إن لم يوجد قالب حيّ تُتخطّى السلسلة ولا يُولَّد شيء.
+    const [templateTask] = await db
       .select()
       .from(tasksTable)
       .where(and(eq(tasksTable.seriesId, series.id), isNull(tasksTable.deletedAt), isNull(tasksTable.substitutionId)))
       .orderBy(desc(tasksTable.dueDate))
       .limit(1);
-    const [fallbackTemplate] = liveTemplate
-      ? [liveTemplate]
-      : await db
-        .select()
-        .from(tasksTable)
-        .where(and(eq(tasksTable.seriesId, series.id), isNull(tasksTable.substitutionId)))
-        .orderBy(desc(tasksTable.dueDate))
-        .limit(1);
-    const templateTask = liveTemplate ?? fallbackTemplate;
 
     if (!templateTask) continue;
 
