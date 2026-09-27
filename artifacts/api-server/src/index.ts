@@ -5,6 +5,7 @@ import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 import { ensureReciterSubstitutionSchema } from "./services/reciter-substitution-schema";
 import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
+import { runStoppedSeriesBackfillOnce } from "./services/series-stop-backfill";
 import { runShortDurationMarkerBackfillOnce, runDueDateTimezoneBackfillOnce, runHashtagNameBackfillOnce } from "./services/youtube-monitor";
 
 // حماية على مستوى العملية: تمنع توقّف الخادم بسبب أخطاء عابرة غير متوقّعة.
@@ -124,6 +125,23 @@ try {
   ]);
 } catch (err) {
   logger.error({ err }, "تعذّرت إعادة فحص المقاطع المتأثرة بخلل اسم الوسم عند الإقلاع — سيُعاد المحاولة في الإقلاع التالي");
+}
+
+// إصلاح لمرة واحدة: إيقاف السلاسل المتكررة التي حُذفت مهامها قبل إصلاح الإيقاف (كانت تعود للتولّد).
+// يُستدعى أيضًا قبل أي توليد في syncActiveSeries، فلا يسبقه توليد حتى لو تعذّر هنا.
+try {
+  await Promise.race([
+    runStoppedSeriesBackfillOnce().then((result) => {
+      if (result.ran) {
+        logger.info({ stopped: result.stoppedSeries.length, series: result.stoppedSeries }, "أُوقفت السلاسل المتكررة المحذوفة سابقًا");
+      }
+    }),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("runStoppedSeriesBackfillOnce timed out")), 20_000).unref();
+    }),
+  ]);
+} catch (err) {
+  logger.error({ err }, "تعذّر إيقاف السلاسل المحذوفة سابقًا عند الإقلاع — سيُعاد قبل أول توليد");
 }
 
 app.listen(port, (err) => {

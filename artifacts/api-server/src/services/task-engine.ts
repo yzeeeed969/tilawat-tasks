@@ -1,5 +1,6 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, tasksTable, taskMembersTable, taskSeriesTable } from "@workspace/db";
+import { runStoppedSeriesBackfillOnce } from "./series-stop-backfill";
 
 const GENERATION_WINDOW_DAYS = 60;
 const SYNC_THRESHOLD_DAYS = 14;
@@ -196,6 +197,9 @@ function isNearGenerationEnd(generateUntil: Date | null) {
 }
 
 export async function syncActiveSeries() {
+  // التنظيف لمرة واحدة يسبق أي توليد، كي لا تُحيا سلسلة حُذفت قبل الإصلاح. إن تعذّر نؤجّل التوليد كليًا.
+  await runStoppedSeriesBackfillOnce();
+
   const activeSeries = await db
     .select()
     .from(taskSeriesTable)
