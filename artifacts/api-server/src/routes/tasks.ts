@@ -2143,23 +2143,70 @@ router.post("/tasks/:id/delete-scope", async (req, res) => {
 
   const deletedAt = new Date();
 
-  await db.update(tasksTable)
-    .set({ deletedAt })
-    .where(inArray(tasksTable.id, targetIds));
+  // «هذه وما بعدها» و«السلسلة كاملة» و«المجموعة» توقف السلاسل المعنية نهائيًا (stopped) في نفس المعاملة،
+  // كي لا يعيد المولّد إحياءها أبدًا. «هذه المهمة فقط» لا يوقف شيئًا — السلسلة تستمر.
+  let seriesToStop: number[] = [];
+  if ((scope === "from_this_forward" || scope === "entire_series") && task.seriesId) {
+    seriesToStop = [task.seriesId];
+  } else if (scope === "entire_group" && task.creationGroupId) {
+    const groupSeries = await db
+      .selectDistinct({ seriesId: tasksTable.seriesId })
+      .from(tasksTable)
+      .where(and(eq(tasksTable.creationGroupId, task.creationGroupId), isNotNull(tasksTable.seriesId)));
+    seriesToStop = groupSeries.map((row) => row.seriesId).filter((value): value is number => typeof value === "number");
+  }
+  // نهاية السلسلة الموقوفة من نقطة = اليوم السابق للمهمة المختارة (للتوثيق فقط).
+  const stoppedEndDate = scope === "from_this_forward" ? new Date(taskDateValue(task).getTime() - 24 * 60 * 60 * 1000) : null;
+
+  let deletedTaskIds: number[] = targetIds;
+  await db.transaction(async (tx: any) => {
+    if (seriesToStop.length > 0) {
+      // قفل صفوف السلاسل أولًا: المولّد يقفلها كذلك، فلا يتداخل توليد جديد مع الإيقاف.
+      await tx.select({ id: taskSeriesTable.id }).from(taskSeriesTable).where(inArray(taskSeriesTable.id, seriesToStop)).for("update");
+      await tx.update(taskSeriesTable)
+        .set({
+          status: "stopped",
+          updatedAt: new Date(),
+          ...(stoppedEndDate ? { endDate: stoppedEndDate } : {}),
+        })
+        .where(inArray(taskSeriesTable.id, seriesToStop));
+    }
+
+    // بعد القفل نعيد تطبيق نفس شروط النطاق، فيشمل الحذف أي مهمة ولّدها المولّد قبل لحظات.
+    // المهام المحمية (مكتملة/لها شاهد) لا تُحذف إلا إن كانت ضمن ما عُرض وأكّده المستخدم.
+    const deleted = await tx.update(tasksTable)
+      .set({ deletedAt })
+      .where(and(
+        ...targetConditions,
+        or(
+          inArray(tasksTable.id, targetIds),
+          and(
+            sql`${tasksTable.status} <> 'completed'`,
+            isNull(tasksTable.completedAt),
+            sql`coalesce(btrim(${tasksTable.submissionUrl}), '') = ''`,
+            sql`NOT EXISTS (SELECT 1 FROM task_proofs tp WHERE tp.task_id = ${tasksTable.id} AND tp.deleted_at IS NULL)`,
+          ),
+        ),
+      ))
+      .returning({ id: tasksTable.id });
+    deletedTaskIds = deleted.map((row: { id: number }) => row.id);
+  });
 
   await logActivity(req, "task_delete_scope", "task", id, task.title, {
     scope,
     seriesId: task.seriesId ?? null,
-    deletedTaskIds: targetIds,
-    deletedCount: targetIds.length,
+    deletedTaskIds,
+    deletedCount: deletedTaskIds.length,
     completedCount,
     withProofsCount,
+    stoppedSeriesIds: seriesToStop,
   });
 
   res.json({
     scope,
     seriesId: task.seriesId ?? null,
-    deletedTaskIds: targetIds,
+    deletedTaskIds,
+    stoppedSeriesIds: seriesToStop,
     summary,
   });
 });
