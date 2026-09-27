@@ -333,6 +333,8 @@ const TASK_SELECT = {
   // النيابة: لإظهار شارة «نيابة» في الواجهة.
   substitutionId: tasksTable.substitutionId,
   originalReciterId: tasksTable.originalReciterId,
+  // حالة السلسلة (active / stopped …) لإظهار شارة «سلسلة متوقفة» على المهام المتبقية.
+  seriesStatus: sql<string | null>`(SELECT ts.status::text FROM task_series ts WHERE ts.id = ${tasksTable.seriesId})`,
   deletedAt: tasksTable.deletedAt,
   createdAt: tasksTable.createdAt,
   platform: {

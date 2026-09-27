@@ -846,6 +846,19 @@ function WeeklyQuotaBadge({ task }: { task: TaskWithDetails }) {
   );
 }
 
+// سلسلة موقوفة نهائيًا (بحذف «هذه وما بعدها» أو «السلسلة كاملة»): لن تتولّد لها مهام جديدة.
+function SeriesStoppedBadge({ task }: { task: TaskWithDetails }) {
+  if ((task as any).seriesStatus !== "stopped") return null;
+  return (
+    <span
+      className="inline-flex items-center gap-1 text-[10px] font-semibold px-1.5 py-0.5 rounded-full border bg-slate-100 text-slate-600 border-slate-300"
+      title="أُوقفت هذه السلسلة نهائيًا — لن تتولّد لها مهام جديدة"
+    >
+      سلسلة متوقفة
+    </span>
+  );
+}
+
 function MemberCreatedTaskBadge({ task }: { task: TaskWithDetails }) {
   if ((task as any).source !== "member_created") return null;
   return (
@@ -1181,6 +1194,7 @@ function AdminTaskMobileCard({
               <p className="break-words text-sm font-semibold leading-6 text-foreground">{task.title}</p>
               <div className="mt-1 flex flex-wrap items-center gap-1.5">
                 <WeeklyQuotaBadge task={task} />
+                <SeriesStoppedBadge task={task} />
                 <MemberCreatedTaskBadge task={task} />
               </div>
             </div>
@@ -3635,6 +3649,7 @@ function ReciterTaskCard({
                             {task.recurrence === "daily" ? "يومي" : task.recurrence === "weekly" ? "أسبوعي" : task.recurrence === "custom_days" ? "أيام محددة" : "شهري"}
                           </span>
                         )}
+                        <SeriesStoppedBadge task={task} />
                         <TaskStatusBadge status={task.status} />
                         <TaskDayDateLabel dueDate={task.dueDate} showHijri={showHijri} />
                         <TaskDueStatusLabel task={task} />
@@ -4556,7 +4571,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       setDeleteGroupTask(null);
       toast({
         title: scope === "entire_group" ? "تم نقل مهام المجموعة إلى السلة" : "تم نقل المهمة إلى السلة",
-        description: `تم نقل ${payload?.summary?.total ?? payload?.deletedTaskIds?.length ?? 0} مهمة إلى السلة.`,
+        description: `تم نقل ${payload?.deletedTaskIds?.length ?? payload?.summary?.total ?? 0} مهمة إلى السلة.${Array.isArray(payload?.stoppedSeriesIds) && payload.stoppedSeriesIds.length > 0 ? ` وأُوقفت ${payload.stoppedSeriesIds.length} سلسلة متكررة نهائيًا.` : ""}`,
       });
     } catch (error) {
       toast({
@@ -4588,7 +4603,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
       setDeleteSeriesTask(null);
       toast({
         title: "تم نقل المهام إلى السلة",
-        description: `تم نقل ${payload?.summary?.total ?? payload?.deletedTaskIds?.length ?? 0} مهمة إلى السلة.`,
+        description: `تم نقل ${payload?.deletedTaskIds?.length ?? payload?.summary?.total ?? 0} مهمة إلى السلة.${Array.isArray(payload?.stoppedSeriesIds) && payload.stoppedSeriesIds.length > 0 ? " وأُوقفت السلسلة نهائيًا عن التوليد." : ""}`,
       });
     } catch (error) {
       setDeleteSeriesPreviewError(error instanceof Error ? error.message : "تعذر حذف نطاق السلسلة");
@@ -4613,9 +4628,19 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
   };
 
   const handleRestore = (id: number) => {
+    const restored = (tasks ?? []).find((t) => t.id === id);
+    const seriesStopped = (restored as any)?.seriesStatus === "stopped";
     restoreTask.mutate(
       { id },
-      { onSuccess: () => { invalidateTasks(); toast({ title: "تمت استعادة المهمة" }); } }
+      {
+        onSuccess: () => {
+          invalidateTasks();
+          toast({
+            title: "تمت استعادة المهمة",
+            description: seriesStopped ? "سلسلتها موقوفة: الاستعادة لا تعيد توليد مهام جديدة. لإعادة السلسلة أنشئ مهمة جديدة." : undefined,
+          });
+        },
+      }
     );
   };
 
@@ -5195,17 +5220,17 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                   {
                     value: "single",
                     label: "حذف هذه المهمة فقط",
-                    description: "ينقل المهمة الحالية فقط إلى السلة.",
+                    description: "ينقل المهمة الحالية فقط إلى السلة، وتستمر السلسلة في توليد مهامها القادمة.",
                   },
                   {
                     value: "from_this_forward",
                     label: "حذف هذه المهمة وما بعدها",
-                    description: "ينقل مهام نفس السلسلة من تاريخ هذه المهمة حتى نهاية السلسلة.",
+                    description: "ينقل هذه المهمة وما بعدها في نفس السلسلة إلى السلة، ويوقف توليد مهام جديدة لهذه السلسلة نهائيًا. المهام السابقة تبقى كما هي.",
                   },
                   {
                     value: "entire_series",
                     label: "حذف السلسلة كاملة",
-                    description: "ينقل كل مهام نفس السلسلة إلى السلة.",
+                    description: "ينقل كل مهام نفس السلسلة إلى السلة، ويوقف السلسلة نهائيًا فلا تتولّد لها مهام جديدة.",
                   },
                 ].map((option) => (
                   <button
@@ -5277,7 +5302,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
               <p className="text-sm font-medium">هل تريد حذف باقي المهام المرتبطة بها؟</p>
 
               <div className="rounded-md border border-amber-200 bg-amber-50 p-3 text-xs leading-5 text-amber-800">
-                يتم النقل إلى السلة فقط، ويمكن استعادتها لاحقًا.
+                يتم النقل إلى السلة فقط، ويمكن استعادتها لاحقًا. إن كانت ضمنها مهام متكررة فستتوقف سلاسلها نهائيًا عن التوليد.
               </div>
 
               <div className="flex flex-col gap-2 pt-1">
@@ -6154,6 +6179,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                 <div className="flex flex-col gap-0.5">
                                   <span>{task.title}</span>
                                   <WeeklyQuotaBadge task={task} />
+                                  <SeriesStoppedBadge task={task} />
                                   <MemberCreatedTaskBadge task={task} />
                                   <TaskNoteLine task={task} className="mt-1 max-w-[320px]" />
                                 </div>
@@ -6217,6 +6243,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                                     <div className="flex flex-col gap-0.5 opacity-60">
                                       <span className="font-medium line-through">{task.title}</span>
                                       <WeeklyQuotaBadge task={task} />
+                                      <SeriesStoppedBadge task={task} />
                                       <MemberCreatedTaskBadge task={task} />
                                       <TaskNoteLine task={task} compact className="mt-1 max-w-[320px]" />
                                     </div>
@@ -6343,6 +6370,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             <span>{task.title}</span>
                             <span className="text-[10px] text-muted-foreground/70">#{task.id}</span>
                             <WeeklyQuotaBadge task={task} />
+                            <SeriesStoppedBadge task={task} />
                             <MemberCreatedTaskBadge task={task} />
                             {task.recurrence && task.recurrence !== "none" && (
                               <span className={cn(
