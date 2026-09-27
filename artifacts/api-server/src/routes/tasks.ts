@@ -1822,7 +1822,9 @@ router.put("/tasks/:id", async (req, res) => {
   // Spawn recurring task if being completed
   const effectiveRecurrence = (body.recurrence ?? currentTask.recurrence) as string;
   const effectiveInterval = body.recurrenceIntervalDays ?? currentTask.recurrenceIntervalDays;
-  if (beingCompleted && (effectiveRecurrence !== "none" || (effectiveInterval && effectiveInterval > 0))) {
+  // الآلية القديمة (نسخة عند الإكمال) للمهام المستقلة فقط. مهام السلاسل تتولّد من السلسلة نفسها،
+  // فلا نُنشئ منها نسخًا خارج السلسلة (تكرار غير مرغوب، أو توليد من سلسلة موقوفة).
+  if (beingCompleted && !currentTask.seriesId && (effectiveRecurrence !== "none" || (effectiveInterval && effectiveInterval > 0))) {
     const currentMemberIds = await db
       .select({ memberId: taskMembersTable.memberId })
       .from(taskMembersTable)
