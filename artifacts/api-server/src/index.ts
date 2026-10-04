@@ -4,6 +4,7 @@ import { startTelegramScheduler } from "./services/telegram-scheduler";
 import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 import { ensureReciterSubstitutionSchema } from "./services/reciter-substitution-schema";
+import { ensureWeeklyScheduleSchema } from "./services/weekly-schedule-schema";
 import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
 import { runStoppedSeriesBackfillOnce } from "./services/series-stop-backfill";
 import { runShortDurationMarkerBackfillOnce, runDueDateTimezoneBackfillOnce, runHashtagNameBackfillOnce } from "./services/youtube-monitor";
@@ -52,7 +53,8 @@ try {
   await Promise.race([
     // أعمدة النيابة (tasks.substitution_id / original_reciter_id / platforms.covers_all_reciters)
     // معرَّفة في Drizzle أيضًا، فتُضمن هنا مع عمود الصلاة وللسبب نفسه.
-    Promise.all([ensureTaskPrayerSchema(), ensureReciterSubstitutionSchema()]),
+    // tasks.filming_type (الجدول الأسبوعي) معرَّف في Drizzle كذلك، فيُضمن هنا للسبب نفسه.
+    Promise.all([ensureTaskPrayerSchema(), ensureReciterSubstitutionSchema(), ensureWeeklyScheduleSchema()]),
     new Promise<never>((_, reject) => {
       setTimeout(() => reject(new Error("ensureTaskPrayerSchema timed out")), 20_000).unref();
     }),

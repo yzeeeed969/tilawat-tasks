@@ -49,6 +49,9 @@ export const tasksTable = pgTable("tasks", {
   // NULL لكل مهمة لم تمسّها نيابة. لا مفتاح أجنبي هنا تفاديًا لاستيراد دائري مع جداول النيابة.
   substitutionId: integer("substitution_id"),
   originalReciterId: integer("original_reciter_id"),
+  // نوع التصوير لمهام يوتيوب/فيسبوك: "affairs" (تصوير الشؤون) / "tv" (تصوير التلفزيون). NULL لغيرها وللمهام القديمة.
+  // مراقبة يوتيوب: علامة *توثيق* توثّق affairs (أو NULL للتوافق)، وعلامة *TV* توثّق tv.
+  filmingType: text("filming_type"),
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [

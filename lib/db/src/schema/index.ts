@@ -26,3 +26,4 @@ export * from "./youtube-channels";
 export * from "./youtube-videos";
 export * from "./youtube-settings";
 export * from "./reciter-substitutions";
+export * from "./weekly-schedule";

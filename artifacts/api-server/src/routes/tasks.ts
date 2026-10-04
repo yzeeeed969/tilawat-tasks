@@ -19,6 +19,7 @@ import { ensureTaskFlowLinksSchema } from "../services/task-flow-links-schema";
 import { ensureTaskCreationGroupsSchema } from "../services/task-creation-groups-schema";
 import { ensureTaskPrayerSchema } from "../services/task-prayer-schema";
 import { ensureReciterSubstitutionSchema } from "../services/reciter-substitution-schema";
+import { ensureWeeklyScheduleSchema } from "../services/weekly-schedule-schema";
 
 const router = Router();
 
@@ -26,6 +27,7 @@ router.use(async (_req, _res, next) => {
   try {
     await ensureTaskPrayerSchema();
     await ensureReciterSubstitutionSchema();
+    await ensureWeeklyScheduleSchema();
     await ensureTaskQuotaSchema();
     await ensureTaskDependenciesSchema();
     await ensureTaskFlowLinksSchema();
@@ -333,6 +335,7 @@ const TASK_SELECT = {
   // النيابة: لإظهار شارة «نيابة» في الواجهة.
   substitutionId: tasksTable.substitutionId,
   originalReciterId: tasksTable.originalReciterId,
+  filmingType: tasksTable.filmingType,
   // حالة السلسلة (active / stopped …) لإظهار شارة «سلسلة متوقفة» على المهام المتبقية.
   seriesStatus: sql<string | null>`(SELECT ts.status::text FROM task_series ts WHERE ts.id = ${tasksTable.seriesId})`,
   deletedAt: tasksTable.deletedAt,
