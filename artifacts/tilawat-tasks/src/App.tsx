@@ -19,6 +19,7 @@ import RecitersPage from "@/pages/reciters";
 import PlatformsPage from "@/pages/platforms";
 import YoutubeMonitorPage from "@/pages/youtube-monitor";
 import PublishingTemplatePage from "@/pages/publishing-template";
+import WeeklySchedulePage from "@/pages/weekly-schedule";
 import Account from "@/pages/account";
 import Reminders from "@/pages/reminders";
 import Achievements from "@/pages/achievements";
@@ -156,6 +157,11 @@ function AppRouter() {
       </Route>
       <Route path="/task-generation">
         <TaskGenerationDisabledRoute />
+      </Route>
+      <Route path="/weekly-schedule">
+        <ProtectedRoute>
+          <AppLayout><WeeklySchedulePage /></AppLayout>
+        </ProtectedRoute>
       </Route>
       <Route path="/publishing-template">
         <ProtectedRoute>
