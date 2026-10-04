@@ -27,6 +27,8 @@ import {
   AlarmClock,
   BookOpen,
   Layers,
+  ClipboardList,
+  CalendarPlus,
 } from "lucide-react";
 import {
   Dialog,
@@ -378,6 +380,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const adminNavItems = [
     { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
     { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
+    { href: "/publishing-template", label: "قالب النشر", icon: ClipboardList, show: isAdmin },
     { href: "/settings/telegram", label: "Telegram", icon: Bell, show: canManageSettings },
     { href: "/settings/public-stats", label: "إحصائيات عامة", icon: BarChart3, show: canManageSettings },
     { href: "/settings/general", label: "الإعدادات العامة", icon: Settings, show: canManageSettings },
