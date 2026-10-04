@@ -11,6 +11,12 @@ import {
   TemplateError,
   updateTemplateRow,
 } from "../services/weekly-schedule-template";
+import {
+  createWeeklySchedule,
+  getScheduleSetup,
+  previewWeeklySchedule,
+  setPreviewEnabled,
+} from "../services/weekly-schedule-engine";
 
 // قالب النشر والجدول الأسبوعي — للمدير فقط (requireAdmin على كل مسار في الخادم، لا إخفاء في الواجهة فقط).
 // هذا المسار للإنشاء فقط: لا يعدّل أي مهمة قائمة. تعديل المهام يبقى حصريًا عبر النيابة.
@@ -108,6 +114,52 @@ router.delete("/weekly-schedule/template/:id", requireAdmin, async (req, res) =>
   try {
     const result = await deleteTemplateRow(Number(req.params.id));
     await logWeeklyActivity(req, "publishing_template_row_deleted", "publishing_template", result.deleted, null).catch(() => {});
+    res.json(result);
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// ── إنشاء الجدول الأسبوعي (إنشاء فقط — لا تعديل لأي مهمة قائمة) ───────────────────────────────
+router.get("/weekly-schedule/setup", requireAdmin, async (_req, res) => {
+  try {
+    res.json(await getScheduleSetup());
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+router.patch("/weekly-schedule/settings", requireAdmin, async (req, res) => {
+  try {
+    if (typeof req.body?.previewEnabled !== "boolean") throw new TemplateError(400, "invalid_input", "قيمة غير صالحة");
+    res.json(await setPreviewEnabled(req.body.previewEnabled));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// معاينة: قراءة فقط.
+router.post("/weekly-schedule/preview", requireAdmin, async (req, res) => {
+  try {
+    res.json(await previewWeeklySchedule({ weekStart: req.body?.weekStart, assignments: req.body?.assignments }));
+  } catch (error) {
+    sendError(res, error);
+  }
+});
+
+// إنشاء: معاملة واحدة، يعيد حساب الخطة ومنع التكرار داخلها.
+router.post("/weekly-schedule/create", requireAdmin, async (req, res) => {
+  try {
+    const result = await createWeeklySchedule(
+      { weekStart: req.body?.weekStart, assignments: req.body?.assignments },
+      (req as any).currentUser?.id ?? null,
+    );
+    await logWeeklyActivity(req, "weekly_schedule_created", "weekly_schedule_batch", result.batchId, `جدول ${result.weekStart}`, {
+      weekStart: result.weekStart,
+      weekEnd: result.weekEnd,
+      createdTasks: result.createdTasks,
+      skippedDuplicates: result.skippedDuplicates,
+    }).catch(() => {});
     res.json(result);
   } catch (error) {
     sendError(res, error);

@@ -393,9 +393,12 @@ export async function deleteTemplateRow(id: number) {
   return { deleted: deleted[0].id };
 }
 
-export async function activeTemplateRowsFor(reciterIds: number[]) {
+export async function activeTemplateRowsFor(reciterIds: number[], client: any = db): Promise<Array<{
+  id: number; reciterId: number; platformId: number; filmingType: string | null; memberId: number; pageId: number | null;
+  sortOrder: number; platformName: string; memberName: string; memberActive: boolean;
+}>> {
   if (reciterIds.length === 0) return [];
-  return db
+  return client
     .select({
       id: reciterPublishingTemplatesTable.id,
       reciterId: reciterPublishingTemplatesTable.reciterId,
