@@ -38,15 +38,31 @@ const MAX_RECENT_VIDEOS_PER_CHECK = 15;
 // نافذة إعادة الفحص الدورية لمقاطع "بحاجة مراجعة"/"بلا مهمة": مقاطع أقدم من هذا تخرج من دائرة
 // إعادة الفحص التلقائي إلى الأبد (تبقى قابلة للربط اليدوي دائمًا، بلا حد زمني لذلك).
 const RECENT_REVIEW_RECHECK_DAYS = 3;
-// علامة التوثيق: نجمة + "توثيق" ملتصقة + نجمة، في سطر مستقل. مطابقة حرفية صارمة بعد trim() للسطر
-// (تتجاهل مسافات خارج حدود العلامة فقط — بداية/نهاية السطر — لا أي مسافة داخلها).
-// * توثيق* / *توثيق * / *توث يق* كلها مرفوضة؛ فقط "*توثيق*" الحرفية تُقبل.
-const MARKER_LINE = "*توثيق*";
+// علامتا التوثيق، كلٌّ في سطر مستقل، بمطابقة حرفية صارمة بعد trim() للسطر
+// (تتجاهل مسافات خارج حدود العلامة فقط — بداية/نهاية السطر — لا أي مسافة داخلها):
+//   *توثيق*  ⇐ يوثّق مهمة «تصوير الشؤون» (أو مهمة بلا نوع تصوير — توافقًا مع كل المهام القائمة).
+//   *TV*     ⇐ يوثّق مهمة «تصوير التلفزيون» فقط (حرفان كبيران؛ *tv* أو * TV* مرفوضة).
+// * توثيق* / *توثيق * / *توث يق* / *T V* كلها مرفوضة.
+const AFFAIRS_MARKER_LINE = "*توثيق*";
+const TV_MARKER_LINE = "*TV*";
 
-function hasStandaloneMarkerLine(description: string | null | undefined): boolean {
-  if (!description) return false;
+export type FilmingMarker = "affairs" | "tv";
+
+export function markerKindsOf(description: string | null | undefined): Set<FilmingMarker> {
+  const kinds = new Set<FilmingMarker>();
+  if (!description) return kinds;
   // نقسّم مع مراعاة \r\n (وندوز) حتى لا يبقى \r خفيًا يكسر المطابقة الحرفية بعد trim().
-  return description.split(/\r\n|\n/).some((line) => line.trim() === MARKER_LINE);
+  for (const line of description.split(/\r\n|\n/)) {
+    const trimmed = line.trim();
+    if (trimmed === AFFAIRS_MARKER_LINE) kinds.add("affairs");
+    else if (trimmed === TV_MARKER_LINE) kinds.add("tv");
+  }
+  return kinds;
+}
+
+// وجود أي من العلامتين — يُستخدم لتجاوز شرط المدة القصيرة ولعَلَم has_marker المخزَّن.
+function hasStandaloneMarkerLine(description: string | null | undefined): boolean {
+  return markerKindsOf(description).size > 0;
 }
 
 async function ensureChannelResolved(channel: YoutubeChannel): Promise<YoutubeChannel> {
@@ -134,15 +150,26 @@ async function documentTask(taskId: number, videoUrl: string, publishedAt: Date)
 
 type DecisionOutcome = { decision: Decision; extractedPrayer: string | null; extractedHijriDay: number | null; extractedHijriMonth: number | null };
 
-// كل ما يحدث بعد التأكد من وجود العلامة *توثيق*: قراءة العنوان ثم المطابقة ثم التوثيق أو المراجعة.
+// كل ما يحدث بعد التأكد من وجود علامة (*توثيق* أو *TV*): قراءة العنوان ثم المطابقة ثم التوثيق أو المراجعة.
 // مستخرجة في دالة مستقلة لأن إعادة الفحص التلقائية (runShortDurationMarkerBackfillOnce) تستدعيها
 // أيضًا على بيانات مخزَّنة محليًا (بلا تفاصيل يوتيوب كاملة كالخصوصية والمدة)، فلا نكرّر منطق
 // المطابقة والتوثيق في مكانين.
 async function decideAfterMarkerConfirmed(
   channel: YoutubeChannel,
-  video: { title: string; url: string; publishedAt: Date },
+  video: { title: string; url: string; publishedAt: Date; description: string | null },
   trialMode: boolean,
 ): Promise<DecisionOutcome> {
+  // نوع التصوير من العلامة: *توثيق* ⇐ الشؤون، *TV* ⇐ التلفزيون. المقطع لا يكون النوعين معًا،
+  // فوجود العلامتين معًا تعارض يذهب للمراجعة بلا توثيق.
+  const kinds = markerKindsOf(video.description);
+  if (kinds.size > 1) {
+    return {
+      decision: { status: trialMode ? "trial_would_review" : "needs_review", reason: "الوصف يحمل العلامتين *توثيق* و*TV* معًا — لا يُعرف نوع التصوير", matchedTaskId: null, createdProofId: null },
+      extractedPrayer: null, extractedHijriDay: null, extractedHijriMonth: null,
+    };
+  }
+  const filmingMarker: FilmingMarker = kinds.has("tv") ? "tv" : "affairs";
+
   const parsed = parseYoutubeTitle(video.title, channel.reciterNameConstant);
   if (!parsed.ok) {
     return {
@@ -161,6 +188,7 @@ async function decideAfterMarkerConfirmed(
     hijriMonth: parsed.hijriMonth,
     dayNameInTitle: parsed.dayNameInTitle,
     publishedAt: video.publishedAt,
+    filmingMarker,
   });
 
   if (match.kind === "no_task") {
@@ -208,10 +236,10 @@ async function decideForVideo(
   }
 
   if (!hasMarker) {
-    return { decision: { status: "no_marker", reason: "لا يوجد سطر مستقل نصّه *توثيق* في الوصف بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
+    return { decision: { status: "no_marker", reason: "لا يوجد سطر مستقل نصّه *توثيق* أو *TV* في الوصف بعد", matchedTaskId: null, createdProofId: null }, ...notExtracted };
   }
 
-  return decideAfterMarkerConfirmed(channel, { title: video.title, url, publishedAt: video.publishedAt }, trialMode);
+  return decideAfterMarkerConfirmed(channel, { title: video.title, url, publishedAt: video.publishedAt, description: video.description }, trialMode);
 }
 
 async function processChannel(channel: YoutubeChannel, trialMode: boolean): Promise<number> {
@@ -354,7 +382,7 @@ export async function runShortDurationMarkerBackfillOnce(): Promise<{ ran: boole
 
     const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
       channel,
-      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      { title: row.title, url: row.url, publishedAt: row.publishedAt, description: row.description },
       settings.trialMode,
     );
 
@@ -419,7 +447,7 @@ export async function runDueDateTimezoneBackfillOnce(): Promise<{ ran: boolean; 
 
     const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
       channel,
-      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      { title: row.title, url: row.url, publishedAt: row.publishedAt, description: row.description },
       settings.trialMode,
     );
 
@@ -483,7 +511,7 @@ export async function runHashtagNameBackfillOnce(): Promise<{ ran: boolean; repr
 
     const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
       channel,
-      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      { title: row.title, url: row.url, publishedAt: row.publishedAt, description: row.description },
       settings.trialMode,
     );
 
@@ -552,7 +580,7 @@ export async function reprocessChannelNeedsAttentionVideos(
 
     const { decision, extractedPrayer, extractedHijriDay, extractedHijriMonth } = await decideAfterMarkerConfirmed(
       channel,
-      { title: row.title, url: row.url, publishedAt: row.publishedAt },
+      { title: row.title, url: row.url, publishedAt: row.publishedAt, description: row.description },
       trialMode,
     );
 

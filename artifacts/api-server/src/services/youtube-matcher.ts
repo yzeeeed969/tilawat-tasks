@@ -1,4 +1,4 @@
-import { and, eq, isNull, sql } from "drizzle-orm";
+import { and, eq, isNull, or, sql } from "drizzle-orm";
 import { db, tasksTable } from "@workspace/db";
 import { type PrayerCode } from "../lib/prayer";
 import { arabicWeekdayOf, hijriPartsOf, isPublishedWithinTaskWindow, safeAnchorFromDateKey } from "../lib/hijri";
@@ -11,6 +11,8 @@ export type MatchInput = {
   hijriMonth: number;
   dayNameInTitle: string | null;
   publishedAt: Date;
+  // نوع التصوير المستفاد من علامة الوصف: affairs (*توثيق*) أو tv (*TV*).
+  filmingMarker?: "affairs" | "tv";
 };
 
 export type MatchResult =
@@ -36,10 +38,20 @@ export async function matchVideoToTask(input: MatchInput): Promise<MatchResult> 
       eq(tasksTable.prayer, input.prayer),
       eq(tasksTable.status, "pending"),
       isNull(tasksTable.deletedAt),
+      // *TV* ⇐ مهام «تصوير التلفزيون» فقط. *توثيق* ⇐ «تصوير الشؤون» أو مهمة بلا نوع (توافقًا مع المهام القائمة).
+      // فلا يحتار المطابِق بين مهمتي الشؤون والتلفزيون لنفس القارئ والصلاة واليوم.
+      input.filmingMarker === "tv"
+        ? eq(tasksTable.filmingType, "tv")
+        : or(isNull(tasksTable.filmingType), eq(tasksTable.filmingType, "affairs")),
     ));
 
   if (candidates.length === 0) {
-    return { kind: "no_task", reason: "لا توجد أي مهمة يوتيوب معلّقة لهذا القارئ بهذه الصلاة." };
+    return {
+      kind: "no_task",
+      reason: input.filmingMarker === "tv"
+        ? "لا توجد مهمة يوتيوب «تصوير التلفزيون» معلّقة لهذا القارئ بهذه الصلاة (العلامة *TV*)."
+        : "لا توجد مهمة يوتيوب «تصوير الشؤون» (أو بلا نوع) معلّقة لهذا القارئ بهذه الصلاة (العلامة *توثيق*).",
+    };
   }
 
   // مهام الحصة الأسبوعية لا تكتمل بمقطع واحد — تُستبعد من التوثيق التلقائي دائمًا وتذهب للمراجعة
