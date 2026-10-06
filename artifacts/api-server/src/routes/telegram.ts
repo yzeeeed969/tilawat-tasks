@@ -16,6 +16,7 @@ import {
   updateTelegramSettings,
 } from "../services/telegram-notification-engine";
 import { ensureTelegramSchema } from "../services/telegram-schema";
+import { handleMyChatMemberUpdate, processTelegramPost, storeChannelUpdate } from "../services/telegram-channel-monitor";
 
 const router = Router();
 
@@ -38,6 +39,31 @@ router.post("/telegram/webhook/:secret", async (req, res) => {
     return;
   }
 
+  // منشورات القنوات (مراقبة قناة تلقرام العامة) — مسار منفصل تمامًا عن ربط حسابات الأعضاء أدناه.
+  // نخزّن المنشور أولًا: إن فشلت القاعدة نرجع خطأً فيعيد تلقرام الإرسال (حتى 24 ساعة).
+  if (req.body?.channel_post || req.body?.edited_channel_post) {
+    let postId: number | null = null;
+    try {
+      postId = await storeChannelUpdate(req.body);
+    } catch (err) {
+      (req as any).log?.error?.({ err }, "telegram_channel_post_store_failed");
+      res.status(500).json({ ok: false });
+      return;
+    }
+    res.json({ ok: true });
+    if (postId) {
+      processTelegramPost(postId).catch((err) => (req as any).log?.error?.({ err, postId }, "telegram_channel_post_process_failed"));
+    }
+    return;
+  }
+  // إضافة البوت إلى قناة/مجموعة أو إزالته — يُسجَّل في «المحادثات المرئية» فقط.
+  if (req.body?.my_chat_member) {
+    await handleMyChatMemberUpdate(req.body).catch(() => {});
+    res.json({ ok: true });
+    return;
+  }
+
+  // ربط حسابات الأعضاء (/start) — كما هو دون أي تغيير.
   const message = req.body?.message;
   const token = parseTelegramStartToken(message?.text);
   const chatId = message?.chat?.id;
