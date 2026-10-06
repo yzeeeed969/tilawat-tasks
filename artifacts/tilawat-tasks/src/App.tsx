@@ -20,6 +20,7 @@ import PlatformsPage from "@/pages/platforms";
 import YoutubeMonitorPage from "@/pages/youtube-monitor";
 import PublishingTemplatePage from "@/pages/publishing-template";
 import WeeklySchedulePage from "@/pages/weekly-schedule";
+import TelegramMonitorPage from "@/pages/telegram-monitor";
 import Account from "@/pages/account";
 import Reminders from "@/pages/reminders";
 import Achievements from "@/pages/achievements";
@@ -166,6 +167,11 @@ function AppRouter() {
       <Route path="/publishing-template">
         <ProtectedRoute>
           <AppLayout><PublishingTemplatePage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/telegram-monitor">
+        <ProtectedRoute>
+          <AppLayout><TelegramMonitorPage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/youtube-monitor">
