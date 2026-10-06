@@ -363,6 +363,7 @@ type SlotTask = {
   endDate: Date | null;
   dueDate: Date | null;
   prayer: string | null;
+  mosque: string | null;
 };
 
 async function loadSlotTasks(base: BaseTask, slot: SlotKey, reciterId: number): Promise<SlotTask[]> {
@@ -387,6 +388,7 @@ async function loadSlotTasks(base: BaseTask, slot: SlotKey, reciterId: number): 
     endDate: tasksTable.endDate,
     dueDate: tasksTable.dueDate,
     prayer: tasksTable.prayer,
+    mosque: tasksTable.mosque,
   };
   if (!slot.date) {
     // مهمة بلا تاريخ: الفرض هو المهمة الأساسية وحدها.
@@ -907,6 +909,7 @@ export async function applySubstitution(input: {
           recurrence: "none",
           pageId: op.pageId,
           prayer: template.prayer,
+          mosque: template.mosque,
           substitutionId: substitution.id,
           originalReciterId: fromReciterId,
         }).returning();

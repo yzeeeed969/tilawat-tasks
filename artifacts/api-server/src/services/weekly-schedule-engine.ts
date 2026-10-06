@@ -300,6 +300,7 @@ export async function createWeeklySchedule(input: { weekStart: unknown; assignme
             recurrence: "none",
             pageId: item.pageId,
             prayer: item.prayer,
+            mosque: item.mosque,
             assigneeNote: item.note,
             filmingType: item.filmingType,
           }).returning({ id: tasksTable.id });

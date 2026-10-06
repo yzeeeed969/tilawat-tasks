@@ -52,6 +52,9 @@ export const tasksTable = pgTable("tasks", {
   // نوع التصوير لمهام يوتيوب/فيسبوك: "affairs" (تصوير الشؤون) / "tv" (تصوير التلفزيون). NULL لغيرها وللمهام القديمة.
   // مراقبة يوتيوب: علامة *توثيق* توثّق affairs (أو NULL للتوافق)، وعلامة *TV* توثّق tv.
   filmingType: text("filming_type"),
+  // مسجد الصلاة: "haram" / "nabawi" / NULL. يُملأ تلقائيًا من مسجد القارئ عند وجوده، ويُختار يدويًا
+  // للمهام العامة بلا قارئ (مثل مهام قناة تلقرام العامة). ثابت عند النيابة (مسجد الصلاة لا الإمام).
+  mosque: text("mosque"),
   deletedAt: timestamp("deleted_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 }, (table) => [

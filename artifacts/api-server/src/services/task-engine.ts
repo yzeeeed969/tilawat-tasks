@@ -22,6 +22,7 @@ type GenerateInput = {
   recurrenceDays?: string | null;
   weeklyQuotaRequired?: number | null;
   prayer?: string | null;
+  mosque?: string | null;
 };
 
 function startOfDay(date: Date): Date {
@@ -171,6 +172,7 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
         weeklyQuotaPeriodEnd: weeklyQuotaRequired ? occurrence.periodEnd : null,
         pageId: input.pageId ?? null,
         prayer: input.prayer ?? null,
+        mosque: input.mosque ?? null,
       }).onConflictDoNothing({
         target: [tasksTable.seriesId, tasksTable.dueDate],
       }).returning();
@@ -249,6 +251,8 @@ export async function syncActiveSeries() {
       recurrenceDays: templateTask.recurrenceDays,
       weeklyQuotaRequired: (templateTask as any).weeklyQuotaRequired ?? null,
       prayer: templateTask.prayer ?? null,
+      // المسجد يُنسخ من القالب كذلك — وإلا فقدته أجيال المهام العامة (تلقرام) فلا تُطابَق.
+      mosque: templateTask.mosque ?? null,
     });
 
     syncedSeriesIds.push(series.id);

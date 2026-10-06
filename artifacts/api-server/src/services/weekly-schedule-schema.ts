@@ -8,6 +8,8 @@ let ensurePromise: Promise<void> | null = null;
 async function runWeeklyScheduleSchemaEnsure() {
   // نوع التصوير لمهام يوتيوب/فيسبوك (affairs / tv). NULL لكل المهام القائمة ولبقية المنصات.
   await db.execute(sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS filming_type text`);
+  // مسجد الصلاة (haram / nabawi). NULL لكل المهام القائمة — لا يُملأ للقديم.
+  await db.execute(sql`ALTER TABLE tasks ADD COLUMN IF NOT EXISTS mosque text`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS reciter_publishing_templates (

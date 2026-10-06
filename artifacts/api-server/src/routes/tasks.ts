@@ -135,6 +135,7 @@ async function spawnRecurringTask(completedTask: {
   recurrenceDays?: string | null;
   priority?: string;
   prayer?: string | null;
+  mosque?: string | null;
 }, memberIds: number[]) {
   if (completedTask.recurrence === "none" && !completedTask.recurrenceIntervalDays) return;
 
@@ -157,6 +158,7 @@ async function spawnRecurringTask(completedTask: {
     lastRecurredAt: new Date(),
     pageId: completedTask.pageId,
     prayer: completedTask.prayer ?? null,
+    mosque: completedTask.mosque ?? null,
   }).returning();
 
   await syncTaskMembers(newTask.id, memberIds);
@@ -336,6 +338,7 @@ const TASK_SELECT = {
   substitutionId: tasksTable.substitutionId,
   originalReciterId: tasksTable.originalReciterId,
   filmingType: tasksTable.filmingType,
+  mosque: tasksTable.mosque,
   // حالة السلسلة (active / stopped …) لإظهار شارة «سلسلة متوقفة» على المهام المتبقية.
   seriesStatus: sql<string | null>`(SELECT ts.status::text FROM task_series ts WHERE ts.id = ${tasksTable.seriesId})`,
   deletedAt: tasksTable.deletedAt,
@@ -363,6 +366,22 @@ const TASK_SELECT = {
 type SeriesType = "temporary" | "operational";
 type SeriesRecurrenceType = "none" | "weekly" | "monthly";
 type TaskUpdateScope = "single" | "future" | "series" | "group";
+
+type TaskMosque = "haram" | "nabawi";
+
+function parseTaskMosque(value: unknown): TaskMosque | null {
+  if (value === undefined || value === null || value === "") return null;
+  if (value === "haram" || value === "nabawi") return value;
+  throw new Error("INVALID_MOSQUE");
+}
+
+// مسجد المهمة: من مسجد القارئ إن وُجد قارئ، وإلا القيمة المختارة يدويًا (للمهام العامة).
+async function resolveTaskMosque(reciterId: number | null | undefined, requested: unknown): Promise<TaskMosque | null> {
+  const manual = parseTaskMosque(requested);
+  if (!reciterId) return manual;
+  const [reciter] = await db.select({ mosque: recitersTable.mosque }).from(recitersTable).where(eq(recitersTable.id, reciterId)).limit(1);
+  return (reciter?.mosque as TaskMosque | undefined) ?? null;
+}
 
 const STATE_UPDATE_KEYS = new Set(["status", "completedAt", "progress", "submissionUrl"]);
 const DATE_UPDATE_KEYS = new Set(["startDate", "endDate", "dueDate"]);
@@ -967,6 +986,16 @@ router.post("/tasks", async (req, res) => {
   }
   const prayer = isAdmin ? requestedPrayer : null;
 
+  // المسجد: لمهمة لها قارئ يُؤخذ من مسجد القارئ دائمًا (لا يُوثق بقيمة الواجهة)، ولمهمة عامة بلا قارئ
+  // يُقبل اختيار المدير (haram / nabawi / فارغ). قيمة غير معروفة → 400 قبل أي كتابة.
+  let mosque: TaskMosque | null = null;
+  try {
+    mosque = await resolveTaskMosque(body.reciterId ?? null, isAdmin ? (req.body as any).mosque : null);
+  } catch {
+    res.status(400).json({ error: "Invalid mosque" });
+    return;
+  }
+
   if (isMemberSelfTask) {
     if (!currentUser?.memberId) {
       res.status(403).json({ error: "Forbidden" });
@@ -1137,6 +1166,7 @@ router.post("/tasks", async (req, res) => {
           reciterId: body.reciterId ?? null,
           pageId: assignment.pageId,
           prayer,
+          mosque,
           creationGroupId: creationGroup.id,
           priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
           startDate,
@@ -1200,6 +1230,7 @@ router.post("/tasks", async (req, res) => {
             weeklyQuotaPeriodEnd: null,
             pageId: assignment.pageId,
             prayer,
+            mosque,
             assigneeNote: assignment.assigneeNote,
           }).returning();
           await syncTaskMembers(t.id, assignment.memberIds);
@@ -1238,6 +1269,7 @@ router.post("/tasks", async (req, res) => {
         weeklyQuotaPeriodEnd: weeklyQuotaRequired ? getWeekRange(startDate).end : null,
         pageId: assignment.pageId,
         prayer,
+        mosque,
         assigneeNote: assignment.assigneeNote,
       }).returning();
       await syncTaskMembers(task.id, assignment.memberIds);
@@ -1295,6 +1327,7 @@ router.post("/tasks", async (req, res) => {
       reciterId: body.reciterId ?? null,
       pageId: body.pageId ?? null,
       prayer,
+      mosque,
       priority: (body.priority ?? "normal") as "urgent" | "normal" | "low",
       startDate,
       recurrenceType: seriesRecurrenceType,
@@ -1371,6 +1404,7 @@ router.post("/tasks", async (req, res) => {
         weeklyQuotaPeriodEnd: null,
         pageId: body.pageId ?? null,
         prayer,
+        mosque,
       }).returning();
       await syncTaskMembers(t.id, body.memberIds);
       if (firstTaskId === null) firstTaskId = t.id;
@@ -1417,6 +1451,7 @@ router.post("/tasks", async (req, res) => {
     weeklyQuotaPeriodEnd: weeklyQuotaRequired ? getWeekRange(startDate).end : null,
     pageId: body.pageId ?? null,
     prayer,
+    mosque,
   }).returning();
 
   await syncTaskMembers(task.id, body.memberIds);
@@ -1643,6 +1678,19 @@ router.put("/tasks/:id", async (req, res) => {
   if (body.progress !== undefined) updateData.progress = body.progress;
   if ("submissionUrl" in body) updateData.submissionUrl = body.submissionUrl ?? null;
   if ("pageId" in body) updateData.pageId = body.pageId ?? null;
+  // المسجد: لمهمة لها قارئ يتبع مسجد القارئ ولا يُعدَّل يدويًا (ويبقى ثابتًا عند النيابة).
+  // يُعدَّل يدويًا فقط لمهمة عامة بلا قارئ. وعند تحديد قارئ لأول مرة يُؤخذ من مسجده.
+  const effectiveReciterId = requestedReciterId ?? null;
+  if (!currentTask.reciterId && effectiveReciterId) {
+    updateData.mosque = await resolveTaskMosque(effectiveReciterId, null);
+  } else if (!effectiveReciterId && "mosque" in (req.body as any)) {
+    try {
+      updateData.mosque = parseTaskMosque((req.body as any).mosque);
+    } catch {
+      res.status(400).json({ error: "Invalid mosque" });
+      return;
+    }
+  }
   // تعديل الصلاة يخصّ هذه المهمة وحدها (لا ينتقل للمهام الشقيقة)، ولا يُكتب إلا إن أُرسل صراحة.
   if ("prayer" in (req.body as any)) {
     try {
@@ -2253,6 +2301,7 @@ router.post("/tasks/:id/duplicate", async (req, res) => {
     recurrenceDurationDays: original.recurrenceDurationDays,
     pageId: original.pageId,
     prayer: original.prayer ?? null,
+    mosque: original.mosque ?? null,
     recurrenceDays: original.recurrenceDays,
     weeklyQuotaRequired: (original as any).weeklyQuotaRequired ?? null,
     weeklyQuotaPeriodStart: (original as any).weeklyQuotaPeriodStart ?? null,

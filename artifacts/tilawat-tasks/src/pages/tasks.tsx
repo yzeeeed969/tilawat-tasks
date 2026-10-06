@@ -642,6 +642,7 @@ const taskSchema = z.object({
   memberIds: z.array(z.number()).min(1, { message: "اختر عضواً على الأقل" }),
   reciterId: z.number().nullable().optional(),
   appPrayer: z.enum(APP_PRAYER_OPTIONS).optional().nullable(),
+  mosque: z.enum(["haram", "nabawi"]).optional().nullable(),
   status: z.enum(["pending", "completed"]).optional(),
   priority: z.enum(["urgent", "normal", "low"]).optional(),
   progress: z.coerce.number().min(0).max(100).optional(),
@@ -1790,6 +1791,48 @@ function PlatformPageSelectField({
   );
 }
 
+// المسجد: لمهمة لها قارئ يُعرض مسجد القارئ (يحدده الخادم تلقائيًا)، ولمهمة عامة بلا قارئ يُختار يدويًا
+// (مثل مهام قناة تلقرام العامة: فجر الحرام / فجر النبوي).
+function TaskMosqueField({ reciters }: { reciters: Reciter[] | undefined }) {
+  const { watch } = useFormContext<TaskFormValues>();
+  const reciterId = toPositiveNumber(watch("reciterId"));
+  const reciter = reciterId ? (reciters ?? []).find((r) => r.id === reciterId) : null;
+  if (reciterId) {
+    return (
+      <div className="space-y-1">
+        <Label>المسجد</Label>
+        <p className="rounded-md border bg-muted/30 px-3 py-2 text-sm">
+          {reciter ? (MOSQUE_LABEL[reciter.mosque] ?? reciter.mosque) : "—"}
+          <span className="text-[11px] text-muted-foreground"> · من مسجد الإمام تلقائيًا</span>
+        </p>
+      </div>
+    );
+  }
+  return (
+    <FormField
+      name="mosque"
+      render={({ field }) => (
+        <FormItem>
+          <FormLabel>المسجد (للمهام العامة بلا قارئ)</FormLabel>
+          <Select onValueChange={(value) => field.onChange(value === "none" ? null : value)} value={field.value ?? "none"}>
+            <FormControl>
+              <SelectTrigger>
+                <SelectValue placeholder="بلا مسجد" />
+              </SelectTrigger>
+            </FormControl>
+            <SelectContent dir="rtl">
+              <SelectItem value="none">بلا مسجد</SelectItem>
+              <SelectItem value="haram">المسجد الحرام</SelectItem>
+              <SelectItem value="nabawi">المسجد النبوي</SelectItem>
+            </SelectContent>
+          </Select>
+          <FormMessage />
+        </FormItem>
+      )}
+    />
+  );
+}
+
 function BasicTaskFormFields({
   platforms,
   members,
@@ -2007,7 +2050,7 @@ function BasicTaskFormFields({
         />
       )}
 
-      {isApplicationPlatform && (
+      {Boolean(platformId) && (
         <FormField
           name="appPrayer"
           render={({ field }) => (
@@ -2039,6 +2082,8 @@ function BasicTaskFormFields({
           )}
         />
       )}
+
+      <TaskMosqueField reciters={reciters} />
 
       <FormField
         name="memberIds"
@@ -2491,7 +2536,7 @@ function EditTaskFormFields({
         />
       )}
 
-      {isApplicationPlatform && (
+      {Boolean(platformId) && (
         <FormField
           name="appPrayer"
           render={({ field }) => (
@@ -2523,6 +2568,8 @@ function EditTaskFormFields({
           )}
         />
       )}
+
+      <TaskMosqueField reciters={reciters} />
 
       <FormField
         name="memberIds"
@@ -4000,6 +4047,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     reciterId: null,
     pageId: null,
     appPrayer: null,
+    mosque: null,
     seriesType: "temporary",
     startDate: "",
     dueDate: "",
@@ -4066,6 +4114,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
         memberIds,
         reciterId,
         appPrayer: taskAppPrayerLabel(task as any),
+        mosque: ((task as any).mosque === "haram" || (task as any).mosque === "nabawi") ? (task as any).mosque : null,
         status: normalizeTaskStatus((task as any).status),
         priority: normalizeTaskPriority((task as any).priority),
         progress: Number.isFinite(Number((task as any).progress)) ? Number((task as any).progress) : 0,
@@ -4307,7 +4356,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           weeklyQuotaRequired,
           pageId,
           // الصلاة تُحدَّد مرة واحدة في مهمة التطبيق الأساسية وتُكتب على كل مهام المجموعة (رمز داخلي).
-          prayer: !isMemberSelfTask && isApplicationPlatform ? prayerCodeFromLabel(data.appPrayer) : null,
+          prayer: !isMemberSelfTask ? prayerCodeFromLabel(data.appPrayer) : null,
+          mosque: !isMemberSelfTask && !data.reciterId ? data.mosque ?? null : null,
           expandDailyInstances: !isMemberSelfTask && apiSeriesType === "temporary",
           recurrencePattern: recurrence,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : null,
@@ -4354,11 +4404,13 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     const memberIdsForUpdate = data.memberIds?.length ? data.memberIds : taskAssignedMemberIds(editingTask);
     // إن غيّر المستخدم الصلاة فعلًا في مهمة على منصة التطبيق، نحدّث رمزها المخزَّن كي لا يخالف العنوان.
     // لا نرسل شيئًا إن لم تتغيّر، فلا تُلمس المهام القديمة (prayer = NULL) بمجرد حفظ تعديل آخر.
-    const editPlatform = platforms?.find((platform) => platform.id === data.platformId);
+    // الصلاة لكل المنصات (اختيارية). لا نرسلها إن لم تتغيّر كي لا تُلمس المهام القديمة (prayer = NULL).
     const prayerEditFields =
-      platformCoversAllReciters(editPlatform) && (data.appPrayer ?? null) !== taskAppPrayerLabel(editingTask as any)
+      (data.appPrayer ?? null) !== taskAppPrayerLabel(editingTask as any)
         ? { prayer: prayerCodeFromLabel(data.appPrayer) }
         : {};
+    // المسجد يُعدَّل يدويًا فقط لمهمة عامة بلا قارئ (لمهمة لها قارئ يتبع مسجد القارئ في الخادم).
+    const mosqueEditFields = taskReciterId(editingTask) === null && !data.reciterId ? { mosque: data.mosque ?? null } : {};
     // القارئ لا يُرسل إلا لمهمة بلا قارئ بعد (تحديده أول مرة). تغيير قارئ قائم يتم عبر «النيابة» فقط.
     const reciterEditFields = taskReciterId(editingTask) === null ? { reciterId: data.reciterId ?? null } : {};
     updateTask.mutate(
@@ -4383,6 +4435,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
           weeklyQuotaRequired: isWeeklyQuota ? Number(data.weeklyQuotaRequired ?? 3) : null,
           pageId: data.pageId ?? null,
           ...prayerEditFields,
+          ...mosqueEditFields,
           updateScope: effectiveEditScope,
           dependsOnTaskId: ENABLE_TASK_DEPENDENCIES && isAdmin ? data.dependsOnTaskId ?? null : undefined,
         } as any,
