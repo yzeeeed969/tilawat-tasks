@@ -54,3 +54,28 @@ export async function sendTelegramMessage(
     clearTimeout(timeout);
   }
 }
+
+// استدعاء عام لـ Telegram Bot API (للقراءة/الإعداد مثل getWebhookInfo وsetWebhook) — مع مهلة.
+export async function callTelegramApi<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<{ ok: boolean; result?: T; error?: string }> {
+  const token = getTelegramToken();
+  if (!token) return { ok: false, error: "TELEGRAM_BOT_TOKEN is not configured" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10_000);
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify(params),
+    });
+    const body = await res.json().catch(() => ({})) as { ok?: boolean; result?: T; description?: string };
+    if (!res.ok || body?.ok === false) {
+      return { ok: false, error: typeof body?.description === "string" ? body.description : `Telegram HTTP ${res.status}` };
+    }
+    return { ok: true, result: body.result };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Telegram request failed" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
