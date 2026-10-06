@@ -1,7 +1,7 @@
-import { and, eq, isNull, or, sql } from "drizzle-orm";
-import { db, tasksTable } from "@workspace/db";
 import { type PrayerCode } from "../lib/prayer";
-import { arabicWeekdayOf, hijriPartsOf, isPublishedWithinTaskWindow, safeAnchorFromDateKey } from "../lib/hijri";
+import { matchRecitationToTask, type MatchResult } from "./recitation-matcher";
+
+export type { MatchResult } from "./recitation-matcher";
 
 export type MatchInput = {
   platformId: number;
@@ -9,98 +9,32 @@ export type MatchInput = {
   prayer: PrayerCode;
   hijriDay: number;
   hijriMonth: number;
+  hijriYear?: number | null;
   dayNameInTitle: string | null;
   publishedAt: Date;
   // نوع التصوير المستفاد من علامة الوصف: affairs (*توثيق*) أو tv (*TV*).
   filmingMarker?: "affairs" | "tv";
 };
 
-export type MatchResult =
-  | { kind: "match"; taskId: number; reason: string }
-  | { kind: "review"; candidateTaskIds: number[]; reason: string }
-  | { kind: "no_task"; reason: string };
-
-// يطابق مقطعًا (بعد استخراج ثوابته من العنوان) بمهمة معلّقة واحدة. لا تخمين أبدًا:
-// صفر مهام مطابقة أو أكثر من مهمة واحدة → مراجعة/بلا مهمة، لا يُختار أي منها تلقائيًا.
+// مطابقة مقطع يوتيوب بمهمة معلّقة — غلاف رفيع فوق المطابِق العام (recitation-matcher) بسلوك يوتيوب
+// القائم كما هو: الهدف «بقارئ»، نافذة يوم المهمة أو اليوم التالي، وتصفية نوع التصوير
+// (*TV* ⇐ تلفزيون فقط، وغير ذلك ⇐ الشؤون أو بلا نوع)، و«مراجعة» حين لا يطابق التاريخ.
 export async function matchVideoToTask(input: MatchInput): Promise<MatchResult> {
-  const candidates = await db
-    .select({
-      id: tasksTable.id,
-      // نقرأ اليوم الميلادي الحرفي مباشرة من PostgreSQL (to_char) بدل كائن Date — بلا أي تفسير
-      // توقيت من جانب Node (انظر lib/hijri.ts: safeAnchorFromDateKey لسبب هذا الاختيار).
-      dueDateKey: sql<string | null>`to_char(${tasksTable.dueDate}, 'YYYY-MM-DD')`,
-      weeklyQuotaRequired: tasksTable.weeklyQuotaRequired,
-    })
-    .from(tasksTable)
-    .where(and(
-      eq(tasksTable.platformId, input.platformId),
-      eq(tasksTable.reciterId, input.reciterId),
-      eq(tasksTable.prayer, input.prayer),
-      eq(tasksTable.status, "pending"),
-      isNull(tasksTable.deletedAt),
-      // *TV* ⇐ مهام «تصوير التلفزيون» فقط. *توثيق* ⇐ «تصوير الشؤون» أو مهمة بلا نوع (توافقًا مع المهام القائمة).
-      // فلا يحتار المطابِق بين مهمتي الشؤون والتلفزيون لنفس القارئ والصلاة واليوم.
-      input.filmingMarker === "tv"
-        ? eq(tasksTable.filmingType, "tv")
-        : or(isNull(tasksTable.filmingType), eq(tasksTable.filmingType, "affairs")),
-    ));
-
-  if (candidates.length === 0) {
-    return {
-      kind: "no_task",
-      reason: input.filmingMarker === "tv"
-        ? "لا توجد مهمة يوتيوب «تصوير التلفزيون» معلّقة لهذا القارئ بهذه الصلاة (العلامة *TV*)."
-        : "لا توجد مهمة يوتيوب «تصوير الشؤون» (أو بلا نوع) معلّقة لهذا القارئ بهذه الصلاة (العلامة *توثيق*).",
-    };
-  }
-
-  // مهام الحصة الأسبوعية لا تكتمل بمقطع واحد — تُستبعد من التوثيق التلقائي دائمًا وتذهب للمراجعة
-  // إن كانت هي المرشّح الوحيد المطابق للتاريخ.
-  const eligible = candidates.filter((task) => task.weeklyQuotaRequired == null && task.dueDateKey);
-
-  const matches: typeof eligible = [];
-  const quotaMatchesByDate: typeof candidates = [];
-
-  for (const task of eligible) {
-    const dueDate = safeAnchorFromDateKey(task.dueDateKey as string);
-    const hijri = hijriPartsOf(dueDate);
-    if (hijri.day !== input.hijriDay || hijri.month !== input.hijriMonth) continue;
-    if (input.dayNameInTitle && arabicWeekdayOf(dueDate) !== input.dayNameInTitle) continue;
-    if (!isPublishedWithinTaskWindow(input.publishedAt, dueDate)) continue;
-    matches.push(task);
-  }
-
-  for (const task of candidates) {
-    if (task.weeklyQuotaRequired == null || !task.dueDateKey) continue;
-    const dueDate = safeAnchorFromDateKey(task.dueDateKey);
-    const hijri = hijriPartsOf(dueDate);
-    if (hijri.day === input.hijriDay && hijri.month === input.hijriMonth) quotaMatchesByDate.push(task);
-  }
-
-  if (matches.length === 1) {
-    return {
-      kind: "match",
-      taskId: matches[0].id,
-      reason: "تطابق واضح: نفس المنصة والقارئ والصلاة والتاريخ الهجري، ونشر ضمن اليوم المسموح.",
-    };
-  }
-  if (matches.length > 1) {
-    return {
-      kind: "review",
-      candidateTaskIds: matches.map((m) => m.id),
-      reason: `أكثر من مهمة معلّقة تطابق نفس الصلاة والتاريخ (${matches.length} مهام) — بحاجة اختيار يدوي.`,
-    };
-  }
-  if (quotaMatchesByDate.length > 0) {
-    return {
-      kind: "review",
-      candidateTaskIds: quotaMatchesByDate.map((m) => m.id),
-      reason: "المهمة المطابقة للتاريخ ذات حصة أسبوعية — لا تُوثَّق تلقائيًا بمقطع واحد.",
-    };
-  }
-  return {
-    kind: "review",
-    candidateTaskIds: [],
-    reason: "لم تُطابق أي مهمة معلّقة التاريخ الهجري، أو اسم اليوم في العنوان يخالف تاريخ المهمة، أو وقت النشر خارج النافذة المسموحة.",
-  };
+  const marker = input.filmingMarker ?? "affairs";
+  return matchRecitationToTask({
+    platformId: input.platformId,
+    target: { kind: "reciter", reciterId: input.reciterId },
+    prayer: input.prayer,
+    hijriDay: input.hijriDay,
+    hijriMonth: input.hijriMonth,
+    hijriYear: input.hijriYear ?? null,
+    dayNameInTitle: input.dayNameInTitle,
+    publishedAt: input.publishedAt,
+    window: "same_or_next_day",
+    filmingMarker: marker,
+    noDateMatchAs: "review",
+    noTaskReason: marker === "tv"
+      ? "لا توجد مهمة يوتيوب «تصوير التلفزيون» معلّقة لهذا القارئ بهذه الصلاة (العلامة *TV*)."
+      : "لا توجد مهمة يوتيوب «تصوير الشؤون» (أو بلا نوع) معلّقة لهذا القارئ بهذه الصلاة (العلامة *توثيق*).",
+  });
 }

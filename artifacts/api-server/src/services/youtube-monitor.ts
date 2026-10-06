@@ -18,6 +18,7 @@ import {
 } from "./youtube-client";
 import { parseYoutubeTitle } from "../lib/youtube-title-parser";
 import { matchVideoToTask, type MatchResult } from "./youtube-matcher";
+import { documentTaskAutomatically } from "./auto-documentation";
 import { getYoutubeSettings } from "./youtube-settings";
 import { ensureYoutubeMonitorSchema } from "./youtube-monitor-schema";
 import { notifyTaskCompleted, notifyDependentTasksReady } from "../routes/tasks";
@@ -92,60 +93,17 @@ type Decision = {
 
 // يوثّق مهمة فعليًا: شاهد + إكمال + نفس إشعارات الإكمال اليدوي بالضبط (دوال مُعاد استخدامها من
 // routes/tasks.ts، لا نسخة جديدة من منطق الإكمال). وقت الإكمال = وقت الاكتشاف الآن، كما اتُّفق.
+// التوثيق نفسه في الموحّد المشترك (auto-documentation.ts) — بنفس النص والسجل والإشعارات كما كانت.
 async function documentTask(taskId: number, videoUrl: string, publishedAt: Date): Promise<{ documented: boolean; createdProofId: number | null; reason?: string }> {
-  const [task] = await db
-    .select({
-      id: tasksTable.id,
-      title: tasksTable.title,
-      memberId: tasksTable.memberId,
-      submissionUrl: tasksTable.submissionUrl,
-      status: tasksTable.status,
-    })
-    .from(tasksTable)
-    .where(eq(tasksTable.id, taskId))
-    .limit(1);
-
-  if (!task || task.status !== "pending") {
-    return { documented: false, createdProofId: null, reason: "المهمة لم تعد معلّقة عند لحظة التوثيق" };
-  }
-
-  const completedAt = new Date();
-  const note = `وثّقه النظام تلقائيًا من مقطع يوتيوب — نُشر بتاريخ ${publishedAt.toISOString()}`;
-  const submissionUrl = task.submissionUrl ?? videoUrl;
-
-  let createdProofId: number | null = null;
-  await db.transaction(async (tx: any) => {
-    const [proof] = await tx.insert(taskProofsTable).values({
-      taskId,
-      url: videoUrl,
-      note,
-      createdByUserId: null,
-    }).returning();
-    createdProofId = proof.id;
-
-    await tx.update(tasksTable).set({
-      status: "completed",
-      completedAt,
-      submissionUrl,
-    }).where(eq(tasksTable.id, taskId));
-  });
-
-  await db.insert(activityLogTable).values({
-    userId: null,
-    userName: "مراقبة يوتيوب (تلقائي)",
-    action: "youtube_video_documented",
-    entityType: "task",
-    entityId: taskId,
-    entityName: task.title,
+  return documentTaskAutomatically({
+    taskId,
+    proofUrl: videoUrl,
+    publishedAt,
+    note: `وثّقه النظام تلقائيًا من مقطع يوتيوب — نُشر بتاريخ ${publishedAt.toISOString()}`,
+    activityUserName: "مراقبة يوتيوب (تلقائي)",
+    activityAction: "youtube_video_documented",
     meta: { videoUrl },
   });
-
-  const notifyPayload = { id: taskId, title: task.title, memberId: task.memberId, submissionUrl, completedAt };
-  await notifyTaskCompleted(notifyPayload).catch(() => {});
-  await notifyTelegramTaskCompleted(notifyPayload).catch(() => {});
-  await notifyDependentTasksReady(taskId).catch(() => {});
-
-  return { documented: true, createdProofId };
 }
 
 type DecisionOutcome = { decision: Decision; extractedPrayer: string | null; extractedHijriDay: number | null; extractedHijriMonth: number | null };
@@ -186,6 +144,7 @@ async function decideAfterMarkerConfirmed(
     prayer: parsed.prayer,
     hijriDay: parsed.hijriDay,
     hijriMonth: parsed.hijriMonth,
+    hijriYear: parsed.hijriYear,
     dayNameInTitle: parsed.dayNameInTitle,
     publishedAt: video.publishedAt,
     filmingMarker,

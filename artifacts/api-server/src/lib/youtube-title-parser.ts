@@ -1,4 +1,12 @@
 import { type PrayerCode } from "./prayer";
+import {
+  ARABIC_WEEKDAYS,
+  findBarePrayers,
+  findHijriDates,
+  isPlausibleHijriDayMonth,
+  normalizeDigits,
+  normalizeForNameCheck,
+} from "./recitation-text";
 
 // استخراج الثوابت (الاسم + الصلاة + التاريخ الهجري) من عنوان مقطع يوتيوب.
 // وحدة نقية بلا اتصال بقاعدة بيانات — مبنية على تحليل عيّنة عناوين حقيقية (المرحلة صفر).
@@ -15,40 +23,8 @@ export type TitleParseResult =
     }
   | { ok: false; reason: string };
 
-const EASTERN_ARABIC_DIGITS: Record<string, string> = {
-  "٠": "0", "١": "1", "٢": "2", "٣": "3", "٤": "4",
-  "٥": "5", "٦": "6", "٧": "7", "٨": "8", "٩": "9",
-};
-
-function normalizeDigits(text: string): string {
-  return text.replace(/[٠-٩]/g, (d) => EASTERN_ARABIC_DIGITS[d] ?? d);
-}
-
-// نسخة مطبَّعة **لفحص وجود اسم الشيخ فقط** — لا تُستخدَم لأي استخراج آخر (الصلاة/التاريخ تُقرآن
-// من النص الأصلي دائمًا). تتعرّف على الاسم سواء كُتب عاديًا بمسافة ("ماهر المعيقلي") أو كوسم واحد
-// مركّب ("#ماهر_المعيقلي" — شائع في عناوين يوتيوب): نزيل #، ونحوّل _ إلى مسافة، ثم نوحّد أي
-// مسافات متتالية ناتجة عن ذلك. تبقى المطابقة نصًّا حرفيًا كاملًا بعد التطبيع، لا تخمينًا جزئيًا.
-function normalizeForNameCheck(text: string): string {
-  return text
-    .replace(/#/g, " ")
-    .replace(/_/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-}
-
-// كلمات الصلاة الصريحة (فجر/مغرب/عشاء). نستبعد أي ظهور مسبوق مباشرة بـ"ال" بلا مسافة
-// (اسم سورة مثل "الفجر"/"المغرب" لا يوجد لكن للاطراد؛ الحالة الحقيقية المرصودة: "الفجر" كسورة
-// ضمن "سورتي الفجر والبلد") — القناة تكتب علامة الصلاة نفسها بصيغة "عارية" دائمًا.
-const BARE_PRAYER_WORDS: Record<string, PrayerCode> = {
-  "فجر": "fajr",
-  "مغرب": "maghrib",
-  "عشاء": "isha",
-};
-
-const ARABIC_WEEKDAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
-
-// يوم-شهر-1448[هـ]. السنة 1448 ثابتة حاليًا بحسب عيّنة عناوين هذا الموسم.
-const DATE_REGEX = /(\d{1,2})\s*-\s*(\d{1,2})\s*-\s*1448\s*(?:هـ)?/g;
+// ملاحظة: الأدوات النصية (الأرقام، تطبيع الاسم، التاريخ، كلمات الصلاة) مشتركة في lib/recitation-text.ts
+// مع توثيق تلقرام. السنة الهجرية صارت عامة (1440–1499) بدل 1448 المثبّتة؛ بقية السلوك كما هو حرفيًا.
 
 export function parseYoutubeTitle(rawTitle: string, shaikhConstant: string): TitleParseResult {
   const title = normalizeDigits(rawTitle ?? "").trim();
@@ -59,34 +35,30 @@ export function parseYoutubeTitle(rawTitle: string, shaikhConstant: string): Tit
     return { ok: false, reason: `العنوان لا يحتوي الاسم الثابت "${shaikhConstant}"` };
   }
 
-  const dateMatches = [...title.matchAll(DATE_REGEX)];
+  const dateMatches = findHijriDates(title, "dash");
   if (dateMatches.length === 0) {
-    return { ok: false, reason: "لا يوجد تاريخ هجري بصيغة يوم-شهر-1448 في العنوان" };
+    return { ok: false, reason: "لا يوجد تاريخ هجري بصيغة يوم-شهر-سنة (مثل 16-4-1448) في العنوان" };
   }
   if (dateMatches.length > 1) {
     return { ok: false, reason: "أكثر من تاريخ هجري في العنوان — التباس" };
   }
 
   const dateMatch = dateMatches[0];
-  const hijriDay = Number(dateMatch[1]);
-  const hijriMonth = Number(dateMatch[2]);
-  if (hijriDay < 1 || hijriDay > 30 || hijriMonth < 1 || hijriMonth > 12) {
+  const hijriDay = dateMatch.day;
+  const hijriMonth = dateMatch.month;
+  const hijriYear = dateMatch.year;
+  if (!isPlausibleHijriDayMonth(hijriDay, hijriMonth)) {
     return { ok: false, reason: "رقم اليوم أو الشهر في التاريخ غير منطقي" };
   }
 
   // نطاق البحث عن الصلاة: من آخر "|" قبل التاريخ (أو بداية العنوان) وحتى التاريخ نفسه.
   // هذا يعزل غالبًا الجزء الوصفي (الذي قد يحمل اسم سورة) عن جزء "الصلاة + التاريخ".
-  const dateIndex = dateMatch.index ?? 0;
+  const dateIndex = dateMatch.index;
   const lastPipeBeforeDate = title.lastIndexOf("|", dateIndex);
   const windowStart = lastPipeBeforeDate >= 0 ? lastPipeBeforeDate + 1 : 0;
   const window = title.slice(windowStart, dateIndex);
 
-  const foundPrayers = new Set<PrayerCode>();
-  for (const [word, code] of Object.entries(BARE_PRAYER_WORDS)) {
-    // (?<!ال) تستبعد الظهور الملتصق بأداة التعريف (اسم سورة)، وتقبل فقط الكلمة "العارية".
-    const re = new RegExp(`(?<!ال)${word}`);
-    if (re.test(window)) foundPrayers.add(code);
-  }
+  const foundPrayers = findBarePrayers(window);
 
   let prayer: PrayerCode | null = null;
   if (foundPrayers.size === 1) {
@@ -108,5 +80,5 @@ export function parseYoutubeTitle(rawTitle: string, shaikhConstant: string): Tit
 
   const dayNameInTitle = ARABIC_WEEKDAYS.find((day) => window.includes(day)) ?? null;
 
-  return { ok: true, prayer, hijriDay, hijriMonth, hijriYear: 1448, dayNameInTitle };
+  return { ok: true, prayer, hijriDay, hijriMonth, hijriYear, dayNameInTitle };
 }
