@@ -28,12 +28,21 @@ export const MAX_HIJRI_YEAR = 1499;
 
 export type HijriDateMatch = { day: number; month: number; year: number; index: number; length: number };
 
+// كل أنواع الشرطات اليونيكودية ⇐ شرطة عادية "-" (مثل «26—4—1448» أو «26–4–1448»).
+// كلٌّ منها وحدة UTF-16 واحدة، فلا تتغيّر مواضع النص بعد الاستبدال. التطويل العربي «ـ» ليس فاصلًا فلا يُمس.
+// ‐ ‑ ‒ – — ― − ﹘ ﹣ －
+const DASH_VARIANTS = /[‐‑‒–—―−﹘﹣－]/g;
+
+export function normalizeDashes(text: string): string {
+  return text.replace(DASH_VARIANTS, "-");
+}
+
 // يوم-شهر-سنة. "dash" = الفاصل "-" فقط (صيغة عناوين يوتيوب كما هي). "flexible" = "-" أو "/" أو "." .
 export function findHijriDates(text: string, separators: "dash" | "flexible" = "dash"): HijriDateMatch[] {
   const sep = separators === "dash" ? "-" : "[-/.]";
   const regex = new RegExp(`(\\d{1,2})\\s*${sep}\\s*(\\d{1,2})\\s*${sep}\\s*(14\\d{2})\\s*(?:هـ)?`, "g");
   const results: HijriDateMatch[] = [];
-  for (const match of text.matchAll(regex)) {
+  for (const match of normalizeDashes(text).matchAll(regex)) {
     const year = Number(match[3]);
     if (year < MIN_HIJRI_YEAR || year > MAX_HIJRI_YEAR) continue;
     results.push({ day: Number(match[1]), month: Number(match[2]), year, index: match.index ?? 0, length: match[0].length });
