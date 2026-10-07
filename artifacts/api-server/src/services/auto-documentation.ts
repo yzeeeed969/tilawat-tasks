@@ -69,3 +69,41 @@ export async function documentTaskAutomatically(input: {
 
   return { documented: true, createdProofId };
 }
+
+// شاهد إضافي لمهمة مكتملة مسبقًا (مثل منشور تصميم ثانٍ لنفس اليوم): يضيف صف شاهد فقط —
+// لا يغيّر الحالة ولا رابط التسليم ولا وقت الإكمال ولا التقدّم، ولا يرسل أي إشعار إكمال ثانٍ.
+export async function addExtraProof(input: {
+  taskId: number;
+  proofUrl: string;
+  note: string;
+  activityUserName: string;
+  activityAction: string;
+  meta?: Record<string, unknown>;
+}): Promise<{ added: boolean; createdProofId: number | null; reason?: string }> {
+  const [task] = await db
+    .select({ id: tasksTable.id, title: tasksTable.title, status: tasksTable.status, deletedAt: tasksTable.deletedAt })
+    .from(tasksTable)
+    .where(eq(tasksTable.id, input.taskId))
+    .limit(1);
+  if (!task || task.deletedAt) return { added: false, createdProofId: null, reason: "المهمة غير موجودة" };
+  if (task.status !== "completed") return { added: false, createdProofId: null, reason: "المهمة ليست مكتملة — الشاهد الإضافي لمهمة مكتملة فقط" };
+
+  const [proof] = await db.insert(taskProofsTable).values({
+    taskId: input.taskId,
+    url: input.proofUrl,
+    note: input.note,
+    createdByUserId: null,
+  }).returning({ id: taskProofsTable.id });
+
+  await db.insert(activityLogTable).values({
+    userId: null,
+    userName: input.activityUserName,
+    action: input.activityAction,
+    entityType: "task",
+    entityId: input.taskId,
+    entityName: task.title,
+    meta: input.meta ?? null,
+  });
+
+  return { added: true, createdProofId: proof.id };
+}
