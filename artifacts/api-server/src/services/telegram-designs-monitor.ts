@@ -302,28 +302,27 @@ export async function ignoreDesignPost(postId: number, userId: number | null) {
   await setDesignSide(postId, { telegramStatus: "ignored_manual", telegramReason: "تجاهله المدير يدويًا", reviewedByUserId: userId, reviewedAt: new Date() });
 }
 
-// تراجع: يحذف حذفًا ناعمًا شاهد هذا المنشور فقط. المنشور الإضافي لا يمسّ اكتمال المهمة.
-// المنشور الأول: تعود المهمة معلّقة فقط إن لم يبقَ لها أي شاهد فعّال (ويُمسح رابط التسليم إن كان شاهده).
+// تراجع: يحذف حذفًا ناعمًا شاهد هذا المنشور فقط. تبقى المهمة مكتملة ما دام لها شاهد فعّال آخر؛
+// وإن لم يبقَ لها أي شاهد (أوّلًا كان المنشور أو إضافيًا) تعود معلّقة ويُمسح رابط التسليم إن كان شاهدًا مُتراجَعًا عنه.
 export async function revertDesignPost(postId: number, userId: number | null) {
   const { post } = await loadDesignContext(postId);
   if ((post.telegramStatus !== "documented" && post.telegramStatus !== "documented_extra") || !post.telegramTaskId) {
     throw new DesignsMonitorError(400, "لا يوجد توثيق في هذا المنشور للتراجع عنه");
   }
-  const isFirst = post.telegramStatus === "documented";
   await db.transaction(async (tx: any) => {
     let revertedUrl: string | null = null;
     if (post.telegramProofId) {
       const [proof] = await tx.update(taskProofsTable).set({ deletedAt: new Date() }).where(eq(taskProofsTable.id, post.telegramProofId)).returning({ url: taskProofsTable.url });
       revertedUrl = proof?.url ?? null;
     }
-    if (!isFirst) return;
     const [remaining] = await tx.select({ id: taskProofsTable.id }).from(taskProofsTable)
       .where(and(eq(taskProofsTable.taskId, post.telegramTaskId!), isNull(taskProofsTable.deletedAt))).limit(1);
     if (!remaining) {
+      // رابط التسليم يُمسح إن كان رابطًا من منشورات هذه القناة (شاهد مُتراجَع عنه).
       await tx.update(tasksTable).set({
         status: "pending",
         completedAt: null,
-        ...(revertedUrl ? { submissionUrl: sql`CASE WHEN ${tasksTable.submissionUrl} = ${revertedUrl} THEN NULL ELSE ${tasksTable.submissionUrl} END` } : {}),
+        submissionUrl: sql`CASE WHEN ${tasksTable.submissionUrl} = ${revertedUrl ?? ""} OR ${tasksTable.submissionUrl} IN (SELECT tp.url FROM task_proofs tp WHERE tp.task_id = ${post.telegramTaskId!} AND tp.deleted_at IS NOT NULL) THEN NULL ELSE ${tasksTable.submissionUrl} END`,
       }).where(eq(tasksTable.id, post.telegramTaskId!));
     }
   });
