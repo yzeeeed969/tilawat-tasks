@@ -1,5 +1,6 @@
 import { pgTable, serial, integer, bigint, text, boolean, jsonb, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { platformsTable } from "./platforms";
+import { platformPagesTable } from "./platform-pages";
 import { recitersTable } from "./reciters";
 import { tasksTable } from "./tasks";
 import { taskProofsTable } from "./task-proofs";
@@ -22,6 +23,29 @@ export const telegramMonitorSettingsTable = pgTable("telegram_monitor_settings",
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
+// القنوات المراقَبة (قنوات متعددة، لكلٍّ نوعها ومنطقها):
+//   recitations — قناة تلاوات الحرمين: جانبان (مهمة تلقرام العامة بالمسجد + مهمة التطبيق بالقارئ).
+//   designs     — قناة تصاميم الحرمين: جانب واحد بالمطابقة باليوم (هاشتاق اليوم) على صفحة محددة،
+//                  أول منشور يكمل المهمة والمنشورات اللاحقة شواهد إضافية.
+// إعدادات قناة التلاوات نُقلت إلى هنا مرة واحدة كما هي من telegram_monitor_settings (الجدول القديم باقٍ).
+export const telegramChannelsTable = pgTable("telegram_channels", {
+  id: serial("id").primaryKey(),
+  kind: text("kind").notNull(), // recitations | designs
+  chatId: text("chat_id").notNull(),
+  title: text("title"),
+  username: text("username"),
+  enabled: boolean("enabled").notNull().default(true),
+  trialMode: boolean("trial_mode").notNull().default(true),
+  telegramPlatformId: integer("telegram_platform_id").references(() => platformsTable.id, { onDelete: "set null" }),
+  appPlatformId: integer("app_platform_id").references(() => platformsTable.id, { onDelete: "set null" }),
+  pageId: integer("page_id").references(() => platformPagesTable.id, { onDelete: "set null" }),
+  monitoringStartedAt: timestamp("monitoring_started_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_telegram_channels_chat").on(table.chatId),
+]);
+
 // كل منشور رآه المراقب من القناة المسجّلة. (chat_id + message_id) فريد — ضمان عدم معالجته مرتين.
 // لكل منشور نتيجتان مستقلتان: جانب تلقرام (المهمة العامة) وجانب التطبيق (مهمة القارئ)،
 // لكلٍّ حالته وسببه ومهمته وشاهده، فيُراجَع ويُتراجَع عن كل جانب على حدة.
@@ -30,6 +54,7 @@ export const telegramMonitorSettingsTable = pgTable("telegram_monitor_settings",
 export const telegramChannelPostsTable = pgTable("telegram_channel_posts", {
   id: serial("id").primaryKey(),
   chatId: text("chat_id").notNull(),
+  channelId: integer("channel_id"),
   messageId: bigint("message_id", { mode: "number" }).notNull(),
   publishedAt: timestamp("published_at").notNull(),
   editedAt: timestamp("edited_at"),
@@ -47,6 +72,11 @@ export const telegramChannelPostsTable = pgTable("telegram_channel_posts", {
   hijriYear: integer("hijri_year"),
   parseError: text("parse_error"),
   editedAfterDocumented: boolean("edited_after_documented").notNull().default(false),
+  // قناة التصاميم: هل يحمل المنشور فيديو، واليوم المستنتج من الهاشتاق (0=الأحد…6=السبت)،
+  // وترتيب المنشور الإضافي على نفس المهمة (2، 3…).
+  hasVideo: boolean("has_video").notNull().default(false),
+  dayOfWeek: integer("day_of_week"),
+  extraIndex: integer("extra_index"),
   telegramStatus: text("telegram_status").notNull().default("pending"),
   telegramReason: text("telegram_reason"),
   telegramTaskId: integer("telegram_task_id").references(() => tasksTable.id, { onDelete: "set null" }),
