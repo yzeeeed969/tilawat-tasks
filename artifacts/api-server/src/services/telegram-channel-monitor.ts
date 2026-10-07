@@ -10,12 +10,13 @@ import { and, desc, eq, gte, inArray, isNull, lt, or, sql } from "drizzle-orm";
 import {
   db,
   platformsTable,
+  platformPagesTable,
   recitersTable,
   tasksTable,
   taskProofsTable,
   telegramChannelPostsTable,
+  telegramChannelsTable,
   telegramHashtagAliasesTable,
-  telegramMonitorSettingsTable,
   telegramSeenChatsTable,
 } from "@workspace/db";
 import { findBarePrayers, findHijriDates, isPlausibleHijriDayMonth, normalizeDigits, normalizeForNameCheck } from "../lib/recitation-text";
@@ -24,12 +25,13 @@ import { matchRecitationToTask } from "./recitation-matcher";
 import { documentTaskAutomatically } from "./auto-documentation";
 import { normalizeName } from "./weekly-schedule-template";
 import { ensureTelegramMonitorSchema } from "./telegram-monitor-schema";
+import { processDesignPost, recheckDesignPosts } from "./telegram-designs-monitor";
 
 export type Side = "telegram" | "app";
 export const PUBLISH_WINDOW_HOURS = 72;
 
 // حالات نهائية لا يُعاد فيها معالجة الجانب تلقائيًا.
-const FINAL_SIDE_STATUSES = new Set(["documented", "reverted", "ignored_manual", "not_applicable"]);
+const FINAL_SIDE_STATUSES = new Set(["documented", "documented_extra", "reverted", "ignored_manual", "not_applicable"]);
 // حالات يُعاد فحصها دوريًا ضمن نافذة النشر (مهمة أُنشئت متأخرة مثلًا).
 const RECHECK_SIDE_STATUSES = ["needs_review", "no_task", "trial_would_review", "trial_no_task"];
 
@@ -39,17 +41,65 @@ export class TelegramMonitorError extends Error {
   }
 }
 
-// ── الإعدادات ───────────────────────────────────────────────────────────────────────────────
-export async function getMonitorSettings() {
+// ── القنوات والإعدادات ──────────────────────────────────────────────────────────────────────
+export type TelegramChannel = typeof telegramChannelsTable.$inferSelect;
+export type ChannelKind = "recitations" | "designs";
+
+export async function listChannels(): Promise<TelegramChannel[]> {
   await ensureTelegramMonitorSchema();
-  const [existing] = await db.select().from(telegramMonitorSettingsTable).limit(1);
-  if (existing) return existing;
+  return db.select().from(telegramChannelsTable).orderBy(telegramChannelsTable.id);
+}
+
+async function getChannelById(id: number | null | undefined) {
+  if (!id) return null;
+  const [channel] = await db.select().from(telegramChannelsTable).where(eq(telegramChannelsTable.id, id)).limit(1);
+  return channel ?? null;
+}
+
+async function getChannelByChatId(chatId: string) {
+  const [channel] = await db.select().from(telegramChannelsTable).where(eq(telegramChannelsTable.chatId, chatId)).limit(1);
+  return channel ?? null;
+}
+
+export async function getRecitationsChannel() {
+  await ensureTelegramMonitorSchema();
+  const [channel] = await db.select().from(telegramChannelsTable).where(eq(telegramChannelsTable.kind, "recitations")).orderBy(telegramChannelsTable.id).limit(1);
+  return channel ?? null;
+}
+
+async function defaultAppPlatformId() {
   // افتراضيًا: منصة التطبيق = المنصة الوحيدة المعلَّمة «تشمل كل القرّاء» إن وُجدت واحدة فقط.
   const coversAll = await db.select({ id: platformsTable.id }).from(platformsTable).where(eq(platformsTable.coversAllReciters, true));
-  const [created] = await db.insert(telegramMonitorSettingsTable).values({
-    appPlatformId: coversAll.length === 1 ? coversAll[0].id : null,
-  }).returning();
-  return created;
+  return coversAll.length === 1 ? coversAll[0].id : null;
+}
+
+// إعدادات قناة التلاوات بنفس الشكل الذي يعتمد عليه منطقها (صارت تُقرأ من صف قناتها في telegram_channels).
+export async function getMonitorSettings() {
+  const channel = await getRecitationsChannel();
+  if (channel) {
+    return {
+      id: channel.id,
+      enabled: channel.enabled,
+      trialMode: channel.trialMode,
+      channelChatId: channel.chatId as string | null,
+      channelTitle: channel.title,
+      channelUsername: channel.username,
+      telegramPlatformId: channel.telegramPlatformId,
+      appPlatformId: channel.appPlatformId,
+      monitoringStartedAt: channel.monitoringStartedAt,
+    };
+  }
+  return {
+    id: 0,
+    enabled: true,
+    trialMode: true,
+    channelChatId: null as string | null,
+    channelTitle: null as string | null,
+    channelUsername: null as string | null,
+    telegramPlatformId: null as number | null,
+    appPlatformId: await defaultAppPlatformId(),
+    monitoringStartedAt: null as Date | null,
+  };
 }
 
 // ── التخزين (يُستدعى من الـ webhook) ─────────────────────────────────────────────────────────
@@ -105,18 +155,23 @@ export async function storeChannelUpdate(update: any): Promise<number | null> {
   if (!post?.chat) return null;
   await recordSeenChat(post.chat);
 
-  const settings = await getMonitorSettings();
   const chatId = String(post.chat.id);
-  if (!settings.enabled || !settings.channelChatId || settings.channelChatId !== chatId) return null;
+  const channel = await getChannelByChatId(chatId);
+  if (!channel || !channel.enabled) return null;
 
   const publishedAt = new Date(Number(post.date) * 1000);
   if (Number.isNaN(publishedAt.getTime())) return null;
-  if (settings.monitoringStartedAt && publishedAt < settings.monitoringStartedAt) return null;
+  if (channel.monitoringStartedAt && publishedAt < channel.monitoringStartedAt) return null;
+  // قناة التصاميم: التصميم فيديو (أو مستند فيديو/صورة متحركة).
+  const hasVideo = Boolean(
+    post.video || post.video_note || post.animation ||
+    (post.document && typeof post.document.mime_type === "string" && post.document.mime_type.startsWith("video/")),
+  );
 
   const caption: string | null = typeof post.caption === "string" ? post.caption : typeof post.text === "string" ? post.text : null;
   const entities = post.caption_entities ?? post.entities ?? [];
   const hashtags = caption ? extractHashtags(caption, entities) : [];
-  const username = settings.channelUsername || (typeof post.chat.username === "string" ? post.chat.username : null);
+  const username = channel.username || (typeof post.chat.username === "string" ? post.chat.username : null);
   const postUrl = username ? `https://t.me/${username}/${post.message_id}` : null;
   const messageId = Number(post.message_id);
 
@@ -129,12 +184,14 @@ export async function storeChannelUpdate(update: any): Promise<number | null> {
   if (!existing) {
     const inserted = await db.insert(telegramChannelPostsTable).values({
       chatId,
+      channelId: channel.id,
       messageId,
       publishedAt,
       editedAt: edited && post.edit_date ? new Date(Number(post.edit_date) * 1000) : null,
       caption,
       hashtags,
       postUrl,
+      hasVideo,
     }).onConflictDoNothing().returning({ id: telegramChannelPostsTable.id });
     if (inserted.length > 0) return inserted[0].id;
     const [again] = await db.select({ id: telegramChannelPostsTable.id }).from(telegramChannelPostsTable)
@@ -145,10 +202,12 @@ export async function storeChannelUpdate(update: any): Promise<number | null> {
   if (!edited) return existing.id; // إعادة إرسال لنفس المنشور — لا شيء جديد
 
   // تعديل منشور: الجانب الموثَّق نهائي (يُحفظ النص الجديد مع علامة)، وغير النهائي يُعاد معالجته.
-  const anyDocumented = existing.telegramStatus === "documented" || existing.appStatus === "documented";
+  const anyDocumented = existing.telegramStatus === "documented" || existing.telegramStatus === "documented_extra" || existing.appStatus === "documented";
   await db.update(telegramChannelPostsTable).set({
     caption,
     hashtags,
+    hasVideo,
+    channelId: existing.channelId ?? channel.id,
     editedAt: post.edit_date ? new Date(Number(post.edit_date) * 1000) : new Date(),
     editedAfterDocumented: existing.editedAfterDocumented || anyDocumented,
     kind: "pending",
@@ -324,6 +383,12 @@ export async function processTelegramPost(postId: number) {
   };
   let [post] = await db.select().from(telegramChannelPostsTable).where(eq(telegramChannelPostsTable.id, postId)).limit(1);
   if (!post) return;
+  // قناة التصاميم لها منطق مستقل تمامًا؛ قناة التلاوات تكمل كما هي أدناه.
+  const postChannel = (await getChannelById(post.channelId)) ?? (await getChannelByChatId(post.chatId));
+  if (postChannel?.kind === "designs") {
+    await processDesignPost(post, postChannel);
+    return;
+  }
 
   if (post.kind === "pending") {
     const classified = classifyCaption(post.caption);
@@ -385,8 +450,10 @@ export async function runTelegramMonitorTick(): Promise<{ processed: number }> {
   tickRunning = true;
   try {
     await ensureTelegramMonitorSchema();
+    const enabledChannels = (await listChannels()).filter((c) => c.enabled);
+    if (enabledChannels.length === 0) return { processed: 0 };
     const settings = await getMonitorSettings();
-    if (!settings.enabled || !settings.channelChatId) return { processed: 0 };
+    const recitationsActive = Boolean(settings.enabled && settings.channelChatId);
 
     // جانب عالق في «processing» (انقطاع أثناء المعالجة) ⇐ يعود معلّقًا بعد 10 دقائق.
     const stale = new Date(Date.now() - 10 * 60 * 1000);
@@ -397,6 +464,7 @@ export async function runTelegramMonitorTick(): Promise<{ processed: number }> {
 
     // إعادة فحص ضمن نافذة النشر: «مراجعة/بلا مهمة» لمنشورات تلاوة خلال آخر 72 ساعة.
     const windowStart = new Date(Date.now() - PUBLISH_WINDOW_HOURS * 60 * 60 * 1000);
+    if (recitationsActive) {
     await db.update(telegramChannelPostsTable).set({ telegramStatus: "pending" })
       .where(and(eq(telegramChannelPostsTable.kind, "recitation"), gte(telegramChannelPostsTable.publishedAt, windowStart), inArray(telegramChannelPostsTable.telegramStatus, RECHECK_SIDE_STATUSES)));
     await db.update(telegramChannelPostsTable).set({ appStatus: "pending" })
@@ -404,14 +472,19 @@ export async function runTelegramMonitorTick(): Promise<{ processed: number }> {
     // منشورات بلا شيخ/صلاة/تاريخ مستخرَج تُعاد قراءتها (قد يكون هاشتاقها رُبط بقارئ للتو).
     await db.update(telegramChannelPostsTable).set({ kind: "pending" })
       .where(and(eq(telegramChannelPostsTable.kind, "recitation"), gte(telegramChannelPostsTable.publishedAt, windowStart), sql`${telegramChannelPostsTable.parseError} IS NOT NULL`));
+    }
+    await recheckDesignPosts(enabledChannels.filter((c) => c.kind === "designs").map((c) => c.id));
 
     const due = await db
       .select({ id: telegramChannelPostsTable.id })
       .from(telegramChannelPostsTable)
-      .where(or(
-        eq(telegramChannelPostsTable.kind, "pending"),
-        eq(telegramChannelPostsTable.telegramStatus, "pending"),
-        eq(telegramChannelPostsTable.appStatus, "pending"),
+      .where(and(
+        inArray(telegramChannelPostsTable.channelId, enabledChannels.map((c) => c.id)),
+        or(
+          eq(telegramChannelPostsTable.kind, "pending"),
+          eq(telegramChannelPostsTable.telegramStatus, "pending"),
+          eq(telegramChannelPostsTable.appStatus, "pending"),
+        ),
       ))
       .orderBy(telegramChannelPostsTable.id)
       .limit(200);
@@ -540,8 +613,9 @@ export async function addHashtagAlias(hashtag: string, reciterId: number) {
 }
 
 // ── القوائم للصفحة ──────────────────────────────────────────────────────────────────────────
-export async function listPosts(filter: { status?: string; side?: Side | "any"; kind?: string; limit?: number }) {
+export async function listPosts(filter: { status?: string; side?: Side | "any"; kind?: string; limit?: number; channelId?: number }) {
   const conditions = [];
+  if (filter.channelId) conditions.push(eq(telegramChannelPostsTable.channelId, filter.channelId));
   if (filter.kind) conditions.push(eq(telegramChannelPostsTable.kind, filter.kind));
   if (filter.status) {
     if (filter.side === "telegram") conditions.push(eq(telegramChannelPostsTable.telegramStatus, filter.status));
@@ -634,11 +708,33 @@ export async function listAliases() {
     .orderBy(telegramHashtagAliasesTable.hashtag);
 }
 
-export async function updateMonitorSettings(body: any) {
-  const settings = await getMonitorSettings();
-  const patch: Record<string, unknown> = { updatedAt: new Date() };
-  if (typeof body?.enabled === "boolean") patch.enabled = body.enabled;
-  if (typeof body?.trialMode === "boolean") patch.trialMode = body.trialMode;
+// تسجيل قناة جديدة من «المحادثات المرئية» بنوعها. قناة تلاوات واحدة فقط.
+export async function registerChannel(chatIdInput: unknown, kindInput: unknown) {
+  await ensureTelegramMonitorSchema();
+  const chatId = chatIdInput ? String(chatIdInput) : "";
+  const kind = kindInput === "recitations" || kindInput === "designs" ? kindInput : null;
+  if (!chatId || !kind) throw new TelegramMonitorError(400, "اختر القناة ونوعها");
+  const [seen] = await db.select().from(telegramSeenChatsTable).where(eq(telegramSeenChatsTable.chatId, chatId)).limit(1);
+  if (!seen) throw new TelegramMonitorError(400, "القناة غير موجودة ضمن المحادثات التي رآها البوت");
+  if (seen.type && seen.type !== "channel") throw new TelegramMonitorError(400, "المحادثة المختارة ليست قناة");
+  if (await getChannelByChatId(chatId)) throw new TelegramMonitorError(409, "القناة مسجّلة مسبقًا");
+  if (kind === "recitations" && (await getRecitationsChannel())) throw new TelegramMonitorError(409, "توجد قناة تلاوات مسجّلة — عدّلها بدل تسجيل أخرى");
+  const [created] = await db.insert(telegramChannelsTable).values({
+    kind,
+    chatId,
+    title: seen.title,
+    username: seen.username,
+    enabled: true,
+    trialMode: true, // وضع التجربة مفعّل افتراضيًا لكل قناة جديدة
+    appPlatformId: kind === "recitations" ? await defaultAppPlatformId() : null,
+    // المنشورات قبل لحظة التسجيل لا تُعالَج.
+    monitoringStartedAt: new Date(),
+  }).returning();
+  return created;
+}
+
+async function validatePlatformPatch(body: any, kind: ChannelKind) {
+  const patch: Record<string, unknown> = {};
   if ("telegramPlatformId" in (body ?? {})) {
     const id = body.telegramPlatformId ? Number(body.telegramPlatformId) : null;
     if (id) {
@@ -648,7 +744,7 @@ export async function updateMonitorSettings(body: any) {
     }
     patch.telegramPlatformId = id;
   }
-  if ("appPlatformId" in (body ?? {})) {
+  if (kind === "recitations" && "appPlatformId" in (body ?? {})) {
     const id = body.appPlatformId ? Number(body.appPlatformId) : null;
     if (id) {
       const [p] = await db.select().from(platformsTable).where(eq(platformsTable.id, id)).limit(1);
@@ -657,21 +753,50 @@ export async function updateMonitorSettings(body: any) {
     }
     patch.appPlatformId = id;
   }
-  if ("channelChatId" in (body ?? {})) {
-    const chatId = body.channelChatId ? String(body.channelChatId) : null;
-    if (chatId && chatId !== settings.channelChatId) {
+  return patch;
+}
+
+export async function updateChannel(channelId: number, body: any) {
+  const channel = await getChannelById(channelId);
+  if (!channel) throw new TelegramMonitorError(404, "القناة غير موجودة");
+  const patch: Record<string, unknown> = { updatedAt: new Date(), ...(await validatePlatformPatch(body, channel.kind as ChannelKind)) };
+  if (typeof body?.enabled === "boolean") patch.enabled = body.enabled;
+  if (typeof body?.trialMode === "boolean") patch.trialMode = body.trialMode;
+  if (channel.kind === "designs" && "pageId" in (body ?? {})) {
+    const pageId = body.pageId ? Number(body.pageId) : null;
+    if (pageId) {
+      const [page] = await db.select().from(platformPagesTable).where(eq(platformPagesTable.id, pageId)).limit(1);
+      if (!page) throw new TelegramMonitorError(400, "الصفحة غير موجودة");
+      const platformId = (patch.telegramPlatformId as number | null | undefined) ?? channel.telegramPlatformId;
+      if (platformId && page.platformId !== platformId) throw new TelegramMonitorError(400, "الصفحة لا تتبع منصة تلقرام المختارة");
+    }
+    patch.pageId = pageId;
+  }
+  const [updated] = await db.update(telegramChannelsTable).set(patch).where(eq(telegramChannelsTable.id, channelId)).returning();
+  return updated;
+}
+
+// واجهة توافق لقناة التلاوات (بنفس قواعد التحقق السابقة)، فوق صف قناتها في telegram_channels.
+export async function updateMonitorSettings(body: any) {
+  const platformPatch = await validatePlatformPatch(body, "recitations");
+  let channel = await getRecitationsChannel();
+  if ("channelChatId" in (body ?? {}) && body.channelChatId) {
+    const chatId = String(body.channelChatId);
+    if (!channel) {
+      channel = await registerChannel(chatId, "recitations");
+    } else if (channel.chatId !== chatId) {
       const [seen] = await db.select().from(telegramSeenChatsTable).where(eq(telegramSeenChatsTable.chatId, chatId)).limit(1);
       if (!seen) throw new TelegramMonitorError(400, "القناة غير موجودة ضمن المحادثات التي رآها البوت");
       if (seen.type && seen.type !== "channel") throw new TelegramMonitorError(400, "المحادثة المختارة ليست قناة");
-      patch.channelChatId = chatId;
-      patch.channelTitle = seen.title;
-      patch.channelUsername = seen.username;
-      // المنشورات قبل لحظة التسجيل لا تُعالَج.
-      patch.monitoringStartedAt = new Date();
-    } else if (!chatId) {
-      patch.channelChatId = null;
+      [channel] = await db.update(telegramChannelsTable).set({
+        chatId, title: seen.title, username: seen.username, monitoringStartedAt: new Date(), updatedAt: new Date(),
+      }).where(eq(telegramChannelsTable.id, channel.id)).returning();
     }
   }
-  const [updated] = await db.update(telegramMonitorSettingsTable).set(patch).where(eq(telegramMonitorSettingsTable.id, settings.id)).returning();
-  return updated;
+  if (!channel) throw new TelegramMonitorError(400, "سجّل قناة التلاوات أولًا");
+  const patch: Record<string, unknown> = { updatedAt: new Date(), ...platformPatch };
+  if (typeof body?.enabled === "boolean") patch.enabled = body.enabled;
+  if (typeof body?.trialMode === "boolean") patch.trialMode = body.trialMode;
+  await db.update(telegramChannelsTable).set(patch).where(eq(telegramChannelsTable.id, channel.id));
+  return getMonitorSettings();
 }
