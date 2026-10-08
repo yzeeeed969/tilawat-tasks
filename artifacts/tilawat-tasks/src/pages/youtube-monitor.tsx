@@ -10,6 +10,7 @@ import { Loader2, RefreshCw, Youtube as YoutubeIcon, Link2, Ban, Undo2, Plus, Pe
 import { useToast } from "@/hooks/use-toast";
 import { useListPlatforms, getListPlatformsQueryKey, useListReciters, getListRecitersQueryKey } from "@workspace/api-client-react";
 import { useIsAdmin } from "@/lib/roles";
+import { useProofDateGuard } from "@/components/proof-date-guard";
 
 // صفحة إدارية للمدير فقط: مراقبة قنوات يوتيوب والتوثيق التلقائي (وضع التجربة/التفعيل).
 // كل الاتصالات هنا عبر fetch مباشر إلى مسارات /api/youtube/* الجديدة — بلا OpenAPI/codegen،
@@ -344,6 +345,7 @@ function VideosTab() {
   const queryClient = useQueryClient();
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [linkTaskIdByVideo, setLinkTaskIdByVideo] = useState<Record<number, string>>({});
+  const proofDateGuard = useProofDateGuard();
 
   const { data: videos, isLoading } = useQuery({
     queryKey: ["youtube-videos", statusFilter],
@@ -378,6 +380,7 @@ function VideosTab() {
 
   return (
     <div className="space-y-4">
+      {proofDateGuard.dialog}
       <div className="flex items-center gap-2">
         <span className="text-sm text-muted-foreground">تصفية:</span>
         <Select value={statusFilter} onValueChange={setStatusFilter}>
@@ -426,9 +429,11 @@ function VideosTab() {
                         />
                         <Button
                           type="button" size="sm" variant="outline"
-                          onClick={() => {
+                          onClick={async () => {
                             const taskId = Number(linkTaskIdByVideo[video.id] ?? video.matchedTaskId);
                             if (!Number.isInteger(taskId) || taskId <= 0) { toast({ title: "أدخل رقم مهمة صحيح", variant: "destructive" }); return; }
+                            // تحذير وقائي: صلاة/تاريخ/يوم الفيديو تخالف المهمة ⇐ تأكيد قبل الربط.
+                            if (!(await proofDateGuard.guard(taskId, video.url))) return;
                             linkMutation.mutate({ id: video.id, taskId });
                           }}
                         >

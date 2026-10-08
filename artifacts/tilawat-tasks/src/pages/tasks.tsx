@@ -123,6 +123,7 @@ import { PlatformIcon } from "@/lib/platform-icon";
 import { cn } from "@/lib/utils";
 import { DatePickerInput } from "@/components/ui/date-picker-input";
 import { formatHijriDate, useHijriPreference } from "@/lib/hijri-date";
+import { useProofDateGuard } from "@/components/proof-date-guard";
 
 const APP_PRAYER_OPTIONS = ["صلاة الفجر", "صلاة المغرب", "صلاة العشاء", "صلاة الجمعة"] as const;
 const ADMIN_LIST_LIMIT_OPTIONS = ["25", "50", "100", "all"] as const;
@@ -3848,6 +3849,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     resolver: zodResolver(submissionUrlSchema),
     defaultValues: { url: "" },
   });
+  const proofDateGuard = useProofDateGuard();
 
   const queryParams = {
     ...(filterPlatform !== "all" ? { platformId: parseInt(filterPlatform) } : {}),
@@ -4746,6 +4748,8 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
     if (!urlDialog) return;
     const taskId = urlDialog.taskId;
     const task = tasks?.find((t) => t.id === taskId);
+    // تحذير وقائي (يوتيوب فقط، يقرّره الخادم): صلاة/تاريخ/يوم الفيديو تخالف المهمة ⇐ تأكيد قبل الحفظ.
+    if (data.url && data.url !== urlDialog.currentUrl && !(await proofDateGuard.guard(taskId, data.url))) return;
     if (task && isWeeklyQuotaTask(task)) {
       if (!data.url) {
         toast({ title: "أدخل رابط الشاهد", variant: "destructive" });
@@ -4801,6 +4805,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {proofDateGuard.dialog}
       {isAdmin && !isAdminMemberPreview && (
         <div className="space-y-3 sm:hidden">
           <div className="rounded-xl border border-border bg-card p-4 shadow-sm">
