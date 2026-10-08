@@ -20,6 +20,7 @@ import { ensureTaskCreationGroupsSchema } from "../services/task-creation-groups
 import { ensureTaskPrayerSchema } from "../services/task-prayer-schema";
 import { ensureReciterSubstitutionSchema } from "../services/reciter-substitution-schema";
 import { ensureWeeklyScheduleSchema } from "../services/weekly-schedule-schema";
+import { checkYoutubeProofDate } from "../services/youtube-proof-date-check";
 
 const router = Router();
 
@@ -1914,6 +1915,27 @@ router.put("/tasks/:id", async (req, res) => {
 
   const taskResponse = await buildTaskResponse(id);
   res.json(taskResponse);
+});
+
+// تحذير وقائي قبل حفظ شاهد يوتيوب يدويًا: يقارن صلاة/تاريخ/يوم عنوان الفيديو بالمهمة. للقراءة فقط،
+// لا يحفظ شيئًا ولا يمنع الحفظ — الواجهة تعرض التأكيد. أي تعذّر ⇐ { warning: null }.
+router.post("/tasks/:id/proof-date-check", async (req, res) => {
+  const id = Number(req.params.id);
+  const url = typeof req.body?.url === "string" ? req.body.url.trim() : "";
+  if (!Number.isInteger(id) || id <= 0 || !url) {
+    res.json({ warning: null });
+    return;
+  }
+  const task = await fetchTaskForPermission(id);
+  if (!task) {
+    res.status(404).json({ error: "Task not found" });
+    return;
+  }
+  if (!canEditTask((req as any).currentUser, task)) {
+    res.status(403).json({ error: "Forbidden" });
+    return;
+  }
+  res.json({ warning: await checkYoutubeProofDate(id, url) });
 });
 
 router.post("/tasks/:id/proofs", async (req, res) => {
