@@ -16,7 +16,7 @@ import { cn } from "@/lib/utils";
 // (تعديل المهام وتغيير القارئ يبقيان حصريًا عبر «النيابة»).
 
 type Mosque = "haram" | "nabawi";
-type Prayer = "fajr" | "maghrib" | "isha";
+type Prayer = "fajr" | "maghrib" | "isha" | "jumuah";
 type Setup = {
   settings: { previewEnabled: boolean; templateImportedAt: string | null };
   defaultWeekStart: string;
@@ -35,6 +35,8 @@ const PRAYERS: Array<{ key: Prayer; label: string }> = [
   { key: "fajr", label: "الفجر" },
   { key: "maghrib", label: "المغرب" },
   { key: "isha", label: "العشاء" },
+  // الجمعة (خطبة وصلاة، نفس الإمام): مهمة واحدة يوم الجمعة لكل منصة في القالب — لا سبعة أيام.
+  { key: "jumuah", label: "الجمعة" },
 ];
 const MOSQUES: Array<{ key: Mosque; label: string }> = [
   { key: "haram", label: "🕋 المسجد الحرام" },
@@ -182,7 +184,10 @@ export default function WeeklySchedulePage() {
               <tbody>
                 {PRAYERS.map((prayer) => (
                   <tr key={prayer.key} className="border-t">
-                    <td className="p-2 font-medium">{prayer.label}</td>
+                    <td className="p-2 font-medium">
+                      {prayer.label}
+                      {prayer.key === "jumuah" && <div className="text-[11px] font-normal text-muted-foreground">خطبة وصلاة · يوم الجمعة فقط</div>}
+                    </td>
                     {MOSQUES.map((mosque) => {
                       const key = `${mosque.key}|${prayer.key}`;
                       const options = setup.reciters.filter((r) => r.mosque === mosque.key);
