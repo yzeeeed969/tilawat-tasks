@@ -24,7 +24,7 @@ import { safeAnchorFromDateKey } from "../lib/hijri";
 import { activeTemplateRowsFor, TemplateError } from "./weekly-schedule-template";
 import { notifyTelegramWeeklyScheduleDigest } from "./telegram-notification-engine";
 
-export type SchedulePrayer = "fajr" | "maghrib" | "isha";
+export type SchedulePrayer = "fajr" | "maghrib" | "isha" | "jumuah";
 export type Mosque = "haram" | "nabawi";
 export type ScheduleAssignment = { mosque: Mosque; prayer: SchedulePrayer; reciterId: number };
 
@@ -32,6 +32,7 @@ export const PRAYER_TITLE: Record<SchedulePrayer, string> = {
   fajr: "صلاة الفجر",
   maghrib: "صلاة المغرب",
   isha: "صلاة العشاء",
+  jumuah: "خطبة وصلاة الجمعة",
 };
 const FILMING_NOTE: Record<string, string> = { affairs: "تصوير الشؤون", tv: "تصوير التلفزيون" };
 const WEEKDAY = new Intl.DateTimeFormat("ar-SA", { timeZone: "Asia/Riyadh", weekday: "long" });
@@ -76,7 +77,7 @@ function parseInput(input: { weekStart: unknown; assignments: unknown }) {
     const prayer = item?.prayer;
     const reciterId = Number(item?.reciterId);
     if (mosque !== "haram" && mosque !== "nabawi") throw new TemplateError(400, "invalid_mosque", "مسجد غير صالح");
-    if (prayer !== "fajr" && prayer !== "maghrib" && prayer !== "isha") throw new TemplateError(400, "invalid_prayer", "الصلوات المدعومة: الفجر والمغرب والعشاء");
+    if (prayer !== "fajr" && prayer !== "maghrib" && prayer !== "isha" && prayer !== "jumuah") throw new TemplateError(400, "invalid_prayer", "الصلوات المدعومة: الفجر والمغرب والعشاء والجمعة");
     if (!Number.isInteger(reciterId) || reciterId <= 0) continue; // خانة بلا إمام = لا شيء لهذه الصلاة
     const key = `${mosque}|${prayer}`;
     if (seen.has(key)) throw new TemplateError(400, "duplicate_slot", "إمام واحد فقط لكل صلاة في كل مسجد");
@@ -148,7 +149,8 @@ async function buildPlanUsing(client: any, input: { weekStart: unknown; assignme
         warnings.push(`${reciter.name} — ${row.platformName}${row.filmingType ? ` (${FILMING_NOTE[row.filmingType]})` : ""}: العضو ${row.memberName} غير نشط — لن تُنشأ هذه المهام`);
         continue;
       }
-      for (const dateKey of dates) {
+      // الفروض: كل أيام الأسبوع. الجمعة: حدث واحد يوم الجمعة (الأحد + 5) — وبقية السلوك كالفروض تمامًا.
+      for (const dateKey of a.prayer === "jumuah" ? [dates[5]] : dates) {
         items.push({
           assignmentKey: `${a.mosque}|${a.prayer}`,
           mosque: a.mosque,
