@@ -146,6 +146,24 @@ function extractHashtags(caption: string, entities: any[]): string[] {
   return [...new Set(tags)];
 }
 
+// رابط منشور تلقرام: t.me/<username>/<رقم الرسالة> للقناة العامة، وإلا الصيغة القياسية للقنوات بلا
+// username: t.me/c/<معرّف القناة بلا -100>/<رقم الرسالة>. لا رابط إن تعذّر بناؤه (معرّف ليس لقناة).
+export function buildTelegramPostUrl(username: string | null | undefined, chatId: string | number, messageId: string | number): string | null {
+  const id = Number(messageId);
+  if (!Number.isInteger(id) || id <= 0) return null;
+  const handle = typeof username === "string" ? username.trim().replace(/^@/, "") : "";
+  if (handle) return `https://t.me/${handle}/${id}`;
+  const internal = String(chatId).match(/^-100(\d+)$/)?.[1];
+  return internal ? `https://t.me/c/${internal}/${id}` : null;
+}
+
+// شاهد كل جانب: مهمة تلقرام العامة ⇐ رابط منشور تلقرام نفسه، ومهمة التطبيق ⇐ رابط التطبيق من نص المنشور.
+// (منشورات قديمة خُزّنت بلا رابط لغياب username: يُبنى رابطها الآن من معرّف القناة.)
+function proofUrlForSide(post: typeof telegramChannelPostsTable.$inferSelect, side: Side): string | null {
+  if (side === "app") return post.siteUrl ?? null;
+  return post.postUrl ?? buildTelegramPostUrl(null, post.chatId, post.messageId);
+}
+
 // يخزّن المنشور قبل أي معالجة (فإن فشلت القاعدة يرجع الـ webhook بخطأ ويعيد تلقرام الإرسال).
 // يُرجع معرّف المنشور المخزَّن للمعالجة، أو null إن لم يكن من القناة المسجّلة.
 export async function storeChannelUpdate(update: any): Promise<number | null> {
@@ -172,7 +190,7 @@ export async function storeChannelUpdate(update: any): Promise<number | null> {
   const entities = post.caption_entities ?? post.entities ?? [];
   const hashtags = caption ? extractHashtags(caption, entities) : [];
   const username = channel.username || (typeof post.chat.username === "string" ? post.chat.username : null);
-  const postUrl = username ? `https://t.me/${username}/${post.message_id}` : null;
+  const postUrl = buildTelegramPostUrl(username, chatId, post.message_id);
   const messageId = Number(post.message_id);
 
   const [existing] = await db
@@ -350,9 +368,14 @@ async function processSide(post: typeof telegramChannelPostsTable.$inferSelect, 
   }
 
   if (match.kind === "match") {
+    const proofUrl = proofUrlForSide(post, side);
+    if (!proofUrl) {
+      await setSide(post.id, side, { status: "needs_review", reason: "تعذّر بناء رابط منشور تلقرام ليكون شاهدًا", taskId: match.taskId });
+      return;
+    }
     const result = await documentTaskAutomatically({
       taskId: match.taskId,
-      proofUrl: post.siteUrl!,
+      proofUrl,
       publishedAt: post.publishedAt,
       note: `وثّقه النظام تلقائيًا من منشور قناة تلقرام${ctx.channelTitle ? ` «${ctx.channelTitle}»` : ""} (${side === "telegram" ? "مهمة تلقرام" : "مهمة التطبيق"}) — نُشر بتاريخ ${post.publishedAt.toISOString()}`,
       activityUserName: "مراقبة تلقرام (تلقائي)",
@@ -537,8 +560,8 @@ export async function linkSideManually(postId: number, side: Side, taskId: numbe
   const post = await loadPost(postId);
   const state = sideState(post, side);
   if (state.status === "documented") throw new TelegramMonitorError(409, "هذا الجانب موثَّق مسبقًا — تراجع عنه أولًا");
-  const proofUrl = post.siteUrl ?? post.postUrl;
-  if (!proofUrl) throw new TelegramMonitorError(400, "لا يوجد رابط للمنشور يصلح شاهدًا");
+  const proofUrl = proofUrlForSide(post, side);
+  if (!proofUrl) throw new TelegramMonitorError(400, side === "telegram" ? "تعذّر بناء رابط منشور تلقرام ليكون شاهدًا" : "لا يوجد رابط تطبيق في المنشور يصلح شاهدًا");
   const { settings } = await assertLinkableTask(side, taskId);
   const result = await documentTaskAutomatically({
     taskId,
