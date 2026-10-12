@@ -30,6 +30,7 @@ import {
   ClipboardList,
   CalendarPlus,
   Send,
+  Camera,
 } from "lucide-react";
 import {
   Dialog,
@@ -388,6 +389,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     { href: "/settings/general", label: "الإعدادات العامة", icon: Settings, show: canManageSettings },
     { href: "/youtube-monitor", label: "مراقبة يوتيوب", icon: RefreshCw, show: canManageSettings },
     { href: "/telegram-monitor", label: "مراقبة تلقرام", icon: Send, show: isAdmin },
+    { href: "/instagram-monitor", label: "مراقبة إنستقرام", icon: Camera, show: isAdmin },
   ].filter((item) => item.show);
 
   const renderNavItem = (item: { href: string; label: string; icon: typeof LayoutDashboard }) => {

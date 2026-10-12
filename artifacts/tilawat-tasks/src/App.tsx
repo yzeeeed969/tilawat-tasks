@@ -21,6 +21,7 @@ import YoutubeMonitorPage from "@/pages/youtube-monitor";
 import PublishingTemplatePage from "@/pages/publishing-template";
 import WeeklySchedulePage from "@/pages/weekly-schedule";
 import TelegramMonitorPage from "@/pages/telegram-monitor";
+import InstagramMonitorPage from "@/pages/instagram-monitor";
 import Account from "@/pages/account";
 import Reminders from "@/pages/reminders";
 import Achievements from "@/pages/achievements";
@@ -172,6 +173,11 @@ function AppRouter() {
       <Route path="/telegram-monitor">
         <ProtectedRoute>
           <AppLayout><TelegramMonitorPage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/instagram-monitor">
+        <ProtectedRoute>
+          <AppLayout><InstagramMonitorPage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/youtube-monitor">
