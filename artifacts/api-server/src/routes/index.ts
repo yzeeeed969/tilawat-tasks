@@ -18,6 +18,7 @@ import activityLogRouter from "./activity-log";
 import telegramRouter from "./telegram";
 import publicRouter from "./public";
 import youtubeRouter from "./youtube";
+import instagramRouter, { instagramOauthRouter } from "./instagram";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -27,6 +28,8 @@ router.use(healthRouter);
 router.use(authRouter);
 router.use(telegramRouter);
 router.use(publicRouter);
+// عودة المتصفح من ربط إنستقرام — محميّة برمز state لمرة واحدة، لا بالجلسة.
+router.use(instagramOauthRouter);
 
 // Protected routes
 router.use(requireAuth);
@@ -36,6 +39,7 @@ router.use(tasksRouter);
 router.use(substitutionsRouter);
 router.use(weeklyScheduleRouter);
 router.use(telegramMonitorRouter);
+router.use(instagramRouter);
 router.use(taskGenerationRouter);
 router.use(commentsRouter);
 router.use(statsRouter);
