@@ -17,6 +17,7 @@ import {
   updateInstagramAccount,
   updateInstagramSettings,
 } from "../services/instagram-accounts";
+import { checkInstagramAccount, currentWeekPostCounts, listInstagramMedia, revertInstagramMedia, runInstagramMonitorTick } from "../services/instagram-monitor";
 
 function sendError(res: any, err: unknown) {
   if (err instanceof InstagramError) {
@@ -41,6 +42,12 @@ instagramOauthRouter.get("/instagram/oauth/callback", async (req, res) => {
 // ── إدارة (للمدير فقط) ────────────────────────────────────────────────────────────────────
 const router = Router();
 
+async function accountsWithWeekCounts() {
+  const settings = await getInstagramSettings();
+  const [accounts, counts] = await Promise.all([listInstagramAccounts(), currentWeekPostCounts(settings.trialMode)]);
+  return accounts.map((account) => ({ ...account, currentWeekPosts: counts.get(account.id) ?? 0 }));
+}
+
 router.use("/instagram", requireAdmin, async (_req, _res, next) => {
   try {
     await ensureInstagramSchema();
@@ -60,7 +67,7 @@ router.get("/instagram/setup", async (_req, res) => {
       redirectUri: config?.redirectUri ?? null,
       scopes: INSTAGRAM_SCOPES,
     },
-    accounts: await listInstagramAccounts(),
+    accounts: await accountsWithWeekCounts(),
     pages: await listInstagramPages(),
     members: await db.select({ id: membersTable.id, name: membersTable.name }).from(membersTable).orderBy(asc(membersTable.name)),
   });
@@ -97,6 +104,34 @@ router.post("/instagram/accounts/:id/connect", async (req, res) => {
 router.post("/instagram/accounts/:id/disconnect", async (req, res) => {
   try {
     await disconnectInstagramAccount(Number(req.params.id));
+    res.json({ ok: true });
+  } catch (err) {
+    sendError(res, err);
+  }
+});
+
+// «افحص الآن»: كل الحسابات، أو حساب واحد.
+router.post("/instagram/check-now", async (req, res) => {
+  const accountId = Number(req.body?.accountId);
+  if (Number.isInteger(accountId) && accountId > 0) {
+    const settings = await getInstagramSettings();
+    res.json(await checkInstagramAccount(accountId, settings.trialMode));
+    return;
+  }
+  res.json(await runInstagramMonitorTick());
+});
+
+router.get("/instagram/media", async (req, res) => {
+  const accountId = Number(req.query.accountId);
+  res.json(await listInstagramMedia({
+    accountId: Number.isInteger(accountId) && accountId > 0 ? accountId : undefined,
+    limit: Number(req.query.limit) || 100,
+  }));
+});
+
+router.post("/instagram/media/:id/revert", async (req, res) => {
+  try {
+    await revertInstagramMedia(Number(req.params.id), (req as any).currentUser?.id ?? null);
     res.json({ ok: true });
   } catch (err) {
     sendError(res, err);

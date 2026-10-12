@@ -44,6 +44,7 @@ type NotificationType =
   | "telegram_weekly_quota_reminder"
   | "telegram_personal_reminder"
   | "telegram_password_reset"
+  | "telegram_instagram_reconnect"
   | "telegram_test";
 
 type Recipient = {
@@ -1831,4 +1832,33 @@ export async function sendTelegramPasswordReset(input: {
     recipientUserId: recipient.userId,
     recipientMemberId: recipient.memberId,
   });
+}
+
+// تنبيه للمدير: حساب إنستقرام لقارئ انقطع ربطه (فشل التجديد/أُلغي الإذن) — مرة واحدة لكل انقطاع
+// (alertKey = وقت الانقطاع، فلا يتكرر في كل فحص). مستقل عن إعدادات تنبيهات المهام.
+export async function notifyTelegramAdminsInstagramReconnect(input: { accountId: number; reciterName: string; username: string | null; reason: string; alertKey: string }) {
+  const settings = await getTelegramSettings();
+  if (!settings.enabled) return { sent: 0 };
+  const admins = await getAdminRecipients();
+  let sent = 0;
+  for (const admin of admins) {
+    const text = [
+      "⚠️ <b>حساب إنستقرام يحتاج إعادة ربط</b>",
+      "",
+      `👤 القارئ: ${escapeHtml(input.reciterName)}${input.username ? ` (@${escapeHtml(input.username)})` : ""}`,
+      `❗ السبب: ${escapeHtml(input.reason)}`,
+      "",
+      "افتح «مراقبة إنستقرام» واضغط «إعادة الربط». التوثيق التلقائي لهذا الحساب متوقف حتى ذلك.",
+    ].join("\n");
+    const result = await sendLoggedTelegram({
+      type: "telegram_instagram_reconnect",
+      dedupeKey: `telegram:instagram_reconnect:account:${input.accountId}:${input.alertKey}:admin:${admin.userId}`,
+      chatId: admin.chatId,
+      text,
+      recipientUserId: admin.userId,
+      recipientMemberId: admin.memberId,
+    });
+    if (result.sent) sent += 1;
+  }
+  return { sent };
 }
