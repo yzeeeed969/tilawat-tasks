@@ -7,6 +7,7 @@ import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 import { ensureReciterSubstitutionSchema } from "./services/reciter-substitution-schema";
 import { ensureWeeklyScheduleSchema } from "./services/weekly-schedule-schema";
 import { ensureYoutubeMonitorSchema } from "./services/youtube-monitor-schema";
+import { ensureInstagramSchema } from "./services/instagram-schema";
 import { runStoppedSeriesBackfillOnce } from "./services/series-stop-backfill";
 import { runShortDurationMarkerBackfillOnce, runDueDateTimezoneBackfillOnce, runHashtagNameBackfillOnce } from "./services/youtube-monitor";
 
@@ -77,6 +78,20 @@ try {
   logger.info("youtube monitor tables ensured");
 } catch (err) {
   logger.error({ err }, "تعذّر ضمان جداول مراقبة يوتيوب عند الإقلاع — سيُعاد المحاولة عند أول فحص");
+}
+
+// جداول مراقبة إنستقرام — جديدة كليًا ولا يقرأها أي استعلام قائم، فتعذّرها هنا غير حرج
+// (تُضمن مجددًا عند أول طلب على مساراتها أو أول فحص).
+try {
+  await Promise.race([
+    ensureInstagramSchema(),
+    new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error("ensureInstagramSchema timed out")), 20_000).unref();
+    }),
+  ]);
+  logger.info("instagram monitor tables ensured");
+} catch (err) {
+  logger.error({ err }, "تعذّر ضمان جداول مراقبة إنستقرام عند الإقلاع — سيُعاد المحاولة عند أول طلب");
 }
 
 // إصلاح لمرة واحدة: مقاطع تجاهلها خلل سابق بسبب قِصر مدتها رغم حملها العلامة *1.
