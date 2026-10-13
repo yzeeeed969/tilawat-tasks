@@ -26,6 +26,8 @@ export const instagramAccountsTable = pgTable("instagram_accounts", {
   platformId: integer("platform_id").notNull().references(() => platformsTable.id, { onDelete: "cascade" }),
   reciterId: integer("reciter_id").notNull().references(() => recitersTable.id, { onDelete: "cascade" }),
   memberId: integer("member_id").notNull().references(() => membersTable.id, { onDelete: "cascade" }),
+  // الهدف الأسبوعي: عدد المنشورات المطلوبة لإكمال مهمة الأسبوع («هدف أسبوعي بعدد مرات»).
+  weeklyGoal: integer("weekly_goal").notNull().default(2),
   enabled: boolean("enabled").notNull().default(true),
   // الربط (OAuth): يُملأ بعد موافقة صاحب الحساب.
   igUserId: text("ig_user_id"),

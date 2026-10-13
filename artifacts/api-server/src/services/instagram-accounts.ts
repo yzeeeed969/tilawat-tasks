@@ -82,6 +82,7 @@ export async function listInstagramAccounts() {
       reciterName: recitersTable.name,
       memberId: instagramAccountsTable.memberId,
       memberName: membersTable.name,
+      weeklyGoal: instagramAccountsTable.weeklyGoal,
       enabled: instagramAccountsTable.enabled,
       igUserId: instagramAccountsTable.igUserId,
       username: instagramAccountsTable.username,
@@ -116,7 +117,14 @@ async function resolveTemplate(pageId: number, memberId: number) {
   return { pageId: page.id, platformId: page.platformId, reciterId: page.reciterId, memberId };
 }
 
-export async function createInstagramAccount(input: { pageId: unknown; memberId: unknown }) {
+// الهدف الأسبوعي (عدد المنشورات لإكمال مهمة الأسبوع): عدد صحيح 1–50 كبقية مهام «هدف أسبوعي بعدد مرات».
+function parseWeeklyGoal(value: unknown): number {
+  const goal = Number(value);
+  if (!Number.isInteger(goal) || goal < 1 || goal > 50) throw new InstagramError(400, "الهدف الأسبوعي يجب أن يكون عددًا صحيحًا من 1 إلى 50");
+  return goal;
+}
+
+export async function createInstagramAccount(input: { pageId: unknown; memberId: unknown; weeklyGoal?: unknown }) {
   await ensureInstagramSchema();
   const pageId = Number(input.pageId);
   const memberId = Number(input.memberId);
@@ -124,11 +132,13 @@ export async function createInstagramAccount(input: { pageId: unknown; memberId:
   const template = await resolveTemplate(pageId, memberId);
   const [existing] = await db.select({ id: instagramAccountsTable.id }).from(instagramAccountsTable).where(eq(instagramAccountsTable.pageId, pageId)).limit(1);
   if (existing) throw new InstagramError(409, "لهذه الصفحة حساب إنستقرام مضاف مسبقًا");
-  const [created] = await db.insert(instagramAccountsTable).values(template).returning({ id: instagramAccountsTable.id });
+  const weeklyGoal = input.weeklyGoal === undefined || input.weeklyGoal === "" ? 2 : parseWeeklyGoal(input.weeklyGoal);
+  const [created] = await db.insert(instagramAccountsTable).values({ ...template, weeklyGoal }).returning({ id: instagramAccountsTable.id });
   return created;
 }
 
-export async function updateInstagramAccount(id: number, input: { memberId?: unknown; enabled?: unknown }) {
+// تغيير الهدف أو العضو يسري على مهام الأسابيع القادمة؛ مهمة الأسبوع الجاري تبقى كما أُنشئت.
+export async function updateInstagramAccount(id: number, input: { memberId?: unknown; enabled?: unknown; weeklyGoal?: unknown }) {
   await ensureInstagramSchema();
   const [account] = await db.select().from(instagramAccountsTable).where(eq(instagramAccountsTable.id, id)).limit(1);
   if (!account) throw new InstagramError(404, "الحساب غير موجود");
@@ -138,6 +148,7 @@ export async function updateInstagramAccount(id: number, input: { memberId?: unk
     patch.memberId = template.memberId;
   }
   if (typeof input.enabled === "boolean") patch.enabled = input.enabled;
+  if (input.weeklyGoal !== undefined) patch.weeklyGoal = parseWeeklyGoal(input.weeklyGoal);
   if (Object.keys(patch).length === 0) return account;
   const [updated] = await db.update(instagramAccountsTable).set(patch).where(eq(instagramAccountsTable.id, id)).returning();
   return updated;

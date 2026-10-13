@@ -13,14 +13,16 @@ import {
 import { ensureInstagramSchema } from "./instagram-schema";
 import { getInstagramSettings, InstagramError } from "./instagram-accounts";
 import { fetchRecentMedia, getInstagramConfig, InstagramApiError, refreshLongLivedToken, type InstagramMediaItem } from "./instagram-client";
-import { addExtraProof, documentTaskAutomatically } from "./auto-documentation";
+import { addQuotaProof } from "./auto-documentation";
 import { notifyTelegramAdminsInstagramReconnect } from "./telegram-notification-engine";
 import { decryptToken, encryptToken } from "../lib/instagram-token-crypto";
 import { safeAnchorFromDateKey } from "../lib/hijri";
 
 // محرّك مراقبة إنستقرام: المطابقة بالحساب وحده (لا صلاة ولا تاريخ ولا علامة).
-// - أول منشور/ريل في الأسبوع (الأحد→السبت بتوقيت الرياض) ⇐ مهمة الأسبوع من قالب الحساب + توثيقها.
-// - المنشورات التالية في نفس الأسبوع ⇐ شواهد إضافية لنفس المهمة، بلا إشعار ثانٍ.
+// - مهمة الأسبوع من نوع «هدف أسبوعي بعدد مرات» (weeklyQuotaRequired = هدف الحساب N): تُنشأ أول الأسبوع
+//   (الأحد→السبت بتوقيت الرياض) من قالب الحساب فتظهر 0/N، أو عند أول منشور إن لم تكن أُنشئت بعد.
+// - كل منشور/ريل في الأسبوع ⇐ شاهد في نفس المهمة (X/N). تكتمل فقط عند بلوغ N، ويُرسل إشعار الإكمال
+//   مرة واحدة لحظتها؛ ما زاد عن N شواهد إضافية بلا تغيير حالة ولا إشعار.
 // - مهمة واحدة لكل حساب في الأسبوع (instagram_weekly_tasks فريد + قفل لكل حساب داخل العملية).
 
 const ACCEPTED_PRODUCT_TYPES = new Set(["FEED", "REELS"]);
@@ -149,7 +151,7 @@ async function setMedia(id: number, outcome: Outcome) {
 // مهمة الأسبوع القائمة (غير محذوفة) لهذا الحساب، إن وُجدت.
 async function weeklyTaskFor(accountId: number, weekStart: string) {
   const [row] = await db
-    .select({ taskId: tasksTable.id, status: tasksTable.status })
+    .select({ taskId: tasksTable.id, status: tasksTable.status, required: tasksTable.weeklyQuotaRequired })
     .from(instagramWeeklyTasksTable)
     .innerJoin(tasksTable, eq(tasksTable.id, instagramWeeklyTasksTable.taskId))
     .where(and(eq(instagramWeeklyTasksTable.accountId, accountId), eq(instagramWeeklyTasksTable.weekStart, weekStart), isNull(tasksTable.deletedAt)))
@@ -157,7 +159,8 @@ async function weeklyTaskFor(accountId: number, weekStart: string) {
   return row ?? null;
 }
 
-// إنشاء مهمة الأسبوع من القالب: من الأحد إلى السبت، على صفحة القارئ، للعضو المسؤول.
+// إنشاء مهمة الأسبوع من القالب: «هدف أسبوعي بعدد مرات» = هدف الحساب، من الأحد إلى السبت، على صفحة
+// القارئ، للعضو المسؤول. تبدأ 0/N معلّقة، وتصبح متأخرة بعد السبت إن لم تبلغ الهدف.
 async function createWeeklyTask(account: InstagramAccount, weekStart: string): Promise<number> {
   const reciterName = await reciterNameOf(account.reciterId);
   const weekEnd = addDaysToKey(weekStart, 6);
@@ -178,12 +181,44 @@ async function createWeeklyTask(account: InstagramAccount, weekStart: string): P
       endDate: dateOfKey(weekEnd),
       dueDate: dateOfKey(weekEnd),
       recurrence: "none",
-      assigneeNote: "أُنشئت تلقائيًا من أول منشور إنستقرام في الأسبوع — المنشورات التالية تُضاف شواهد إضافية",
+      weeklyQuotaRequired: account.weeklyGoal,
+      weeklyQuotaPeriodStart: dateOfKey(weekStart),
+      weeklyQuotaPeriodEnd: dateOfKey(weekEnd),
+      assigneeNote: `هدف أسبوعي: ${account.weeklyGoal} منشورات على إنستقرام — كل منشور يُحتسب شاهدًا تلقائيًا`,
     }).returning({ id: tasksTable.id });
     await tx.insert(taskMembersTable).values({ taskId: task.id, memberId: account.memberId });
     await tx.insert(instagramWeeklyTasksTable).values({ accountId: account.id, weekStart, taskId: task.id });
     return task.id as number;
   });
+}
+
+// مهمة الأسبوع لهذا الحساب: القائمة، أو تُنشأ الآن (سباق نادر ⇐ نستخدم ما أُنشئ للتو).
+async function ensureWeeklyTask(account: InstagramAccount, weekStart: string): Promise<{ taskId: number; created: boolean } | null> {
+  const existing = await weeklyTaskFor(account.id, weekStart);
+  if (existing) return { taskId: existing.taskId, created: false };
+  try {
+    return { taskId: await createWeeklyTask(account, weekStart), created: true };
+  } catch {
+    const raced = await weeklyTaskFor(account.id, weekStart);
+    return raced ? { taskId: raced.taskId, created: false } : null;
+  }
+}
+
+// أول الأسبوع: مهمة 0/N لكل حساب مفعّل سبق ربطه (حتى لو انقطع ربطه) — فيظهر الحساب الذي لم ينشر شيئًا.
+export async function ensureCurrentWeekInstagramTasks(now = new Date()): Promise<number> {
+  await ensureInstagramSchema();
+  const weekStart = riyadhWeekStart(now);
+  const accounts = await db.select().from(instagramAccountsTable).where(and(
+    eq(instagramAccountsTable.enabled, true),
+    inArray(instagramAccountsTable.status, ["connected", "needs_reconnect"]),
+  ));
+  let created = 0;
+  for (const account of accounts) {
+    if (!account.monitoringStartedAt) continue;
+    const result = await withAccountLock(account.id, () => ensureWeeklyTask(account, weekStart));
+    if (result?.created) created += 1;
+  }
+  return created;
 }
 
 async function processMediaItem(account: InstagramAccount, item: InstagramMediaItem, trialMode: boolean): Promise<boolean> {
@@ -220,59 +255,52 @@ async function processMediaItem(account: InstagramAccount, item: InstagramMediaI
 
   const existing = await weeklyTaskFor(account.id, weekStart);
 
+  // وضع التجربة: لا مهام ولا شواهد — نحسب ما كان سيحدث (X/N) من الشواهد الفعلية + سجلات التجربة السابقة.
   if (trialMode) {
-    if (existing) {
-      await setMedia(row.id, { status: "trial_would_add", reason: "وضع التجربة: كان سيُضاف شاهدًا إضافيًا لمهمة الأسبوع", taskId: existing.taskId });
-      return true;
-    }
-    const [earlier] = await db.select({ id: instagramMediaTable.id }).from(instagramMediaTable).where(and(
+    const goal = existing?.required && existing.required > 0 ? existing.required : account.weeklyGoal;
+    const realProofs = existing
+      ? Number((await db.select({ c: sql<number>`count(*)::int` }).from(taskProofsTable).where(and(eq(taskProofsTable.taskId, existing.taskId), isNull(taskProofsTable.deletedAt))))[0].c)
+      : 0;
+    const trialBefore = Number((await db.select({ c: sql<number>`count(*)::int` }).from(instagramMediaTable).where(and(
       eq(instagramMediaTable.accountId, account.id),
       eq(instagramMediaTable.weekStart, weekStart),
-      eq(instagramMediaTable.status, "trial_would_create"),
-    )).limit(1);
-    await setMedia(row.id, earlier
-      ? { status: "trial_would_add", reason: "وضع التجربة: كان سيُضاف شاهدًا إضافيًا لمهمة هذا الأسبوع" }
-      : { status: "trial_would_create", reason: "وضع التجربة: كان سيُنشئ مهمة الأسبوع ويوثّقها بهذا المنشور" });
+      inArray(instagramMediaTable.status, ["trial_would_create", "trial_would_add"]),
+    )))[0].c);
+    const count = realProofs + trialBefore + 1;
+    const what = count < goal ? `شاهد ${count}/${goal} — لن تكتمل بعد` : count === goal ? `شاهد ${count}/${goal} — ستكتمل المهمة` : `شاهد إضافي (+${count - goal} فوق الهدف)`;
+    await setMedia(row.id, {
+      status: existing || trialBefore > 0 ? "trial_would_add" : "trial_would_create",
+      reason: `وضع التجربة: ${existing || trialBefore > 0 ? "" : "كان سيُنشئ مهمة الأسبوع، "}${what}`,
+      taskId: existing?.taskId ?? null,
+    });
     return true;
   }
 
+  const weekly = existing ? { taskId: existing.taskId, created: false } : await ensureWeeklyTask(account, weekStart);
+  if (!weekly) {
+    await setMedia(row.id, { status: "needs_review", reason: "تعذّر إنشاء مهمة الأسبوع" });
+    return true;
+  }
   const note = `وثّقه النظام تلقائيًا من منشور إنستقرام${account.username ? ` (@${account.username})` : ""} — نُشر بتاريخ ${item.timestamp.toISOString()}`;
-  const meta = { accountId: account.id, mediaId: item.id, permalink: item.permalink, weekStart };
-
-  // مهمة الأسبوع مكتملة ⇐ شاهد إضافي فقط (بلا إشعار ولا تغيير حالة).
-  if (existing && existing.status === "completed") {
-    const added = await addExtraProof({ taskId: existing.taskId, proofUrl: item.permalink, note, activityUserName: "مراقبة إنستقرام (تلقائي)", activityAction: "instagram_extra_proof", meta });
-    await setMedia(row.id, added.added
-      ? { status: "extra_proof", reason: "شاهد إضافي لمهمة الأسبوع", taskId: existing.taskId, proofId: added.createdProofId }
-      : { status: "needs_review", reason: added.reason ?? "تعذّر إضافة الشاهد", taskId: existing.taskId });
+  const added = await addQuotaProof({
+    taskId: weekly.taskId,
+    proofUrl: item.permalink,
+    note,
+    activityUserName: "مراقبة إنستقرام (تلقائي)",
+    activityAction: "instagram_post_proof",
+    meta: { accountId: account.id, mediaId: item.id, permalink: item.permalink, weekStart },
+  });
+  if (!added.added) {
+    await setMedia(row.id, { status: "needs_review", reason: added.reason ?? "تعذّر إضافة الشاهد", taskId: weekly.taskId });
     return true;
   }
-
-  // لا مهمة بعد ⇐ إنشاؤها من القالب. (مهمة قائمة معلّقة — أُعيدت بعد تراجع — تُوثَّق كما هي.)
-  let taskId = existing?.taskId ?? null;
-  let created = false;
-  if (!taskId) {
-    try {
-      taskId = await createWeeklyTask(account, weekStart);
-      created = true;
-    } catch {
-      // سباق نادر: مهمة الأسبوع أُنشئت للتو من مسار آخر — نستخدمها.
-      taskId = (await weeklyTaskFor(account.id, weekStart))?.taskId ?? null;
-      if (!taskId) {
-        await setMedia(row.id, { status: "needs_review", reason: "تعذّر إنشاء مهمة الأسبوع" });
-        return true;
-      }
-    }
-  }
-  const result = await documentTaskAutomatically({ taskId, proofUrl: item.permalink, publishedAt: item.timestamp, note, activityUserName: "مراقبة إنستقرام (تلقائي)", activityAction: "instagram_post_documented", meta });
-  if (result.documented) {
-    await setMedia(row.id, { status: "documented", reason: created ? "أول منشور في الأسبوع: أُنشئت مهمة الأسبوع ووُثّقت" : "وُثّقت مهمة الأسبوع (كانت معلّقة)", taskId, proofId: result.createdProofId });
-  } else {
-    const added = await addExtraProof({ taskId, proofUrl: item.permalink, note, activityUserName: "مراقبة إنستقرام (تلقائي)", activityAction: "instagram_extra_proof", meta });
-    await setMedia(row.id, added.added
-      ? { status: "extra_proof", reason: "شاهد إضافي لمهمة الأسبوع", taskId, proofId: added.createdProofId }
-      : { status: "needs_review", reason: result.reason ?? "تعذّر التوثيق", taskId });
-  }
+  const { count, required } = added;
+  const outcome: Outcome = added.completedNow
+    ? { status: "documented", reason: `اكتمل الهدف الأسبوعي (${count}/${required}) — أُرسل إشعار الإكمال` }
+    : count < required
+      ? { status: "proof_counted", reason: `شاهد ${count}/${required} — المهمة لم تكتمل بعد` }
+      : { status: "extra_proof", reason: `شاهد إضافي (+${count - required} فوق الهدف) — بلا تغيير حالة ولا إشعار` };
+  await setMedia(row.id, { ...outcome, taskId: weekly.taskId, proofId: added.createdProofId });
   return true;
 }
 
@@ -300,7 +328,7 @@ export async function checkInstagramAccount(accountId: number, trialMode: boolea
       return { processed: 0, error: message };
     }
     let processed = 0;
-    // الأقدم أولًا: أول منشور زمنيًا في الأسبوع هو الذي يُنشئ المهمة.
+    // الأقدم أولًا: الشواهد تُحتسب بترتيب النشر.
     for (const item of [...media].sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())) {
       if (await processMediaItem(account, item, trialMode)) processed += 1;
     }
@@ -315,6 +343,7 @@ export async function runInstagramMonitorTick(): Promise<{ processed: number; ac
   if (!settings.enabled) return { processed: 0, accountsChecked: 0, skipped: "disabled", refreshed: 0 };
   if (!getInstagramConfig()) return { processed: 0, accountsChecked: 0, skipped: "no_config", refreshed: 0 };
   const { refreshed } = await refreshDueInstagramTokens();
+  if (!settings.trialMode) await ensureCurrentWeekInstagramTasks();
   const accounts = await db.select({ id: instagramAccountsTable.id }).from(instagramAccountsTable)
     .where(and(eq(instagramAccountsTable.enabled, true), eq(instagramAccountsTable.status, "connected")));
   let processed = 0;
@@ -359,35 +388,34 @@ export async function currentWeekPostCounts(trialMode: boolean, now = new Date()
     .from(instagramMediaTable)
     .where(and(
       eq(instagramMediaTable.weekStart, riyadhWeekStart(now)),
-      inArray(instagramMediaTable.status, trialMode ? ["trial_would_create", "trial_would_add"] : ["documented", "extra_proof"]),
+      inArray(instagramMediaTable.status, trialMode ? ["trial_would_create", "trial_would_add"] : ["documented", "proof_counted", "extra_proof"]),
     ))
     .groupBy(instagramMediaTable.accountId);
   return new Map(rows.map((row) => [row.accountId, Number(row.count)]));
 }
 
-// تراجع عن شاهد منشور: يُحذف الشاهد ناعمًا؛ إن كان آخر شاهد فعّال تعود مهمة الأسبوع معلّقة.
+// تراجع عن شاهد منشور: يُحذف الشاهد ناعمًا ويُعاد حساب X/N. إن نزل العدد عن الهدف تعود مهمة الأسبوع
+// معلّقة (ومتأخرة إن فات السبت). الإشعارات المُرسَلة سابقًا لا تُسحَب.
 export async function revertInstagramMedia(mediaId: number, userId: number | null) {
   await ensureInstagramSchema();
   const [media] = await db.select().from(instagramMediaTable).where(eq(instagramMediaTable.id, mediaId)).limit(1);
   if (!media) throw new InstagramError(404, "المنشور غير موجود");
-  if ((media.status !== "documented" && media.status !== "extra_proof") || !media.taskId) throw new InstagramError(400, "لا يوجد توثيق في هذا المنشور للتراجع عنه");
+  if (!["documented", "proof_counted", "extra_proof"].includes(media.status) || !media.taskId) throw new InstagramError(400, "لا يوجد توثيق في هذا المنشور للتراجع عنه");
   const taskId = media.taskId;
   await db.transaction(async (tx: any) => {
+    const [task] = await tx.select({ status: tasksTable.status, required: tasksTable.weeklyQuotaRequired }).from(tasksTable).where(eq(tasksTable.id, taskId)).for("update");
     if (media.proofId) await tx.update(taskProofsTable).set({ deletedAt: new Date() }).where(eq(taskProofsTable.id, media.proofId));
-    const [remaining] = await tx.select({ id: taskProofsTable.id }).from(taskProofsTable)
-      .where(and(eq(taskProofsTable.taskId, taskId), isNull(taskProofsTable.deletedAt))).limit(1);
-    if (!remaining) {
-      await tx.update(tasksTable).set({
-        status: "pending",
-        completedAt: null,
-        submissionUrl: sql`CASE WHEN ${tasksTable.submissionUrl} IN (SELECT tp.url FROM task_proofs tp WHERE tp.task_id = ${taskId} AND tp.deleted_at IS NOT NULL) THEN NULL ELSE ${tasksTable.submissionUrl} END`,
-      }).where(eq(tasksTable.id, taskId));
-    } else {
-      // رابط التسليم يتبع شاهدًا فعّالًا إن كان يشير إلى الشاهد المحذوف.
-      await tx.execute(sql`UPDATE tasks SET submission_url = (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NULL ORDER BY created_at LIMIT 1)
-        WHERE id = ${taskId} AND submission_url IN (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NOT NULL)`);
-    }
+    const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(taskProofsTable)
+      .where(and(eq(taskProofsTable.taskId, taskId), isNull(taskProofsTable.deletedAt)));
+    const required = task?.required && task.required > 0 ? task.required : 1;
+    const belowGoal = Number(count) < required;
+    await tx.update(tasksTable).set({
+      progress: Math.min(100, Math.round((Number(count) / required) * 100)),
+      ...(belowGoal && task?.status === "completed" ? { status: "pending", completedAt: null } : {}),
+    }).where(eq(tasksTable.id, taskId));
+    // رابط التسليم يتبع أقدم شاهد فعّال إن كان يشير إلى شاهد محذوف (أو يُمسح إن لم يبقَ شاهد).
+    await tx.execute(sql`UPDATE tasks SET submission_url = (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NULL ORDER BY created_at LIMIT 1)
+      WHERE id = ${taskId} AND submission_url IN (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NOT NULL)`);
   });
   await db.update(instagramMediaTable).set({ status: "reverted", reason: "تراجع عنه المدير — الإشعارات المُرسَلة سابقًا لم تُسحَب", reviewedByUserId: userId, reviewedAt: new Date() }).where(eq(instagramMediaTable.id, mediaId));
 }
-

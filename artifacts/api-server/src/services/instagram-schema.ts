@@ -36,6 +36,7 @@ async function runInstagramSchemaEnsure() {
       created_at timestamp NOT NULL DEFAULT now()
     )
   `);
+  await db.execute(sql`ALTER TABLE instagram_accounts ADD COLUMN IF NOT EXISTS weekly_goal integer NOT NULL DEFAULT 2`);
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_instagram_accounts_page ON instagram_accounts(page_id)`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_instagram_accounts_reciter ON instagram_accounts(reciter_id)`);
   await db.execute(sql`

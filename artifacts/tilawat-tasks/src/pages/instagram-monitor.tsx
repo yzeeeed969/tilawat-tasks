@@ -6,11 +6,12 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 
 // «مراقبة إنستقرام» (للمدير): ربط حساب إنستقرام احترافي لكل قارئ (عبر تسجيل الدخول بإنستقرام)،
-// ومتابعة حالة الربط وعدد منشورات الأسبوع وسجل المنشورات. المطابقة بالحساب وحده: أول منشور في الأسبوع
-// يُنشئ مهمة الأسبوع من القالب ويوثّقها، والمنشورات التالية شواهد إضافية.
+// ومتابعة حالة الربط وعدد منشورات الأسبوع وسجل المنشورات. المطابقة بالحساب وحده: مهمة الأسبوع «هدف أسبوعي
+// بعدد مرات» (هدف الحساب N)، كل منشور شاهد فيها (X/N)، وتكتمل عند بلوغ N.
 
 type Account = {
   id: number;
@@ -19,6 +20,7 @@ type Account = {
   reciterName: string;
   memberId: number;
   memberName: string;
+  weeklyGoal: number;
   enabled: boolean;
   username: string | null;
   status: "not_connected" | "connected" | "needs_reconnect";
@@ -49,10 +51,11 @@ type Media = {
 };
 
 const MEDIA_STATUS: Record<string, { label: string; className: string }> = {
-  documented: { label: "أنشأ مهمة الأسبوع ووثّقها", className: "bg-green-50 text-green-700 border-green-200" },
+  proof_counted: { label: "شاهد محتسب", className: "bg-amber-50 text-amber-700 border-amber-200" },
+  documented: { label: "اكتمل الهدف", className: "bg-green-50 text-green-700 border-green-200" },
   extra_proof: { label: "شاهد إضافي", className: "bg-emerald-50 text-emerald-700 border-emerald-200" },
   trial_would_create: { label: "تجربة: سيُنشئ المهمة", className: "bg-sky-50 text-sky-700 border-sky-200" },
-  trial_would_add: { label: "تجربة: شاهد إضافي", className: "bg-sky-50 text-sky-700 border-sky-200" },
+  trial_would_add: { label: "تجربة: سيُحتسب", className: "bg-sky-50 text-sky-700 border-sky-200" },
   historical: { label: "قبل الربط", className: "bg-muted text-muted-foreground border-border" },
   ignored: { label: "متجاهَل", className: "bg-muted text-muted-foreground border-border" },
   needs_review: { label: "بحاجة مراجعة", className: "bg-orange-50 text-orange-700 border-orange-200" },
@@ -83,6 +86,7 @@ export default function InstagramMonitorPage() {
   const { data: media } = useQuery({ queryKey: ["instagram-media"], queryFn: () => api<Media[]>("/api/instagram/media?limit=100") });
   const [newPageId, setNewPageId] = useState("");
   const [newMemberId, setNewMemberId] = useState("");
+  const [newGoal, setNewGoal] = useState("2");
 
   const refresh = () => {
     queryClient.invalidateQueries({ queryKey: ["instagram-setup"] });
@@ -106,8 +110,8 @@ export default function InstagramMonitorPage() {
     onError,
   });
   const createMutation = useMutation({
-    mutationFn: () => api("/api/instagram/accounts", { method: "POST", body: JSON.stringify({ pageId: Number(newPageId), memberId: Number(newMemberId) }) }),
-    onSuccess: () => { setNewPageId(""); setNewMemberId(""); refresh(); toast({ title: "أُضيف الحساب — اضغط «ربط» لتسجيل الدخول بإنستقرام" }); },
+    mutationFn: () => api("/api/instagram/accounts", { method: "POST", body: JSON.stringify({ pageId: Number(newPageId), memberId: Number(newMemberId), weeklyGoal: Number(newGoal) }) }),
+    onSuccess: () => { setNewPageId(""); setNewMemberId(""); setNewGoal("2"); refresh(); toast({ title: "أُضيف الحساب — اضغط «ربط» لتسجيل الدخول بإنستقرام" }); },
     onError,
   });
   const updateMutation = useMutation({
@@ -148,7 +152,7 @@ export default function InstagramMonitorPage() {
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h2 className="text-3xl font-bold text-foreground tracking-tight">مراقبة إنستقرام</h2>
-        <p className="text-muted-foreground mt-2 text-lg">أول منشور في الأسبوع من حساب القارئ يُنشئ مهمة الأسبوع ويوثّقها، والمنشورات التالية تُضاف شواهد إضافية</p>
+        <p className="text-muted-foreground mt-2 text-lg">مهمة واحدة لكل قارئ في الأسبوع («هدف أسبوعي بعدد مرات»): كل منشور شاهد فيها، وتكتمل عند بلوغ الهدف</p>
       </div>
 
       {needsReconnect.map((account) => (
@@ -198,7 +202,7 @@ export default function InstagramMonitorPage() {
       <Card className="border-border/50 shadow-sm">
         <CardHeader>
           <CardTitle className="text-lg">الحسابات</CardTitle>
-          <CardDescription>حساب واحد لكل صفحة قارئ على منصة إنستقرام. القالب = الصفحة + العضو المسؤول عن مهمة الأسبوع.</CardDescription>
+          <CardDescription>حساب واحد لكل صفحة قارئ على منصة إنستقرام. القالب = الصفحة + العضو المسؤول + الهدف الأسبوعي (عدد المنشورات). تغيير الهدف يسري من الأسبوع القادم.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="overflow-x-auto">
@@ -208,6 +212,7 @@ export default function InstagramMonitorPage() {
                   <th className="p-2 text-right font-medium">القارئ / الصفحة</th>
                   <th className="p-2 text-right font-medium">الحساب</th>
                   <th className="p-2 text-right font-medium">العضو المسؤول</th>
+                  <th className="p-2 text-right font-medium">الهدف</th>
                   <th className="p-2 text-right font-medium">منشورات هذا الأسبوع</th>
                   <th className="p-2 text-right font-medium">المفتاح ينتهي</th>
                   <th className="p-2 text-right font-medium">آخر فحص</th>
@@ -216,7 +221,7 @@ export default function InstagramMonitorPage() {
               </thead>
               <tbody>
                 {setup.accounts.length === 0 && (
-                  <tr><td colSpan={7} className="p-4 text-center text-muted-foreground">لا توجد حسابات بعد — أضف حسابًا من الأسفل.</td></tr>
+                  <tr><td colSpan={8} className="p-4 text-center text-muted-foreground">لا توجد حسابات بعد — أضف حسابًا من الأسفل.</td></tr>
                 )}
                 {setup.accounts.map((account) => (
                   <tr key={account.id} className="border-t align-top">
@@ -237,7 +242,16 @@ export default function InstagramMonitorPage() {
                         </SelectContent>
                       </Select>
                     </td>
-                    <td className="p-2 text-center font-semibold">{account.currentWeekPosts}</td>
+                    <td className="p-2">
+                      <Input
+                        type="number" min={1} max={50} className="h-8 w-16" defaultValue={account.weeklyGoal}
+                        onBlur={(e) => { const v = Number(e.target.value); if (v !== account.weeklyGoal) updateMutation.mutate({ id: account.id, patch: { weeklyGoal: v } }); }}
+                      />
+                    </td>
+                    <td className="p-2 text-center font-semibold">
+                      {Math.min(account.currentWeekPosts, account.weeklyGoal)}/{account.weeklyGoal}
+                      {account.currentWeekPosts > account.weeklyGoal && <span className="mr-1 text-xs font-normal text-emerald-700">+{account.currentWeekPosts - account.weeklyGoal} إضافي</span>}
+                    </td>
                     <td className="p-2 text-xs">{riyadhDate(account.tokenExpiresAt)}</td>
                     <td className="p-2 text-xs">{riyadh(account.lastCheckedAt)}</td>
                     <td className="p-2">
@@ -285,7 +299,11 @@ export default function InstagramMonitorPage() {
                 </SelectContent>
               </Select>
             </div>
-            <Button size="sm" disabled={!newPageId || !newMemberId || createMutation.isPending} onClick={() => createMutation.mutate()}>
+            <div className="space-y-1">
+              <div className="text-xs text-muted-foreground">الهدف الأسبوعي (منشورات)</div>
+              <Input type="number" min={1} max={50} className="h-9 w-24" value={newGoal} onChange={(e) => setNewGoal(e.target.value)} />
+            </div>
+            <Button size="sm" disabled={!newPageId || !newMemberId || !(Number(newGoal) >= 1) || createMutation.isPending} onClick={() => createMutation.mutate()}>
               <Plus className="ml-1 h-4 w-4" /> إضافة حساب
             </Button>
           </div>
@@ -304,7 +322,7 @@ export default function InstagramMonitorPage() {
           {(media ?? []).length === 0 && <p className="text-sm text-muted-foreground">لا منشورات بعد.</p>}
           {(media ?? []).map((item) => {
             const meta = MEDIA_STATUS[item.status] ?? { label: item.status, className: "bg-muted text-muted-foreground border-border" };
-            const canRevert = item.status === "documented" || item.status === "extra_proof";
+            const canRevert = item.status === "documented" || item.status === "proof_counted" || item.status === "extra_proof";
             return (
               <div key={item.id} className="rounded-md border border-border bg-background p-3 space-y-1">
                 <div className="flex flex-wrap items-start justify-between gap-2">
@@ -327,7 +345,7 @@ export default function InstagramMonitorPage() {
                 <div className="flex flex-wrap gap-2 pt-1">
                   {item.permalink && <a href={item.permalink} target="_blank" rel="noreferrer" className="text-xs text-sidebar-primary hover:underline">فتح المنشور</a>}
                   {canRevert && (
-                    <Button size="sm" variant="ghost" className="h-7 text-destructive" onClick={() => { if (confirm("تراجع عن هذا الشاهد؟ إن كان آخر شاهد تعود مهمة الأسبوع معلّقة.")) revertMutation.mutate(item.id); }}>
+                    <Button size="sm" variant="ghost" className="h-7 text-destructive" onClick={() => { if (confirm("تراجع عن هذا الشاهد؟ إن نزل العدد عن الهدف تعود مهمة الأسبوع معلّقة.")) revertMutation.mutate(item.id); }}>
                       <Undo2 className="ml-1 h-3.5 w-3.5" /> تراجع
                     </Button>
                   )}
