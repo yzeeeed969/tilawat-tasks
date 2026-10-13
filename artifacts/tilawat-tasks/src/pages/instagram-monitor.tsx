@@ -36,6 +36,12 @@ type Setup = {
   pages: Array<{ id: number; name: string; reciterId: number | null; reciterName: string | null }>;
   members: Array<{ id: number; name: string }>;
 };
+type CleanupPreview = {
+  weekStart: string;
+  candidates: Array<{ id: number; title: string; dueDate: string; seriesId: number | null; weeklyQuotaRequired: number }>;
+  protectedCount: number;
+  seriesToStop: number[];
+};
 type Media = {
   id: number;
   reciterName: string;
@@ -137,6 +143,22 @@ export default function InstagramMonitorPage() {
   const revertMutation = useMutation({
     mutationFn: (id: number) => api(`/api/instagram/media/${id}/revert`, { method: "POST" }),
     onSuccess: () => { refresh(); toast({ title: "تم التراجع عن الشاهد" }); },
+    onError,
+  });
+
+  const [cleanupPreview, setCleanupPreview] = useState<CleanupPreview | null>(null);
+  const previewCleanupMutation = useMutation({
+    mutationFn: () => api<CleanupPreview>("/api/instagram/legacy-cleanup"),
+    onSuccess: setCleanupPreview,
+    onError,
+  });
+  const applyCleanupMutation = useMutation({
+    mutationFn: () => api<{ deletedTasks: number; stoppedSeries: number; protectedCount: number }>("/api/instagram/legacy-cleanup", { method: "POST", body: JSON.stringify({ confirm: true }) }),
+    onSuccess: (result) => {
+      setCleanupPreview(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
+      toast({ title: `تم: حُذفت ${result.deletedTasks} مهمة حذفًا ناعمًا، وأُوقفت ${result.stoppedSeries} سلسلة`, description: result.protectedCount > 0 ? `${result.protectedCount} مهمة فيها شواهد لم تُمس.` : undefined });
+    },
     onError,
   });
 
@@ -309,6 +331,40 @@ export default function InstagramMonitorPage() {
           </div>
           {setup.pages.length === 0 && (
             <p className="text-xs text-muted-foreground">لا توجد صفحات على منصة إنستقرام — أضف صفحة لكل قارئ (مربوطة بالقارئ) من «المنصات والصفحات».</p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card className="border-border/50 shadow-sm">
+        <CardHeader>
+          <CardTitle className="text-lg">تنظيف المهام الأسبوعية القديمة المكرّرة</CardTitle>
+          <CardDescription>
+            مهام «هدف أسبوعي بعدد مرات» على إنستقرام من سلاسل يدوية قديمة (غير مهام المراقبة)، للأسبوع الجاري وما بعده، بلا أي شاهد.
+            تُحذف حذفًا ناعمًا (قابلة للاسترجاع من المحذوفات)، وتُوقف سلاسلها فلا تُولّد مجددًا. المهام التي فيها شواهد لا تُمس.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <Button size="sm" variant="outline" disabled={previewCleanupMutation.isPending} onClick={() => previewCleanupMutation.mutate()}>
+            {previewCleanupMutation.isPending && <Loader2 className="ml-1 h-4 w-4 animate-spin" />} معاينة
+          </Button>
+          {cleanupPreview && (
+            <div className="space-y-2 rounded-md border p-3 text-sm">
+              <p>
+                من أسبوع {cleanupPreview.weekStart}: <b>{cleanupPreview.candidates.length}</b> مهمة ستُحذف حذفًا ناعمًا،
+                و<b>{cleanupPreview.seriesToStop.length}</b> سلسلة ستُوقف
+                {cleanupPreview.protectedCount > 0 && <>، و{cleanupPreview.protectedCount} مهمة فيها شواهد لن تُمس</>}.
+              </p>
+              {cleanupPreview.candidates.length > 0 && (
+                <ul className="max-h-48 list-disc overflow-y-auto pr-5 text-xs text-muted-foreground">
+                  {cleanupPreview.candidates.map((c) => <li key={c.id}>#{c.id} — {c.title} — {c.dueDate} (هدف {c.weeklyQuotaRequired})</li>)}
+                </ul>
+              )}
+              {(cleanupPreview.candidates.length > 0 || cleanupPreview.seriesToStop.length > 0) && (
+                <Button size="sm" variant="destructive" disabled={applyCleanupMutation.isPending} onClick={() => { if (confirm(`تأكيد: حذف ناعم لـ ${cleanupPreview.candidates.length} مهمة وإيقاف ${cleanupPreview.seriesToStop.length} سلسلة؟`)) applyCleanupMutation.mutate(); }}>
+                  تنفيذ التنظيف
+                </Button>
+              )}
+            </div>
           )}
         </CardContent>
       </Card>
