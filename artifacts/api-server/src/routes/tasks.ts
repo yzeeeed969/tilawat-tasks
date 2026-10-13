@@ -21,6 +21,7 @@ import { ensureTaskPrayerSchema } from "../services/task-prayer-schema";
 import { ensureReciterSubstitutionSchema } from "../services/reciter-substitution-schema";
 import { ensureWeeklyScheduleSchema } from "../services/weekly-schedule-schema";
 import { checkYoutubeProofDate } from "../services/youtube-proof-date-check";
+import { anyInstagramPlatform, INSTAGRAM_QUOTA_BLOCKED_MESSAGE } from "../lib/instagram-platform";
 
 const router = Router();
 
@@ -1102,6 +1103,10 @@ router.post("/tasks", async (req, res) => {
   const recurrence = seriesType === "operational" ? seriesRecurrenceType : ((body.recurrence ?? "none") as string);
   if (weeklyQuotaRequired && (seriesType !== "operational" || seriesRecurrenceType !== "weekly")) {
     res.status(400).json({ error: "Weekly quota tasks require operational weekly recurrence" });
+    return;
+  }
+  if (weeklyQuotaRequired && await anyInstagramPlatform([body.platformId, ...platformAssignments.map((row) => row.platformId)])) {
+    res.status(400).json({ error: INSTAGRAM_QUOTA_BLOCKED_MESSAGE, message: INSTAGRAM_QUOTA_BLOCKED_MESSAGE });
     return;
   }
   const startDate = normalizeDate(body.startDate ?? body.dueDate);

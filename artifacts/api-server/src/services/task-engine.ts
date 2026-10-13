@@ -1,6 +1,7 @@
 import { and, desc, eq, isNull, sql } from "drizzle-orm";
 import { db, tasksTable, taskMembersTable, taskSeriesTable } from "@workspace/db";
 import { runStoppedSeriesBackfillOnce } from "./series-stop-backfill";
+import { anyInstagramPlatform } from "../lib/instagram-platform";
 
 const GENERATION_WINDOW_DAYS = 60;
 const SYNC_THRESHOLD_DAYS = 14;
@@ -118,6 +119,9 @@ export async function generateUpcomingTasksForSeries(input: GenerateInput) {
   }
 
   const weeklyQuotaRequired = input.weeklyQuotaRequired ?? null;
+  // مهام «هدف أسبوعي» على إنستقرام مصدرها الوحيد مراقبة إنستقرام (مهمة واحدة لكل حساب في الأسبوع):
+  // السلاسل اليدوية القديمة على إنستقرام لا تولّد شيئًا بعد الآن، فلا تتكرر مهمة الأسبوع.
+  if (weeklyQuotaRequired && await anyInstagramPlatform([input.platformId])) return [];
   const periods = weeklyQuotaRequired
     ? upcomingWeeklyQuotaPeriods(input.startDate)
     : upcomingDates(input.startDate, input.recurrenceType, input.recurrenceDays).map((dueDate) => ({

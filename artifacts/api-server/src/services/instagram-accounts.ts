@@ -20,6 +20,7 @@ import {
   InstagramApiError,
 } from "./instagram-client";
 import { encryptToken } from "../lib/instagram-token-crypto";
+import { INSTAGRAM_PLATFORM_NAME } from "../lib/instagram-platform";
 
 // إدارة حسابات إنستقرام وربطها (OAuth). المطابقة لاحقًا بالحساب وحده؛ القالب = صفحة القارئ + العضو.
 
@@ -31,8 +32,7 @@ export class InstagramError extends Error {
 }
 
 const STATE_TTL_MS = 15 * 60 * 1000;
-// منصة إنستقرام تُعرف باسمها (كما تُعرف منصة يوتيوب في بقية النظام).
-export const INSTAGRAM_PLATFORM_NAME = /إنستقرام|انستقرام|إنستغرام|انستغرام|انستجرام|إنستجرام|instagram/i;
+export { INSTAGRAM_PLATFORM_NAME };
 
 export async function getInstagramSettings() {
   await ensureInstagramSchema();
