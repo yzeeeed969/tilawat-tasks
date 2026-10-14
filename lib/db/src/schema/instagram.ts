@@ -1,4 +1,4 @@
-import { pgTable, serial, text, integer, boolean, timestamp, index, uniqueIndex } from "drizzle-orm/pg-core";
+import { pgTable, serial, text, integer, boolean, timestamp, index, uniqueIndex, jsonb } from "drizzle-orm/pg-core";
 import { platformsTable } from "./platforms";
 import { platformPagesTable } from "./platform-pages";
 import { recitersTable } from "./reciters";
@@ -16,6 +16,9 @@ export const instagramSettingsTable = pgTable("instagram_settings", {
   enabled: boolean("enabled").notNull().default(true),
   // وضع التجربة: يُسجّل ما كان سيحدث دون إنشاء مهام أو شواهد.
   trialMode: boolean("trial_mode").notNull().default(true),
+  // نسخة فيسبوك (إنستقرام ← فيسبوك): وضع تجربة مستقل (يسجّل المطابقات دون كتابة شواهد)، ونافذة التوقيت.
+  fbTrialMode: boolean("fb_trial_mode").notNull().default(true),
+  fbMatchWindowHours: integer("fb_match_window_hours").notNull().default(6),
   updatedAt: timestamp("updated_at").notNull().defaultNow(),
 });
 
@@ -28,6 +31,8 @@ export const instagramAccountsTable = pgTable("instagram_accounts", {
   memberId: integer("member_id").notNull().references(() => membersTable.id, { onDelete: "cascade" }),
   // الهدف الأسبوعي: عدد المنشورات المطلوبة لإكمال مهمة الأسبوع («هدف أسبوعي بعدد مرات»).
   weeklyGoal: integer("weekly_goal").notNull().default(2),
+  // صفحة فيسبوك المقابلة (معرّف الصفحة) — يُبحث فيها عن نسخة كل منشور إنستقرام.
+  fbPageId: text("fb_page_id"),
   enabled: boolean("enabled").notNull().default(true),
   // الربط (OAuth): يُملأ بعد موافقة صاحب الحساب.
   igUserId: text("ig_user_id"),
@@ -96,6 +101,72 @@ export const instagramWeeklyTasksTable = pgTable("instagram_weekly_tasks", {
 }, (table) => [
   uniqueIndex("uq_instagram_weekly_tasks_week").on(table.accountId, table.weekStart),
 ]);
+
+// ── فيسبوك: نسخة منشور إنستقرام (الاتجاه إنستقرام ← فيسبوك فقط) ───────────────────────────────
+
+// تفويض فيسبوك (صف واحد): مفتاح المستخدم طويل الأمد (مشفَّر) تُشتق منه مفاتيح الصفحات.
+export const facebookConnectionTable = pgTable("facebook_connection", {
+  id: serial("id").primaryKey(),
+  userTokenEncrypted: text("user_token_encrypted"),
+  tokenExpiresAt: timestamp("token_expires_at"),
+  fbUserId: text("fb_user_id"),
+  fbUserName: text("fb_user_name"),
+  // not_connected | connected | needs_reconnect
+  status: text("status").notNull().default("not_connected"),
+  lastError: text("last_error"),
+  reconnectAlertSentAt: timestamp("reconnect_alert_sent_at"),
+  connectedAt: timestamp("connected_at"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+// صفحات فيسبوك التي يديرها المفوِّض (من /me/accounts) مع مفتاح كل صفحة (مشفَّر).
+export const facebookPagesTable = pgTable("facebook_pages", {
+  id: serial("id").primaryKey(),
+  fbPageId: text("fb_page_id").notNull(),
+  name: text("name").notNull(),
+  accessTokenEncrypted: text("access_token_encrypted"),
+  // connected | needs_reconnect | missing (لم تعد ضمن صفحات المفوِّض)
+  status: text("status").notNull().default("connected"),
+  lastError: text("last_error"),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_facebook_pages_page").on(table.fbPageId),
+]);
+
+export const facebookOauthStatesTable = pgTable("facebook_oauth_states", {
+  state: text("state").primaryKey(),
+  createdByUserId: integer("created_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
+// ربط منشور إنستقرام بنسخته في فيسبوك: صف واحد لكل منشور إنستقرام (لا تكرار)، ومنه شاهد تكميلي.
+// لا صف بلا أصل إنستقرام أبدًا (media_id إلزامي).
+export const instagramFacebookLinksTable = pgTable("instagram_facebook_links", {
+  id: serial("id").primaryKey(),
+  mediaId: integer("media_id").notNull().references(() => instagramMediaTable.id, { onDelete: "cascade" }),
+  accountId: integer("account_id").notNull().references(() => instagramAccountsTable.id, { onDelete: "cascade" }),
+  fbPageId: text("fb_page_id").notNull(),
+  // pending | linked | trial_would_link | ambiguous | not_found | manual | reverted | skipped
+  status: text("status").notNull().default("pending"),
+  fbPostId: text("fb_post_id"),
+  fbUrl: text("fb_url"),
+  taskId: integer("task_id").references(() => tasksTable.id, { onDelete: "set null" }),
+  proofId: integer("proof_id").references(() => taskProofsTable.id, { onDelete: "set null" }),
+  candidates: jsonb("candidates"),
+  reason: text("reason"),
+  attempts: integer("attempts").notNull().default(0),
+  lastAttemptAt: timestamp("last_attempt_at"),
+  reviewedByUserId: integer("reviewed_by_user_id").references(() => usersTable.id, { onDelete: "set null" }),
+  reviewedAt: timestamp("reviewed_at"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (table) => [
+  uniqueIndex("uq_instagram_facebook_links_media").on(table.mediaId),
+  index("idx_instagram_facebook_links_status").on(table.status),
+]);
+
+export type FacebookPage = typeof facebookPagesTable.$inferSelect;
+export type InstagramFacebookLink = typeof instagramFacebookLinksTable.$inferSelect;
 
 export type InstagramAccount = typeof instagramAccountsTable.$inferSelect;
 export type InstagramMedia = typeof instagramMediaTable.$inferSelect;
