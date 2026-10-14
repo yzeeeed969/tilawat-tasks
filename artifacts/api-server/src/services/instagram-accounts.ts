@@ -42,11 +42,17 @@ export async function getInstagramSettings() {
   return created;
 }
 
-export async function updateInstagramSettings(input: { enabled?: unknown; trialMode?: unknown }) {
+export async function updateInstagramSettings(input: { enabled?: unknown; trialMode?: unknown; fbTrialMode?: unknown; fbMatchWindowHours?: unknown }) {
   const current = await getInstagramSettings();
   const patch: Partial<typeof instagramSettingsTable.$inferInsert> = { updatedAt: new Date() };
   if (typeof input.enabled === "boolean") patch.enabled = input.enabled;
   if (typeof input.trialMode === "boolean") patch.trialMode = input.trialMode;
+  if (typeof input.fbTrialMode === "boolean") patch.fbTrialMode = input.fbTrialMode;
+  if (input.fbMatchWindowHours !== undefined) {
+    const hours = Number(input.fbMatchWindowHours);
+    if (!Number.isInteger(hours) || hours < 1 || hours > 48) throw new InstagramError(400, "نافذة التوقيت لفيسبوك: عدد ساعات صحيح من 1 إلى 48");
+    patch.fbMatchWindowHours = hours;
+  }
   const [updated] = await db.update(instagramSettingsTable).set(patch).where(eq(instagramSettingsTable.id, current.id)).returning();
   return updated;
 }
@@ -83,6 +89,7 @@ export async function listInstagramAccounts() {
       memberId: instagramAccountsTable.memberId,
       memberName: membersTable.name,
       weeklyGoal: instagramAccountsTable.weeklyGoal,
+      fbPageId: instagramAccountsTable.fbPageId,
       enabled: instagramAccountsTable.enabled,
       igUserId: instagramAccountsTable.igUserId,
       username: instagramAccountsTable.username,

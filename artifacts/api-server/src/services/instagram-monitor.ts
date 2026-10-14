@@ -418,4 +418,9 @@ export async function revertInstagramMedia(mediaId: number, userId: number | nul
       WHERE id = ${taskId} AND submission_url IN (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NOT NULL)`);
   });
   await db.update(instagramMediaTable).set({ status: "reverted", reason: "تراجع عنه المدير — الإشعارات المُرسَلة سابقًا لم تُسحَب", reviewedByUserId: userId, reviewedAt: new Date() }).where(eq(instagramMediaTable.id, mediaId));
+  // نسخة فيسبوك المرتبطة (شاهد تكميلي) تتبع أصلها: لا شاهد فيسبوك بلا أصل إنستقرام.
+  await db.execute(sql`UPDATE task_proofs SET deleted_at = now()
+    WHERE is_supplementary AND deleted_at IS NULL AND id IN (SELECT proof_id FROM instagram_facebook_links WHERE media_id = ${mediaId} AND status IN ('linked', 'manual'))`);
+  await db.execute(sql`UPDATE instagram_facebook_links SET status = 'reverted', reason = 'تراجع المدير عن منشور إنستقرام الأصلي'
+    WHERE media_id = ${mediaId} AND status IN ('linked', 'manual', 'pending', 'trial_would_link', 'ambiguous', 'not_found')`);
 }

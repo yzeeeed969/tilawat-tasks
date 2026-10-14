@@ -1,5 +1,6 @@
 import type { Logger } from "pino";
 import { runInstagramMonitorTick } from "./instagram-monitor";
+import { runFacebookCrosspostTick } from "./facebook-crosspost";
 
 const INTERVAL_MS = 20 * 60_000; // كل 20 دقيقة (يشمل تجديد المفاتيح المستحقة)
 let started = false;
@@ -25,6 +26,9 @@ export function startInstagramScheduler(logger?: Logger) {
       }
       loggedNoConfig = false;
       if (result.processed > 0 || result.refreshed > 0) logger?.info({ result }, "Instagram monitor tick completed");
+      // نسخ فيسبوك: بعد توثيق منشورات إنستقرام (الاتجاه إنستقرام ← فيسبوك فقط).
+      const fb = await runFacebookCrosspostTick();
+      if (fb.processed > 0) logger?.info({ fb }, "Facebook crosspost tick completed");
     } catch (err) {
       logger?.warn({ err }, "Instagram monitor tick failed");
     } finally {

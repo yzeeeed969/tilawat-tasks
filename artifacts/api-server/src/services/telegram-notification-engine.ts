@@ -45,6 +45,7 @@ type NotificationType =
   | "telegram_personal_reminder"
   | "telegram_password_reset"
   | "telegram_instagram_reconnect"
+  | "telegram_facebook_reconnect"
   | "telegram_test";
 
 type Recipient = {
@@ -1853,6 +1854,33 @@ export async function notifyTelegramAdminsInstagramReconnect(input: { accountId:
     const result = await sendLoggedTelegram({
       type: "telegram_instagram_reconnect",
       dedupeKey: `telegram:instagram_reconnect:account:${input.accountId}:${input.alertKey}:admin:${admin.userId}`,
+      chatId: admin.chatId,
+      text,
+      recipientUserId: admin.userId,
+      recipientMemberId: admin.memberId,
+    });
+    if (result.sent) sent += 1;
+  }
+  return { sent };
+}
+
+// تنبيه للمدير: تفويض فيسبوك (نسخ منشورات إنستقرام) يحتاج إعادة ربط — مرة واحدة لكل انقطاع.
+export async function notifyTelegramAdminsFacebookReconnect(input: { reason: string; alertKey: string }) {
+  const settings = await getTelegramSettings();
+  if (!settings.enabled) return { sent: 0 };
+  const admins = await getAdminRecipients();
+  let sent = 0;
+  for (const admin of admins) {
+    const text = [
+      "⚠️ <b>ربط فيسبوك يحتاج إعادة تفويض</b>",
+      "",
+      `❗ السبب: ${escapeHtml(input.reason)}`,
+      "",
+      "افتح «مراقبة إنستقرام» واضغط «ربط فيسبوك». إرفاق نسخ فيسبوك متوقف حتى ذلك (توثيق إنستقرام نفسه مستمر).",
+    ].join(String.fromCharCode(10));
+    const result = await sendLoggedTelegram({
+      type: "telegram_facebook_reconnect",
+      dedupeKey: `telegram:facebook_reconnect:${input.alertKey}:admin:${admin.userId}`,
       chatId: admin.chatId,
       text,
       recipientUserId: admin.userId,
