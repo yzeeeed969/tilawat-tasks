@@ -5177,11 +5177,23 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                     <div key={proof.id} className="rounded-lg border border-border bg-background p-3 space-y-2">
                       <div className="flex items-center justify-between gap-3">
                         <span className="text-sm font-semibold text-sidebar-foreground">
-                          شاهد {index + 1}
-                          {index + 1 > weeklyQuotaInfo(proofsDialogTask).required && (
-                            <span className="mr-2 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
-                              إضافي
-                            </span>
+                          {/* الشاهد التكميلي (نسخة فيسبوك لمنشور إنستقرام) لا يُرقَّم ولا يُحتسب في العدّاد. */}
+                          {(proof as any).isSupplementary ? (
+                            <>
+                              نسخة فيسبوك
+                              <span className="mr-2 rounded-full border border-slate-200 bg-slate-50 px-2 py-0.5 text-[10px] font-medium text-slate-600">
+                                تكميلي — لا يُحتسب
+                              </span>
+                            </>
+                          ) : (
+                            <>
+                              شاهد {taskProofs(proofsDialogTask).slice(0, index + 1).filter((p) => !(p as any).isSupplementary).length}
+                              {taskProofs(proofsDialogTask).slice(0, index + 1).filter((p) => !(p as any).isSupplementary).length > weeklyQuotaInfo(proofsDialogTask).required && (
+                                <span className="mr-2 rounded-full border border-blue-200 bg-blue-50 px-2 py-0.5 text-[10px] font-medium text-blue-700">
+                                  إضافي
+                                </span>
+                              )}
+                            </>
                           )}
                         </span>
                         <div className="flex items-center gap-2">

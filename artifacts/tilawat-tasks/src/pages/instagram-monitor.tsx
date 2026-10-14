@@ -8,6 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
+import { FacebookCrosspostSection } from "@/components/facebook-crosspost-section";
 
 // «مراقبة إنستقرام» (للمدير): ربط حساب إنستقرام احترافي لكل قارئ (عبر تسجيل الدخول بإنستقرام)،
 // ومتابعة حالة الربط وعدد منشورات الأسبوع وسجل المنشورات. المطابقة بالحساب وحده: مهمة الأسبوع «هدف أسبوعي
@@ -21,6 +22,7 @@ type Account = {
   memberId: number;
   memberName: string;
   weeklyGoal: number;
+  fbPageId: string | null;
   enabled: boolean;
   username: string | null;
   status: "not_connected" | "connected" | "needs_reconnect";
@@ -30,7 +32,8 @@ type Account = {
   currentWeekPosts: number;
 };
 type Setup = {
-  settings: { enabled: boolean; trialMode: boolean };
+  settings: { enabled: boolean; trialMode: boolean; fbTrialMode: boolean; fbMatchWindowHours: number };
+  facebook: Parameters<typeof FacebookCrosspostSection>[0]["facebook"];
   meta: { configured: boolean; missingEnv: string[]; redirectUri: string | null; scopes: string[] };
   accounts: Account[];
   pages: Array<{ id: number; name: string; reciterId: number | null; reciterName: string | null }>;
@@ -340,6 +343,8 @@ export default function InstagramMonitorPage() {
           )}
         </CardContent>
       </Card>
+
+      <FacebookCrosspostSection facebook={setup.facebook} accounts={setup.accounts} settings={setup.settings} onChanged={refresh} />
 
       <Card className="border-border/50 shadow-sm">
         <CardHeader>
