@@ -146,7 +146,7 @@ router.get("/public/achievements", async (req, res) => {
           id: taskProofsTable.id,
         })
         .from(taskProofsTable)
-        .where(and(inArray(taskProofsTable.taskId, taskIds), isNull(taskProofsTable.deletedAt)))
+        .where(and(inArray(taskProofsTable.taskId, taskIds), isNull(taskProofsTable.deletedAt), eq(taskProofsTable.isSupplementary, false)))
     : [];
 
   const proofCounts = new Map<number, number>();

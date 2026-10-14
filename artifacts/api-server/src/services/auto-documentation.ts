@@ -146,7 +146,7 @@ export async function addQuotaProof(input: {
       createdByUserId: null,
     }).returning({ id: taskProofsTable.id });
     const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(taskProofsTable)
-      .where(and(eq(taskProofsTable.taskId, input.taskId), isNull(taskProofsTable.deletedAt)));
+      .where(and(eq(taskProofsTable.taskId, input.taskId), isNull(taskProofsTable.deletedAt), eq(taskProofsTable.isSupplementary, false)));
     const completedNow = count >= required && task.status !== "completed";
     const submissionUrl = task.submissionUrl ?? input.proofUrl;
     const completedAt = completedNow ? new Date() : null;
@@ -179,4 +179,40 @@ export async function addQuotaProof(input: {
   }
 
   return { added: true, createdProofId: done.createdProofId, count: done.count, required: done.required, completedNow: done.completedNow };
+}
+
+// شاهد تكميلي (مثل رابط نسخة فيسبوك لمنشور إنستقرام): يُضاف على المهمة كما هي — معلّقة أو مكتملة —
+// دون تغيير الحالة ولا التقدّم ولا رابط التسليم ولا عدّاد الهدف الأسبوعي، وبلا أي إشعار.
+export async function addSupplementaryProof(input: {
+  taskId: number;
+  proofUrl: string;
+  note: string;
+  activityUserName: string;
+  activityAction: string;
+  createdByUserId?: number | null;
+  meta?: Record<string, unknown>;
+}): Promise<{ added: boolean; createdProofId: number | null; reason?: string }> {
+  const [task] = await db
+    .select({ id: tasksTable.id, title: tasksTable.title, deletedAt: tasksTable.deletedAt })
+    .from(tasksTable)
+    .where(eq(tasksTable.id, input.taskId))
+    .limit(1);
+  if (!task || task.deletedAt) return { added: false, createdProofId: null, reason: "المهمة غير موجودة" };
+  const [proof] = await db.insert(taskProofsTable).values({
+    taskId: input.taskId,
+    url: input.proofUrl,
+    note: input.note,
+    createdByUserId: input.createdByUserId ?? null,
+    isSupplementary: true,
+  }).returning({ id: taskProofsTable.id });
+  await db.insert(activityLogTable).values({
+    userId: input.createdByUserId ?? null,
+    userName: input.activityUserName,
+    action: input.activityAction,
+    entityType: "task",
+    entityId: input.taskId,
+    entityName: task.title,
+    meta: input.meta ?? null,
+  });
+  return { added: true, createdProofId: proof.id };
 }

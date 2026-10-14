@@ -22,6 +22,7 @@ import { ensureReciterSubstitutionSchema } from "../services/reciter-substitutio
 import { ensureWeeklyScheduleSchema } from "../services/weekly-schedule-schema";
 import { checkYoutubeProofDate } from "../services/youtube-proof-date-check";
 import { anyInstagramPlatform, INSTAGRAM_QUOTA_BLOCKED_MESSAGE } from "../lib/instagram-platform";
+import { ensureTaskProofSupplementarySchema } from "../services/task-proof-supplementary-schema";
 
 const router = Router();
 
@@ -34,6 +35,7 @@ router.use(async (_req, _res, next) => {
     await ensureTaskDependenciesSchema();
     await ensureTaskFlowLinksSchema();
     await ensureTaskCreationGroupsSchema();
+    await ensureTaskProofSupplementarySchema();
     next();
   } catch (err) {
     next(err);
@@ -639,7 +641,7 @@ async function fetchTaskForPermission(taskId: number) {
 }
 
 async function fetchTaskProofsMap(taskIds: number[]) {
-  if (taskIds.length === 0) return new Map<number, { id: number; taskId: number; url: string; note: string | null; createdByUserId: number | null; createdAt: Date }[]>();
+  if (taskIds.length === 0) return new Map<number, { id: number; taskId: number; url: string; note: string | null; createdByUserId: number | null; createdAt: Date; isSupplementary: boolean }[]>();
   const rows = await db
     .select({
       id: taskProofsTable.id,
@@ -648,6 +650,7 @@ async function fetchTaskProofsMap(taskIds: number[]) {
       note: taskProofsTable.note,
       createdByUserId: taskProofsTable.createdByUserId,
       createdAt: taskProofsTable.createdAt,
+      isSupplementary: taskProofsTable.isSupplementary,
     })
     .from(taskProofsTable)
     .where(and(
@@ -656,7 +659,7 @@ async function fetchTaskProofsMap(taskIds: number[]) {
     ))
     .orderBy(taskProofsTable.createdAt);
 
-  const map = new Map<number, { id: number; taskId: number; url: string; note: string | null; createdByUserId: number | null; createdAt: Date }[]>();
+  const map = new Map<number, { id: number; taskId: number; url: string; note: string | null; createdByUserId: number | null; createdAt: Date; isSupplementary: boolean }[]>();
   for (const row of rows) {
     if (!map.has(row.taskId)) map.set(row.taskId, []);
     map.get(row.taskId)!.push(row);
@@ -1715,7 +1718,7 @@ router.put("/tasks/:id", async (req, res) => {
     const proofCount = await db
       .select({ count: sql<number>`count(*)::int` })
       .from(taskProofsTable)
-      .where(and(eq(taskProofsTable.taskId, id), isNull(taskProofsTable.deletedAt)));
+      .where(and(eq(taskProofsTable.taskId, id), isNull(taskProofsTable.deletedAt), eq(taskProofsTable.isSupplementary, false)));
     if ((proofCount[0]?.count ?? 0) < effectiveWeeklyQuotaRequired) {
       res.status(400).json({ error: "Weekly quota requires more proofs before completion" });
       return;
@@ -1980,10 +1983,11 @@ router.post("/tasks/:id/proofs", async (req, res) => {
       createdByUserId: currentUser?.id ?? null,
     });
 
+    // الشواهد التكميلية (نسخة فيسبوك) لا تُحتسب في عدّاد الهدف الأسبوعي.
     const [{ count }] = await tx
       .select({ count: sql<number>`count(*)::int` })
       .from(taskProofsTable)
-      .where(and(eq(taskProofsTable.taskId, id), isNull(taskProofsTable.deletedAt)));
+      .where(and(eq(taskProofsTable.taskId, id), isNull(taskProofsTable.deletedAt), eq(taskProofsTable.isSupplementary, false)));
 
     const required = (task as any).weeklyQuotaRequired as number | null;
     const progress = required ? Math.min(100, Math.round((count / required) * 100)) : task.progress;

@@ -826,7 +826,8 @@ function isWeeklyQuotaTask(task: TaskWithDetails) {
 
 function weeklyQuotaInfo(task: TaskWithDetails) {
   const required = Number((task as any).weeklyQuotaRequired ?? 0);
-  const proofs = taskProofs(task);
+  // الشواهد التكميلية (نسخة فيسبوك لمنشور إنستقرام) تظهر في القائمة ولا تُحتسب في العدّاد.
+  const proofs = taskProofs(task).filter((proof) => !(proof as any).isSupplementary);
   return {
     required,
     completed: proofs.length,

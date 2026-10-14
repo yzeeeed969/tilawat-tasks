@@ -259,7 +259,7 @@ async function processMediaItem(account: InstagramAccount, item: InstagramMediaI
   if (trialMode) {
     const goal = existing?.required && existing.required > 0 ? existing.required : account.weeklyGoal;
     const realProofs = existing
-      ? Number((await db.select({ c: sql<number>`count(*)::int` }).from(taskProofsTable).where(and(eq(taskProofsTable.taskId, existing.taskId), isNull(taskProofsTable.deletedAt))))[0].c)
+      ? Number((await db.select({ c: sql<number>`count(*)::int` }).from(taskProofsTable).where(and(eq(taskProofsTable.taskId, existing.taskId), isNull(taskProofsTable.deletedAt), eq(taskProofsTable.isSupplementary, false))))[0].c)
       : 0;
     const trialBefore = Number((await db.select({ c: sql<number>`count(*)::int` }).from(instagramMediaTable).where(and(
       eq(instagramMediaTable.accountId, account.id),
@@ -406,7 +406,7 @@ export async function revertInstagramMedia(mediaId: number, userId: number | nul
     const [task] = await tx.select({ status: tasksTable.status, required: tasksTable.weeklyQuotaRequired }).from(tasksTable).where(eq(tasksTable.id, taskId)).for("update");
     if (media.proofId) await tx.update(taskProofsTable).set({ deletedAt: new Date() }).where(eq(taskProofsTable.id, media.proofId));
     const [{ count }] = await tx.select({ count: sql<number>`count(*)::int` }).from(taskProofsTable)
-      .where(and(eq(taskProofsTable.taskId, taskId), isNull(taskProofsTable.deletedAt)));
+      .where(and(eq(taskProofsTable.taskId, taskId), isNull(taskProofsTable.deletedAt), eq(taskProofsTable.isSupplementary, false)));
     const required = task?.required && task.required > 0 ? task.required : 1;
     const belowGoal = Number(count) < required;
     await tx.update(tasksTable).set({
@@ -414,7 +414,7 @@ export async function revertInstagramMedia(mediaId: number, userId: number | nul
       ...(belowGoal && task?.status === "completed" ? { status: "pending", completedAt: null } : {}),
     }).where(eq(tasksTable.id, taskId));
     // رابط التسليم يتبع أقدم شاهد فعّال إن كان يشير إلى شاهد محذوف (أو يُمسح إن لم يبقَ شاهد).
-    await tx.execute(sql`UPDATE tasks SET submission_url = (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NULL ORDER BY created_at LIMIT 1)
+    await tx.execute(sql`UPDATE tasks SET submission_url = (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NULL AND NOT is_supplementary ORDER BY created_at LIMIT 1)
       WHERE id = ${taskId} AND submission_url IN (SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NOT NULL)`);
   });
   await db.update(instagramMediaTable).set({ status: "reverted", reason: "تراجع عنه المدير — الإشعارات المُرسَلة سابقًا لم تُسحَب", reviewedByUserId: userId, reviewedAt: new Date() }).where(eq(instagramMediaTable.id, mediaId));

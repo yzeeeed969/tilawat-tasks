@@ -54,7 +54,7 @@ function sundayOf(dateKey: string) {
 
 // الروابط الفعّالة لمهمة: شواهدها غير المحذوفة + رابط التسليم إن لم يكن ضمنها (بالترتيب، بلا تكرار).
 async function activeLinks(taskId: number, submissionUrl: string | null): Promise<string[]> {
-  const proofs = rowsOf(await db.execute(sql`SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NULL ORDER BY created_at, id`));
+  const proofs = rowsOf(await db.execute(sql`SELECT url FROM task_proofs WHERE task_id = ${taskId} AND deleted_at IS NULL AND NOT is_supplementary ORDER BY created_at, id`));
   const links = proofs.map((row) => String(row.url).trim()).filter(Boolean);
   if (submissionUrl?.trim()) links.push(submissionUrl.trim());
   return [...new Set(links)];
