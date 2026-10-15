@@ -16,7 +16,7 @@ function getApiKey(): string {
   return key;
 }
 
-async function callYoutubeApi<T>(path: string, params: Record<string, string>): Promise<T> {
+export async function callYoutubeApi<T>(path: string, params: Record<string, string>): Promise<T> {
   const key = getApiKey();
   const url = new URL(`${YOUTUBE_API_BASE}/${path}`);
   for (const [name, value] of Object.entries(params)) url.searchParams.set(name, value);

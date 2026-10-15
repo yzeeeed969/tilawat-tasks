@@ -19,6 +19,7 @@ import telegramRouter from "./telegram";
 import publicRouter from "./public";
 import youtubeRouter from "./youtube";
 import instagramRouter, { instagramOauthRouter } from "./instagram";
+import showcaseRouter, { showcasePublicRouter } from "./showcase";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -30,6 +31,8 @@ router.use(telegramRouter);
 router.use(publicRouter);
 // عودة المتصفح من ربط إنستقرام — محميّة برمز state لمرة واحدة، لا بالجلسة.
 router.use(instagramOauthRouter);
+// صفحة «منصات المشروع» العامة (/achievements).
+router.use(showcasePublicRouter);
 
 // Protected routes
 router.use(requireAuth);
@@ -40,6 +43,7 @@ router.use(substitutionsRouter);
 router.use(weeklyScheduleRouter);
 router.use(telegramMonitorRouter);
 router.use(instagramRouter);
+router.use(showcaseRouter);
 router.use(taskGenerationRouter);
 router.use(commentsRouter);
 router.use(statsRouter);
