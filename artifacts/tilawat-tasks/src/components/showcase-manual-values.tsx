@@ -5,17 +5,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useToast } from "@/hooks/use-toast";
 
-// قيم صفحة «منصات المشروع» العامة (/achievements) التي لا مصدر آلي لها: روابط المتاجر لكل تطبيق،
-// وعدد المتابعين اليدوي (لتويتر/X مثلًا — لا واجهة مجانية). يُترك فارغًا ⇐ لا يُعرض رقم بدل رقم خاطئ.
-// إنستقرام وفيسبوك ويوتيوب وقنوات تلقرام العامة تُسحب آليًا، والقيمة اليدوية لها احتياط فقط.
+// إدارة صفحة «منصات المشروع» العامة (/achievements): روابط المتاجر لكل تطبيق — الشيء اليدوي الوحيد (روابط
+// ثابتة، ليست أرقامًا) — وتقرير تشخيص. كل الأرقام آلية من مصدرها الرسمي فقط، ولا إدخال يدوي لأي رقم.
 
 type Diagnostics = {
   youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null }>;
   hidden: Array<{ what: string; why: string }>;
+  followers: Array<{ platform: string; account: string; automatic: boolean; reason: string | null }>;
 };
+const PLATFORM_LABEL: Record<string, string> = { instagram: "انستقرام", facebook: "فيسبوك", telegram: "تيليجرام", twitter: "تويتر / X", designs: "تصاميم (تيليجرام)" };
 type Manual = {
   platforms: Array<{ id: number; name: string; iosUrl: string | null; androidUrl: string | null }>;
-  pages: Array<{ id: number; platformId: number; platformName: string; name: string; pageUrl: string | null; manualFollowers: number | null }>;
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -43,11 +43,6 @@ export function ShowcaseManualValues() {
     onSuccess: (fresh) => { queryClient.setQueryData(["showcase-diagnostics"], fresh); toast({ title: "تم تحديث بيانات الصفحة" }); },
     onError,
   });
-  const savePage = useMutation({
-    mutationFn: (v: { id: number; followers: string }) => api(`/api/showcase/manual/pages/${v.id}`, { method: "PUT", body: JSON.stringify({ manualFollowers: v.followers === "" ? null : v.followers }) }),
-    onSuccess: done,
-    onError,
-  });
 
   if (!data) return null;
   const apps = data.platforms.filter((p) => /^تطبيق/.test(p.name.trim()));
@@ -59,8 +54,8 @@ export function ShowcaseManualValues() {
       <CardHeader>
         <CardTitle className="text-lg">بيانات صفحة «منصات المشروع» العامة</CardTitle>
         <CardDescription>
-          روابط المتاجر لكل تطبيق، وعدد متابعين يدوي للحسابات التي لا يُسحب عددها آليًا (مثل تويتر/X).
-          اتركه فارغًا ليُعرض الحساب بلا رقم. المنشورات تُحتسب تلقائيًا من الشواهد الموثّقة.{" "}
+          كل الأرقام (المتابعون والمشتركون والمشاهدات والمنشورات) تُجلب آليًا من مصادرها الرسمية — لا إدخال يدوي.
+          اليدوي الوحيد هنا روابط المتاجر لكل تطبيق.{" "}
           <a href="/achievements" target="_blank" rel="noopener noreferrer" className="text-sidebar-primary hover:underline">فتح الصفحة ↗</a>
         </CardDescription>
       </CardHeader>
@@ -81,6 +76,18 @@ export function ShowcaseManualValues() {
               {row.status === "ok" ? <span className="text-muted-foreground" dir="ltr">({row.channelId})</span> : <span className="text-red-700">— ينقصها: {row.problem}</span>}
             </div>
           ))}
+          {diagnostics && diagnostics.followers.length > 0 && (
+            <div className="pt-2">
+              <div className="text-sm font-semibold">أرقام المتابعين لكل حساب</div>
+              {diagnostics.followers.map((row, i) => (
+                <div key={i} className="text-xs">
+                  <span className={row.automatic ? "text-green-700" : "text-red-700"}>{row.automatic ? "✔ آلي" : "✘ بلا رقم"}</span>{" "}
+                  <span className="text-muted-foreground">{PLATFORM_LABEL[row.platform] ?? row.platform}</span> — <b>{row.account}</b>
+                  {!row.automatic && row.reason && <span className="text-muted-foreground"> — {row.reason}</span>}
+                </div>
+              ))}
+            </div>
+          )}
           {diagnostics && diagnostics.hidden.length > 0 && (
             <div className="pt-2">
               <div className="text-sm font-semibold">لا يظهر في الصفحة العامة (غير مسجّل في صفحة المنصات)</div>
@@ -101,19 +108,6 @@ export function ShowcaseManualValues() {
               <Button size="sm" variant="outline" disabled={saveApp.isPending} onClick={() => saveApp.mutate({ id: app.id, iosUrl: value(`ios-${app.id}`, app.iosUrl).trim(), androidUrl: value(`android-${app.id}`, app.androidUrl).trim() })}>حفظ</Button>
             </div>
           ))}
-        </div>
-        <div className="space-y-2">
-          <div className="text-sm font-semibold">متابعون يدويًا (احتياط عند غياب المصدر الآلي)</div>
-          <div className="max-h-80 space-y-1 overflow-y-auto">
-            {data.pages.map((page) => (
-              <div key={page.id} className="flex flex-wrap items-center gap-2">
-                <span className="w-28 text-xs text-muted-foreground">{page.platformName}</span>
-                <span className="w-56 text-sm">{page.name}</span>
-                <Input type="number" min={0} className="h-8 w-36" placeholder="بلا رقم" value={value(`f-${page.id}`, page.manualFollowers)} onChange={set(`f-${page.id}`)} />
-                <Button size="sm" variant="ghost" disabled={savePage.isPending} onClick={() => savePage.mutate({ id: page.id, followers: value(`f-${page.id}`, page.manualFollowers).trim() })}>حفظ</Button>
-              </div>
-            ))}
-          </div>
         </div>
       </CardContent>
     </Card>

@@ -15,6 +15,8 @@ import { INSTAGRAM_PLATFORM_NAME } from "../lib/instagram-platform";
 // 2) YouTube Data API: المشتركون والمشاهدات وآخر المقاطع لكل قناة.
 // 3) Meta Graph API (Quran Views): متابعو إنستقرام/فيسبوك وأحدث المقاطع.
 // كل مصدر مستقل: تعذّره يُفرغ قسمه فقط. النتيجة مخزّنة مؤقتًا 30 دقيقة، وتُقدَّم آخر نسخة سليمة عند الخطأ.
+// كل أرقام المتابعين/المشتركين/المشاهدات آلية من مصدرها الرسمي فقط — لا إدخال يدوي ولا احتياط يدوي ولا
+// تقدير. تعذّر الرقم ⇐ يُعرض الحساب بلا رقم، ويُذكر السبب للمدير في التشخيص.
 // لا يُرسل أي مفتاح أو رمز إلى الواجهة أبدًا.
 
 // المصدر الوحيد للقنوات والحسابات: صفحة إدارة المنصات. هذه القائمة القديمة (كانت ثابتة في الكود حتى
@@ -53,6 +55,8 @@ export type ShowcaseData = {
 export type ShowcaseDiagnostics = {
   youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null }>;
   hidden: Array<{ what: string; why: string }>;
+  // لكل حساب معروض: هل رقم المتابعين آلي الآن؟ وإن لا، لماذا.
+  followers: Array<{ platform: "instagram" | "facebook" | "telegram" | "twitter" | "designs"; account: string; automatic: boolean; reason: string | null }>;
 };
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -163,12 +167,12 @@ async function loadYoutube(targets: Array<YoutubeTarget & { channelId: string }>
 }
 
 // ── قاعدة البيانات: المنصات والصفحات وعدد المنشورات ───────────────────────────────────────────────
-type PageRow = { id: number; platformId: number; platformName: string; name: string; reciterId: number | null; reciterName: string | null; pageUrl: string | null; manualFollowers: number | null; posts: number };
+type PageRow = { id: number; platformId: number; platformName: string; name: string; reciterId: number | null; reciterName: string | null; pageUrl: string | null; posts: number };
 
 async function loadPages(): Promise<PageRow[]> {
   // المنشورات = الشواهد الموثّقة الفعّالة على مهام الصفحة غير المحذوفة (بلا الشواهد التكميلية).
   return rowsOf(await db.execute(sql`
-    SELECT pp.id, pp.platform_id, p.name AS platform_name, pp.name, pp.reciter_id, r.name AS reciter_name, pp.page_url, pp.manual_followers,
+    SELECT pp.id, pp.platform_id, p.name AS platform_name, pp.name, pp.reciter_id, r.name AS reciter_name, pp.page_url,
       (SELECT count(*)::int FROM task_proofs tp JOIN tasks t ON t.id = tp.task_id
         WHERE t.page_id = pp.id AND t.deleted_at IS NULL AND tp.deleted_at IS NULL AND NOT tp.is_supplementary) AS posts
     FROM platform_pages pp
@@ -177,7 +181,7 @@ async function loadPages(): Promise<PageRow[]> {
     ORDER BY pp.id`)).map((row) => ({
     id: Number(row.id), platformId: Number(row.platform_id), platformName: String(row.platform_name), name: String(row.name),
     reciterId: row.reciter_id == null ? null : Number(row.reciter_id), reciterName: row.reciter_name ? String(row.reciter_name) : null,
-    pageUrl: row.page_url ? String(row.page_url) : null, manualFollowers: row.manual_followers == null ? null : Number(row.manual_followers), posts: Number(row.posts ?? 0),
+    pageUrl: row.page_url ? String(row.page_url) : null, posts: Number(row.posts ?? 0),
   }));
 }
 
@@ -195,11 +199,12 @@ async function igGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; reels: Array<ShowcaseReel & { pageId: number }> }> {
+async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; reels: Array<ShowcaseReel & { pageId: number }>; problems: Map<number, string>; configured: boolean }> {
   const followersByPage = new Map<number, number>();
+  const problems = new Map<number, string>();
   const reels: Array<ShowcaseReel & { pageId: number }> = [];
   const config = getInstagramConfig();
-  if (!config) return { followersByPage, reels };
+  if (!config) return { followersByPage, reels, problems, configured: false };
   await ensureInstagramSchema();
   const accounts = rowsOf(await db.execute(sql`
     SELECT a.id, a.page_id, a.access_token_encrypted, a.username, r.name AS reciter_name
@@ -207,12 +212,13 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
     WHERE a.enabled AND a.status = 'connected' AND a.access_token_encrypted IS NOT NULL`));
   await Promise.all(accounts.map(async (account) => {
     const token = decryptToken(account.access_token_encrypted, config.appSecret);
-    if (!token) return;
+    if (!token) { problems.set(Number(account.page_id), "تعذّر قراءة مفتاح الحساب — أعد ربطه من «مراقبة إنستقرام»"); return; }
     const name = String(account.reciter_name);
     try {
       const me = await igGet("me", { fields: "followers_count,media_count", access_token: token });
       if (me?.followers_count != null) followersByPage.set(Number(account.page_id), Number(me.followers_count));
-    } catch { /* الحساب يُعرض بلا رقم */ }
+      else problems.set(Number(account.page_id), "لم تُرجع ميتا عدد المتابعين لهذا الحساب");
+    } catch (err) { problems.set(Number(account.page_id), `رفضت ميتا الطلب: ${(err as Error).message}`); }
     try {
       const media = await igGet("me/media", { fields: "id,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp", limit: "10", access_token: token });
       for (const item of Array.isArray(media?.data) ? media.data : []) {
@@ -222,7 +228,7 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
       }
     } catch { /* بلا مقاطع لهذا الحساب */ }
   }));
-  return { followersByPage, reels };
+  return { followersByPage, reels, problems, configured: true };
 }
 
 // صف إنستقرام: 3 مقاطع حديثة من حسابات مختلفة (حساب واحد لكل مقطع)، باختيار عشوائي بين الحسابات.
@@ -247,11 +253,12 @@ async function fbGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; reels: ShowcaseReel[] }> {
+async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; reels: ShowcaseReel[]; problems: Map<number, string>; configured: boolean }> {
   const followersByReciter = new Map<number, number>();
+  const problems = new Map<number, string>();
   const reels: ShowcaseReel[] = [];
   const config = getFacebookConfig();
-  if (!config) return { followersByReciter, reels };
+  if (!config) return { followersByReciter, reels, problems, configured: false };
   await ensureInstagramSchema();
   // صفحة فيسبوك لكل قارئ: الربط المحفوظ في مراقبة إنستقرام (حساب القارئ ← صفحة فيسبوك).
   const pages = rowsOf(await db.execute(sql`
@@ -267,13 +274,14 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
       return;
     }
     const token = decryptToken(page.access_token_encrypted, config.appSecret);
-    if (!token) return;
+    if (!token) { problems.set(Number(page.reciter_id), "تعذّر قراءة مفتاح صفحة فيسبوك — أعد «ربط فيسبوك»"); return; }
     const name = String(page.reciter_name);
     try {
       const info = await fbGet(String(page.fb_page_id), { fields: "followers_count,fan_count", access_token: token });
       const followers = info?.followers_count ?? info?.fan_count;
       if (followers != null) followersByReciter.set(Number(page.reciter_id), Number(followers));
-    } catch { /* بلا رقم */ }
+      else problems.set(Number(page.reciter_id), "لم تُرجع ميتا عدد متابعي الصفحة");
+    } catch (err) { problems.set(Number(page.reciter_id), `رفضت ميتا الطلب: ${(err as Error).message}`); }
     try {
       const data = await fbGet(`${page.fb_page_id}/video_reels`, { fields: "id,created_time,picture", limit: "5", access_token: token });
       for (const row of Array.isArray(data?.data) ? data.data : []) {
@@ -282,19 +290,50 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
       }
     } catch { /* بلا مقاطع */ }
   }));
-  return { followersByReciter, reels };
+  return { followersByReciter, reels, problems, configured: true };
 }
 
-// ── تلقرام (مشتركو القنوات العامة عبر البوت — مجاني) ─────────────────────────────────────────────
+// ── تلقرام (Bot API: getChatMemberCount — مجاني، للعامة باسمها وللخاصة التي البوت عضو/مشرف فيها) ─────
 function telegramUsername(url: string | null): string | null {
-  const match = String(url ?? "").match(/(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{4,})/i);
-  return match ? match[1] : null;
+  const match = String(url ?? "").match(/(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{4,})(?:[/?#]|$)/i);
+  return match && match[1].toLowerCase() !== "c" && match[1].toLowerCase() !== "joinchat" ? match[1] : null;
 }
 
-async function telegramMembers(username: string | null): Promise<number | null> {
-  if (!username) return null;
-  const result = await callTelegramApi<number>("getChatMemberCount", { chat_id: `@${username}` }).catch(() => ({ ok: false } as any));
-  return result?.ok && typeof result.result === "number" ? result.result : null;
+// رابط رسالة قناة خاصة: t.me/c/<المعرّف الداخلي>/… ⇐ chat_id = -100<المعرّف>.
+function telegramPrivateChatId(url: string | null): string | null {
+  const match = String(url ?? "").match(/(?:t\.me|telegram\.me)\/c\/(\d{5,})/i);
+  return match ? `-100${match[1]}` : null;
+}
+
+async function telegramMembers(chatId: string | null): Promise<{ count: number | null; error: string | null }> {
+  if (!chatId) return { count: null, error: null };
+  const result: any = await callTelegramApi<number>("getChatMemberCount", { chat_id: chatId }).catch((err) => ({ ok: false, error: String(err?.message ?? err) }));
+  if (result?.ok && typeof result.result === "number") return { count: result.result, error: null };
+  return { count: null, error: String(result?.error ?? "فشل الطلب") };
+}
+
+type TelegramChatRef = { chatId: string | null; reason: string | null };
+type SeenChat = { chatId: string; title: string; botStatus: string | null };
+
+// تحديد قناة الصفحة آليًا: (1) اسم مستخدم عام من الرابط، (2) رابط t.me/c/…، (3) قناة مراقَبة مربوطة بالصفحة،
+// (4) قناة دخلها البوت (عضو/مشرف) بعنوان يطابق اسم الصفحة أو اسم القارئ — مطابقة واحدة فقط، لا تخمين.
+function resolveTelegramChat(page: PageRow, linkedChats: Map<number, string>, seenChats: SeenChat[]): TelegramChatRef {
+  const username = telegramUsername(page.pageUrl);
+  if (username) return { chatId: `@${username}`, reason: null };
+  const privateId = telegramPrivateChatId(page.pageUrl);
+  if (privateId) return { chatId: privateId, reason: null };
+  const linked = linkedChats.get(page.id);
+  if (linked) return { chatId: linked, reason: null };
+  const candidates = [page.name, page.reciterName].filter(Boolean).map((value) => nameKey(String(value)));
+  const matches = seenChats.filter((chat) => {
+    const title = nameKey(chat.title);
+    return candidates.some((candidate) => candidate && (title === candidate || (page.reciterName && title.includes(nameKey(page.reciterName)))));
+  });
+  if (matches.length === 1) return { chatId: matches[0].chatId, reason: null };
+  if (matches.length > 1) return { chatId: null, reason: `أكثر من قناة دخلها البوت تطابق «${page.name}» — ضع رابط القناة (t.me/الاسم أو رابط رسالة t.me/c/…) في صفحة المنصات` };
+  return { chatId: null, reason: page.pageUrl && /\/(\+|joinchat)/i.test(page.pageUrl)
+    ? "قناة خاصة برابط دعوة، والبوت ليس عضوًا فيها — أضف البوت @Tilawatalharamain_bot عضوًا/مشرفًا في القناة"
+    : "لا رابط عام للقناة والبوت ليس عضوًا فيها — أضف رابط t.me/الاسم في صفحة المنصات، أو أضف البوت @Tilawatalharamain_bot للقناة" };
 }
 
 // ── التجميع ───────────────────────────────────────────────────────────────────────────────────
@@ -311,8 +350,8 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const [youtube, apps, instagram, facebook] = await Promise.all([
     loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
     loadApps(),
-    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }> })),
-    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[] })),
+    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }>, problems: new Map<number, string>(), configured: true })),
+    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[], problems: new Map<number, string>(), configured: true })),
   ]);
   // ما كان يظهر من القائمة الثابتة القديمة ولم يعد مسجّلًا في صفحة المنصات.
   const shownIds = new Set(youtube.map((channel) => channel.channelId));
@@ -329,25 +368,49 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     }
   }
 
-  const instagramAccounts: ShowcaseAccount[] = pagesOf(INSTAGRAM_PLATFORM_NAME).map((page) => ({
-    name: accountName(page), url: page.pageUrl, followers: instagram.followersByPage.get(page.id) ?? page.manualFollowers, posts: page.posts,
-  }));
-  const facebookAccounts: ShowcaseAccount[] = pagesOf(FACEBOOK_PLATFORM_NAME).map((page) => ({
-    name: accountName(page), url: page.pageUrl, followers: (page.reciterId != null ? facebook.followersByReciter.get(page.reciterId) : undefined) ?? page.manualFollowers, posts: page.posts,
-  }));
+  const followerReport: ShowcaseDiagnostics["followers"] = [];
+  const report = (platform: ShowcaseDiagnostics["followers"][number]["platform"], account: string, value: number | null, reason: string | null) =>
+    followerReport.push({ platform, account, automatic: value != null, reason: value != null ? null : reason ?? "تعذّر الجلب" });
+
+  // إنستقرام: Graph API لكل حساب مربوط في «مراقبة إنستقرام».
+  const igLinked = new Set(rowsOf(await db.execute(sql`SELECT page_id FROM instagram_accounts WHERE enabled AND status = 'connected'`).catch(() => ({ rows: [] }))).map((row) => Number(row.page_id)));
+  const instagramAccounts: ShowcaseAccount[] = pagesOf(INSTAGRAM_PLATFORM_NAME).map((page) => {
+    const followers = instagram.followersByPage.get(page.id) ?? null;
+    report("instagram", accountName(page), followers, !instagram.configured ? "متغيرات إنستقرام غير مضبوطة في Railway" : !igLinked.has(page.id) ? "الحساب غير مربوط (أو انقطع ربطه) في «مراقبة إنستقرام» — اربطه هناك" : instagram.problems.get(page.id) ?? null);
+    return { name: accountName(page), url: page.pageUrl, followers, posts: page.posts };
+  });
+  // فيسبوك: Graph API لصفحة القارئ المربوطة في «مراقبة إنستقرام» (حساب القارئ ← صفحة فيسبوك).
+  const fbMapped = new Set(rowsOf(await db.execute(sql`SELECT a.reciter_id FROM instagram_accounts a JOIN facebook_pages fp ON fp.fb_page_id = a.fb_page_id AND fp.status = 'connected'`).catch(() => ({ rows: [] }))).map((row) => Number(row.reciter_id)));
+  const facebookAccounts: ShowcaseAccount[] = pagesOf(FACEBOOK_PLATFORM_NAME).map((page) => {
+    const followers = page.reciterId != null ? facebook.followersByReciter.get(page.reciterId) ?? null : null;
+    report("facebook", accountName(page), followers, !facebook.configured ? "متغيرات فيسبوك غير مضبوطة في Railway"
+      : page.reciterId == null ? "الصفحة غير مربوطة بقارئ في صفحة المنصات"
+      : !fbMapped.has(page.reciterId) ? "صفحة فيسبوك هذا القارئ غير مربوطة في «مراقبة إنستقرام» (أو تحتاج إعادة ربط فيسبوك) — اربطها هناك"
+      : facebook.problems.get(page.reciterId) ?? null);
+    return { name: accountName(page), url: page.pageUrl, followers, posts: page.posts };
+  });
+  // تلقرام: Bot API (getChatMemberCount) للقنوات العامة، وللخاصة التي البوت عضو/مشرف فيها.
   const telegramPages = pagesOf(TELEGRAM_PLATFORM_NAME);
-  const telegramAccounts: ShowcaseAccount[] = await Promise.all(telegramPages.map(async (page) => ({
-    name: accountName(page), url: page.pageUrl, followers: (await telegramMembers(telegramUsername(page.pageUrl))) ?? page.manualFollowers, posts: page.posts,
-  })));
-  // تويتر/X: لا واجهة مجانية — القيمة اليدوية فقط، وإلا بلا رقم.
-  const twitterAccounts: ShowcaseAccount[] = pagesOf(TWITTER_PLATFORM_NAME).map((page) => ({
-    name: accountName(page), url: page.pageUrl, followers: page.manualFollowers, posts: page.posts,
+  const linkedChats = new Map<number, string>(rowsOf(await db.execute(sql`SELECT page_id, chat_id FROM telegram_channels WHERE page_id IS NOT NULL`).catch(() => ({ rows: [] }))).map((row) => [Number(row.page_id), String(row.chat_id)]));
+  const seenChats: SeenChat[] = rowsOf(await db.execute(sql`SELECT chat_id, title, bot_status FROM telegram_seen_chats WHERE type = 'channel' AND (bot_status IS NULL OR bot_status IN ('member', 'administrator', 'creator'))`).catch(() => ({ rows: [] })))
+    .filter((row) => row.title).map((row) => ({ chatId: String(row.chat_id), title: String(row.title), botStatus: row.bot_status ? String(row.bot_status) : null }));
+  const telegramAccounts: ShowcaseAccount[] = await Promise.all(telegramPages.map(async (page) => {
+    const ref = resolveTelegramChat(page, linkedChats, seenChats);
+    const result = await telegramMembers(ref.chatId);
+    report("telegram", accountName(page), result.count, ref.reason ?? (result.error ? `رفض تلقرام الطلب (${result.error}) — إن كانت القناة خاصة فأضف البوت @Tilawatalharamain_bot عضوًا/مشرفًا فيها` : null));
+    return { name: accountName(page), url: page.pageUrl, followers: result.count, posts: page.posts };
   }));
+  // تويتر/X: لا يوجد مصدر رسمي مجاني ⇐ الحساب بلا رقم دائمًا (لا رقم يدوي ولا تقديري).
+  const twitterAccounts: ShowcaseAccount[] = pagesOf(TWITTER_PLATFORM_NAME).map((page) => {
+    report("twitter", accountName(page), null, "واجهة X الرسمية لقراءة عدد المتابعين تتطلب اشتراكًا مدفوعًا (X API Basic أو أعلى) — يُعرض الحساب بلا رقم");
+    return { name: accountName(page), url: page.pageUrl, followers: null, posts: page.posts };
+  });
 
   // التطبيقات: صورة الشيخ من صورة قناته على يوتيوب (مطابقة اسم القارئ في اسم التطبيق).
   const avatarFor = (appName: string) => youtube.find((channel) => channel.reciterName && nameKey(appName).includes(nameKey(channel.reciterName)))?.avatar ?? null;
   // قنوات تلقرام المسجّلة (باسم المستخدم من رابط الصفحة) — لا تُعرض منشورات قناة غير مسجّلة.
   const registeredTelegram = new Set(telegramPages.map((page) => telegramUsername(page.pageUrl)?.toLowerCase()).filter(Boolean) as string[]);
+  const registeredTelegramPageIds = new Set(telegramPages.map((page) => page.id));
   const registeredPageIds = new Set(pages.map((page) => page.id));
 
   // الأكثر مشاهدة هذا الأسبوع: أعلى مشاهدات بين مقاطع يوتيوب المنشورة هذا الأسبوع (الأحد→السبت، الرياض).
@@ -366,12 +429,15 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     WHERE chat_id = ${String(designChannel.chat_id)} AND kind = 'design' AND post_url IS NOT NULL
     ORDER BY published_at DESC LIMIT 8`)).map((row) => ({ url: String(row.post_url), publishedAt: new Date(row.published_at).toISOString() })) : [];
   const designUsername = designChannel?.username ? String(designChannel.username) : null;
+  // مشتركو قناة التصاميم: بمعرّفها مباشرة (يعمل للخاصة ما دام البوت فيها — وهو مشرفها لأنه يراقبها).
+  const designMembers = designChannel ? await telegramMembers(String(designChannel.chat_id)) : { count: null, error: null };
+  if (designChannel) report("designs", String(designChannel.title ?? "قناة التصاميم"), designMembers.count, designMembers.error ? `رفض تلقرام الطلب (${designMembers.error})` : null);
 
   // أحدث ما نشرنا: دمج كل المنصّات، الأحدث أولًا.
   const recitationChannels = rowsOf(await db.execute(sql`SELECT chat_id, title, username, page_id FROM telegram_channels WHERE kind = 'recitations'`).catch(() => ({ rows: [] })));
   const feedChatIds: string[] = [];
   for (const channel of recitationChannels) {
-    const registered = (channel.page_id != null && registeredPageIds.has(Number(channel.page_id))) || (channel.username && registeredTelegram.has(String(channel.username).toLowerCase()));
+    const registered = (channel.page_id != null && (registeredPageIds.has(Number(channel.page_id)) || registeredTelegramPageIds.has(Number(channel.page_id)))) || (channel.username && registeredTelegram.has(String(channel.username).toLowerCase()));
     if (registered) feedChatIds.push(String(channel.chat_id));
     else hidden.push({ what: `منشورات قناة تلقرام «${channel.title ?? channel.chat_id}» في «أحدث ما نشرنا»`, why: "القناة غير مسجّلة في صفحة المنصات (لا صفحة تلقرام برابطها)" });
   }
@@ -410,10 +476,10 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     },
     designs: {
       items: designItems,
-      channel: designChannel ? { name: String(designChannel.title ?? "قناة التصاميم"), url: designUsername ? `https://t.me/${designUsername}` : null, subscribers: await telegramMembers(designUsername) } : null,
+      channel: designChannel ? { name: String(designChannel.title ?? "قناة التصاميم"), url: designUsername ? `https://t.me/${designUsername}` : null, subscribers: designMembers.count } : null,
     },
     feed,
-    diagnostics: { youtube: youtubeReport, hidden },
+    diagnostics: { youtube: youtubeReport, hidden, followers: followerReport },
   };
 }
 

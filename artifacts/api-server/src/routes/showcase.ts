@@ -18,7 +18,7 @@ showcasePublicRouter.get("/public/showcase", async (_req, res) => {
   }
 });
 
-// ── إدارة القيم اليدوية (للمدير): روابط المتاجر، والمتابعون لحسابات بلا واجهة مجانية ─────────────
+// ── إدارة (للمدير): روابط المتاجر + التشخيص ───────────────────────────────────────────────────────
 const router = Router();
 router.use("/showcase", requireAdmin, async (_req, _res, next) => {
   try {
@@ -32,14 +32,11 @@ router.use("/showcase", requireAdmin, async (_req, _res, next) => {
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 const cleanUrl = (value: unknown) => (typeof value === "string" && /^https?:\/\//i.test(value.trim()) ? value.trim() : null);
 
+// روابط المتاجر فقط (روابط ثابتة، ليست أرقامًا) — لا إدخال يدوي لأي رقم.
 router.get("/showcase/manual", async (_req, res) => {
   const platforms = rowsOf(await db.execute(sql`SELECT id, name, ios_url, android_url FROM platforms ORDER BY id`));
-  const pages = rowsOf(await db.execute(sql`
-    SELECT pp.id, pp.platform_id, p.name AS platform_name, pp.name, pp.page_url, pp.manual_followers
-    FROM platform_pages pp JOIN platforms p ON p.id = pp.platform_id ORDER BY p.name, pp.name`));
   res.json({
     platforms: platforms.map((row) => ({ id: Number(row.id), name: String(row.name), iosUrl: row.ios_url ?? null, androidUrl: row.android_url ?? null })),
-    pages: pages.map((row) => ({ id: Number(row.id), platformId: Number(row.platform_id), platformName: String(row.platform_name), name: String(row.name), pageUrl: row.page_url ?? null, manualFollowers: row.manual_followers == null ? null : Number(row.manual_followers) })),
   });
 });
 
@@ -50,29 +47,16 @@ router.put("/showcase/manual/platforms/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
-router.put("/showcase/manual/pages/:id", async (req, res) => {
-  const id = Number(req.params.id);
-  const raw = req.body?.manualFollowers;
-  const value = raw === null || raw === "" || raw === undefined ? null : Number(raw);
-  if (value !== null && (!Number.isInteger(value) || value < 0)) {
-    res.status(400).json({ message: "عدد المتابعين يجب أن يكون عددًا صحيحًا موجبًا" });
-    return;
-  }
-  await db.execute(sql`UPDATE platform_pages SET manual_followers = ${value} WHERE id = ${id}`);
-  clearShowcaseCache();
-  res.json({ ok: true });
-});
-
 router.post("/showcase/refresh", async (_req, res) => {
   clearShowcaseCache();
   const data = await getShowcase({ force: true });
-  res.json(data.diagnostics ?? { youtube: [], hidden: [] });
+  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [] });
 });
 
 // تشخيص للمدير: ما ينقص قنوات يوتيوب المسجّلة، وما لم يعد يظهر في الصفحة العامة ولماذا.
 router.get("/showcase/diagnostics", async (_req, res) => {
   const data = await getShowcase();
-  res.json(data.diagnostics ?? { youtube: [], hidden: [] });
+  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [] });
 });
 
 export default router;
