@@ -1,755 +1,486 @@
-import { lazy, Suspense, useState, type ElementType } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { format } from "date-fns";
-import { ar } from "date-fns/locale";
-import { BarChart3, CheckCircle2, Clock, Eye, Globe2, LineChart, TrendingUp } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
-import { Skeleton } from "@/components/ui/skeleton";
-import { PlatformIcon } from "@/lib/platform-icon";
 
-type PeriodKey = "30d" | "all";
-type ViewMode = "classic" | "analytics";
+// صفحة «منصات مشروع تطبيق تلاوات الحرمين» (/achievements) — عامة.
+// الشكل منقول حرفيًا من التصميم المعتمد (manassatna.html): نفس الألوان والخطوط والتخطيط والأقسام وترتيبها،
+// والعدّادات المتحرّكة وزر المشاركة. البيانات حيّة من /api/public/showcase (قاعدة البيانات + يوتيوب + ميتا).
+// الأنماط محصورة تحت ‎.manassat‎ فلا تمس بقية الموقع.
 
-type PublicAchievements = {
-  period: {
-    key: PeriodKey;
-    label: string;
-    start: string;
-    end: string;
+type Clip = { title: string; views: number | null; url: string; thumbnail: string | null; publishedAt: string | null };
+type Account = { name: string; url: string | null; followers: number | null; posts: number };
+type Reel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null };
+type Showcase = {
+  generatedAt: string;
+  hero: { youtubeViews: number; youtubeSubscribers: number; appsCount: number };
+  featured: (Clip & { channelTitle: string }) | null;
+  youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; clips: Clip[] }>;
+  apps: Array<{ name: string; iosUrl: string | null; androidUrl: string | null; avatar: string | null }>;
+  platforms: {
+    instagram: { accounts: Account[]; reels: Reel[] };
+    facebook: { accounts: Account[]; reels: Reel[] };
+    telegram: { accounts: Account[] };
+    twitter: { accounts: Account[] };
   };
-  totalPublications: number;
-  completedTasks: number;
-  last30Publications: number;
-  activePlatforms: number;
-  dailyAverage: number;
-  projectStartDate: string;
-  allTime: {
-    totalPublications: number;
-    systemPublications: number;
-    baselinePublications: number;
-    completedTasks: number;
-  };
-  youtubeViews: {
-    totalViews: number | null;
-    manualViews: number | null;
-    baselineViews: number;
-    updatedAt: string | null;
-    fetchedAt: string;
-  };
-  achievementsByPlatform: Array<{
-    platformId: number;
-    name: string;
-    icon: string;
-    color: string;
-    publications: number;
-    systemPublications: number;
-    baselinePublications: number;
-    completedTasks: number;
-  }>;
-  monthlyGrowth: Array<{
-    monthStart: string;
-    publications: number;
-    completedTasks: number;
-  }>;
-  lastUpdated: string;
+  designs: { items: Array<{ url: string; publishedAt: string }>; channel: { name: string; url: string | null; subscribers: number | null } | null };
+  feed: Array<{ platform: "youtube" | "instagram" | "facebook" | "telegram" | "designs"; title: string; url: string; publishedAt: string }>;
 };
 
-const periodOptions: Array<{ value: PeriodKey; label: string }> = [
-  { value: "all", label: "الكل" },
-  { value: "30d", label: "آخر 30 يومًا" },
+const ar = (n: number) => Math.round(n).toLocaleString("ar-EG");
+// «٦٨٠ ألف»، «١٫٨ مليون» كما في التصميم.
+function compact(n: number | null | undefined): string | null {
+  if (n == null) return null;
+  if (n >= 1_000_000) return `${(Math.round(n / 100_000) / 10).toLocaleString("ar-EG")} مليون`;
+  if (n >= 10_000) return `${Math.round(n / 1000).toLocaleString("ar-EG")} ألف`;
+  return ar(n);
+}
+function ago(iso: string | null): string {
+  if (!iso) return "";
+  const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000;
+  if (hours < 1) return "قبل قليل";
+  if (hours < 24) { const h = Math.floor(hours); return h === 1 ? "قبل ساعة" : h === 2 ? "قبل ساعتين" : `قبل ${ar(h)} ساعات`; }
+  const days = Math.floor(hours / 24);
+  if (days === 1) return "أمس";
+  if (days === 2) return "قبل يومين";
+  if (days <= 10) return `قبل ${ar(days)} أيام`;
+  return new Date(iso).toLocaleDateString("ar-SA", { timeZone: "Asia/Riyadh", day: "numeric", month: "long" });
+}
+const firstLetter = (name: string) => name.replace(/^(تطبيق|تلاوات|الشيخ)\s+/g, "").replace(/^(الشيخ)\s+/, "").trim().charAt(0) || "ت";
+const plural = (n: number, one: string, many: string) => `${ar(n)} ${n === 1 ? one : many}`;
+
+const PlayIcon = ({ size = 18, fill = "#0F5A46" }: { size?: number; fill?: string }) => (
+  <svg width={size} height={size} viewBox="0 0 24 24" fill={fill}><path d="M8 5v14l11-7z" /></svg>
+);
+const ICONS = {
+  youtube: <svg width="22" height="22" viewBox="0 0 24 24" fill="currentColor"><path d="M23 12s0-3.3-.4-4.9a2.6 2.6 0 00-1.8-1.8C19.2 5 12 5 12 5s-7.2 0-8.8.4A2.6 2.6 0 001.4 7.2C1 8.7 1 12 1 12s0 3.3.4 4.8a2.6 2.6 0 001.8 1.8C4.8 19 12 19 12 19s7.2 0 8.8-.4a2.6 2.6 0 001.8-1.8c.4-1.5.4-4.8.4-4.8zM9.8 15.2V8.8l5.6 3.2z" /></svg>,
+  apps: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><rect x="5" y="2" width="14" height="20" rx="3" /><line x1="12" y1="18" x2="12" y2="18" /></svg>,
+  platforms: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="3" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>,
+  feed: <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M4 6h16M4 12h16M4 18h10" /></svg>,
+  ig: (s = 19) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><rect x="3" y="3" width="18" height="18" rx="5" /><circle cx="12" cy="12" r="4" /><circle cx="17.5" cy="6.5" r="1" fill="#fff" stroke="none" /></svg>,
+  fb: (s = 19) => <svg width={s} height={s} viewBox="0 0 24 24" fill="#fff"><path d="M14 9h3V6h-3c-1.9 0-3 1.4-3 3.3V11H9v3h2v6h3v-6h2.3l.7-3H14V9.6c0-.4.3-.6.8-.6z" /></svg>,
+  tg: (s = 19) => <svg width={s} height={s} viewBox="0 0 24 24" fill="#fff"><path d="M21 4L3 11l5 2 2 6 3-4 5 4z" /></svg>,
+  tw: (s = 17) => <svg width={s} height={s} viewBox="0 0 24 24" fill="#fff"><path d="M18 2h3l-7 8 8 12h-6l-5-7-6 7H2l8-9L1 2h6l4 6z" /></svg>,
+  ds: (s = 18) => <svg width={s} height={s} viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="2"><path d="M12 2l2.5 6.5L21 9l-5 4 1.5 7L12 16l-5.5 4L8 13 3 9l6.5-.5z" /></svg>,
+  ytWhite: <svg width="18" height="18" viewBox="0 0 24 24" fill="#fff"><path d="M23 12s0-3.3-.4-4.9a2.6 2.6 0 00-1.8-1.8C19.2 5 12 5 12 5s-7.2 0-8.8.4A2.6 2.6 0 001.4 7.2C1 8.7 1 12 1 12s0 3.3.4 4.8a2.6 2.6 0 001.8 1.8C4.8 19 12 19 12 19s7.2 0 8.8-.4a2.6 2.6 0 001.8-1.8c.4-1.5.4-4.8.4-4.8zM9.8 15.2V8.8l5.6 3.2z" /></svg>,
+  image: <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6"><rect x="3" y="3" width="18" height="18" rx="2" /><circle cx="8.5" cy="8.5" r="1.5" /><path d="M21 15l-5-5L5 21" /></svg>,
+};
+const AVATAR_GRADIENTS = [
+  "linear-gradient(135deg,#C1121F,#8E0E17)",
+  "linear-gradient(135deg,#0F5A46,#13715C)",
+  "linear-gradient(135deg,#B88A2E,#946d1f)",
+  "linear-gradient(135deg,#3B2E6E,#2a2150)",
+  "linear-gradient(135deg,#1f6b57,#0c4a3a)",
 ];
 
-async function fetchPublicAchievements(period: PeriodKey): Promise<PublicAchievements> {
-  const response = await fetch(`/api/public/achievements?period=${period}`);
-  if (!response.ok) throw new Error("Failed to load achievements");
-  return response.json();
+// رابط خارجي: يفتح في نافذة جديدة؛ بلا رابط ⇐ نفس الوسم بلا href (كما في التصميم).
+function Ext({ href, className, style, children }: { href: string | null | undefined; className?: string; style?: React.CSSProperties; children: ReactNode }) {
+  return href
+    ? <a className={className} style={style} href={href} target="_blank" rel="noopener noreferrer">{children}</a>
+    : <span className={className} style={style}>{children}</span>;
 }
 
-function formatNumber(value: number) {
-  return new Intl.NumberFormat("ar-SA").format(Math.round(value));
-}
-
-function formatAverage(value: number) {
-  return new Intl.NumberFormat("ar-SA", { maximumFractionDigits: 1 }).format(value);
-}
-
-function numberBelowThousandToArabic(value: number): string {
-  const ones = ["", "واحد", "اثنان", "ثلاثة", "أربعة", "خمسة", "ستة", "سبعة", "ثمانية", "تسعة"];
-  const teens = [
-    "عشرة",
-    "أحد عشر",
-    "اثنا عشر",
-    "ثلاثة عشر",
-    "أربعة عشر",
-    "خمسة عشر",
-    "ستة عشر",
-    "سبعة عشر",
-    "ثمانية عشر",
-    "تسعة عشر",
-  ];
-  const tens = ["", "", "عشرون", "ثلاثون", "أربعون", "خمسون", "ستون", "سبعون", "ثمانون", "تسعون"];
-  const hundreds = ["", "مئة", "مئتان", "ثلاثمئة", "أربعمئة", "خمسمئة", "ستمئة", "سبعمئة", "ثمانمئة", "تسعمئة"];
-
-  const parts: string[] = [];
-  const hundred = Math.floor(value / 100);
-  const rest = value % 100;
-
-  if (hundred > 0) parts.push(hundreds[hundred]);
-  if (rest > 0) {
-    if (rest < 10) {
-      parts.push(ones[rest]);
-    } else if (rest < 20) {
-      parts.push(teens[rest - 10]);
-    } else {
-      const one = rest % 10;
-      const ten = Math.floor(rest / 10);
-      parts.push(one > 0 ? `${ones[one]} و${tens[ten]}` : tens[ten]);
-    }
-  }
-
-  return parts.join(" و");
-}
-
-function scaleGroupToArabic(value: number, singular: string, dual: string, plural: string, singularAccusative: string) {
-  if (value === 1) return singular;
-  if (value === 2) return dual;
-  const words = numberBelowThousandToArabic(value);
-  if (value >= 3 && value <= 10) return `${words} ${plural}`;
-  return `${words} ${singularAccusative}`;
-}
-
-function numberToArabicWords(value: number): string {
-  const rounded = Math.max(0, Math.round(value));
-  if (rounded === 0) return "صفر";
-
-  const scales = [
-    { singular: "", dual: "", plural: "", singularAccusative: "" },
-    { singular: "ألف", dual: "ألفان", plural: "آلاف", singularAccusative: "ألفًا" },
-    { singular: "مليون", dual: "مليونان", plural: "ملايين", singularAccusative: "مليونًا" },
-    { singular: "مليار", dual: "ملياران", plural: "مليارات", singularAccusative: "مليارًا" },
-  ];
-
-  const groups: number[] = [];
-  let remaining = rounded;
-  while (remaining > 0) {
-    groups.push(remaining % 1000);
-    remaining = Math.floor(remaining / 1000);
-  }
-
-  const parts: string[] = [];
-  for (let index = groups.length - 1; index >= 0; index -= 1) {
-    const group = groups[index];
-    if (group === 0) continue;
-    if (index === 0) {
-      parts.push(numberBelowThousandToArabic(group));
-    } else {
-      const scale = scales[index] ?? scales[scales.length - 1];
-      parts.push(scaleGroupToArabic(group, scale.singular, scale.dual, scale.plural, scale.singularAccusative));
-    }
-  }
-
-  return parts.join(" و");
-}
-
-function formatDateTime(date: string | Date) {
-  return format(new Date(date), "EEEE، d MMMM yyyy، h:mm a", { locale: ar });
-}
-
-function JoodLogoMark() {
+function AccountsGrid({ accounts, unit }: { accounts: Account[]; unit: string }) {
   return (
-    <div className="rounded-lg border border-amber-200/80 bg-white/80 px-4 py-3 shadow-sm backdrop-blur">
-      <img
-        src="/jood-logo.png"
-        alt="جمعية جود لخدمة الحاج والمعتمر"
-        className="h-12 w-auto object-contain"
-      />
+    <div className="accs">
+      {accounts.map((account, index) => {
+        const parts = [account.followers != null ? `${compact(account.followers)} ${unit}` : null, `${ar(account.posts)} منشور`].filter(Boolean);
+        return (
+          <Ext key={`${account.name}-${index}`} href={account.url} className="acc">
+            <span className="dot" />
+            <span className="acc-main"><b>{account.name}</b><span className="acc-sub mono-num">{parts.join(" · ")}</span></span>
+            <span className="go">↗</span>
+          </Ext>
+        );
+      })}
     </div>
   );
 }
 
-function StatCard({
-  title,
-  value,
-  icon: Icon,
-  hint,
-  tone = "green",
-  className = "",
-}: {
-  title: string;
-  value: string;
-  icon: ElementType;
-  hint: string;
-  tone?: "green" | "gold" | "blue";
-  className?: string;
-}) {
-  const toneClass = {
-    green: "bg-emerald-50 text-emerald-700 border-emerald-100",
-    gold: "bg-amber-50 text-amber-700 border-amber-100",
-    blue: "bg-sky-50 text-sky-700 border-sky-100",
-  }[tone];
-
+function ReelsRow({ reels, fb }: { reels: Reel[]; fb?: boolean }) {
   return (
-    <Card className={`border-[#eadfcd] bg-white/88 shadow-sm backdrop-blur ${className}`}>
-      <CardContent className="p-3 sm:p-5">
-        <div className="flex items-start justify-between gap-3 sm:gap-4">
-          <div className="min-w-0">
-            <p className="text-xs font-semibold leading-5 text-[#5f796d] sm:text-sm">{title}</p>
-            <p className="mt-2 break-words text-2xl font-black leading-tight text-[#103c2d] sm:text-3xl">{value}</p>
-            <p className="mt-1 text-xs text-[#7c8f85]">{hint}</p>
-          </div>
-          <div className={`rounded-lg border p-2 sm:p-3 ${toneClass}`}>
-            <Icon className="h-4 w-4 sm:h-5 sm:w-5" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function SectionTitle({ icon: Icon, title, hint }: { icon: ElementType; title: string; hint: string }) {
-  return (
-    <div className="mb-5 flex items-start justify-between gap-4">
-      <div>
-        <h2 className="flex items-center gap-2 text-xl font-black text-[#103c2d]">
-          <Icon className="h-5 w-5 text-[#c59226]" />
-          {title}
-        </h2>
-        <p className="mt-1 text-sm text-[#6f8378]">{hint}</p>
-      </div>
-    </div>
-  );
-}
-
-function YoutubeViewsCard({ stats }: { stats: PublicAchievements["youtubeViews"] }) {
-  const hasValue = stats.totalViews !== null;
-  return (
-    <Card className="border-[#eadfcd] bg-white/90 shadow-sm backdrop-blur">
-      <CardContent className="p-5 sm:p-6">
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <p className="text-sm font-black leading-6 text-[#5f796d]">
-              مشاهدات قنوات YouTube التابعة لتطبيق تلاوات الحرمين
-            </p>
-            <p className="mt-3 break-words text-3xl font-black leading-tight text-[#103c2d] sm:text-5xl">
-              {hasValue ? `${formatNumber(stats.totalViews!)} مشاهدة` : "غير متاح مؤقتًا"}
-            </p>
-            {hasValue ? (
-              <p className="mt-3 max-w-3xl text-sm font-bold leading-7 text-[#5f796d] sm:text-base">
-                {numberToArabicWords(stats.totalViews!)} مشاهدة
-              </p>
-            ) : null}
-            <p className="mt-3 text-xs text-[#7c8f85]">
-              {stats.updatedAt ? `آخر تحديث: ${formatDateTime(stats.updatedAt)}` : "لم يتم تحديث الرقم بعد"}
-            </p>
-          </div>
-          <div className="rounded-lg border border-sky-100 bg-sky-50 p-3 text-sky-700">
-            <Eye className="h-5 w-5" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function PeriodSelectorCard({
-  period,
-  onChange,
-}: {
-  period: PeriodKey;
-  onChange: (period: PeriodKey) => void;
-}) {
-  return (
-    <Card className="border-[#eadfcd] bg-white/88 shadow-sm backdrop-blur">
-      <CardContent className="p-4 sm:p-5">
-        <div className="grid gap-3 sm:grid-cols-[1fr_260px] sm:items-end">
-          <div>
-            <p className="text-base font-black text-[#103c2d]">الفترة</p>
-            <p className="mt-1 text-sm text-[#6f8378]">اختر الفترة التي تريد عرض إحصائياتها.</p>
-          </div>
-          <select
-            id="achievement-period"
-            value={period}
-            onChange={(event) => onChange(event.target.value as PeriodKey)}
-            className="h-12 w-full rounded-lg border border-[#d8cba9] bg-white px-3 text-base font-bold text-[#103c2d] outline-none focus:border-[#b88724]"
-          >
-            {periodOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
-            ))}
-          </select>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function ViewModeToggle({
-  viewMode,
-  onChange,
-}: {
-  viewMode: ViewMode;
-  onChange: (viewMode: ViewMode) => void;
-}) {
-  const options: Array<{ value: ViewMode; label: string }> = [
-    { value: "classic", label: "العرض الكلاسيكي" },
-    { value: "analytics", label: "العرض التحليلي" },
-  ];
-
-  return (
-    <div className="inline-flex rounded-lg border border-[#d8cba9] bg-white/85 p-1 shadow-sm">
-      {options.map((option) => (
-        <button
-          key={option.value}
-          type="button"
-          onClick={() => onChange(option.value)}
-          className={`rounded-md px-3 py-2 text-sm font-black transition-colors sm:px-4 ${
-            viewMode === option.value
-              ? "bg-[#d6a12a] text-[#103c2d] shadow-sm"
-              : "text-[#5f796d] hover:bg-[#f7f0df] hover:text-[#103c2d]"
-          }`}
-        >
-          {option.label}
-        </button>
+    <div className="ig-reels">
+      {reels.map((reel) => (
+        <Ext key={reel.url} href={reel.url} className={`reel${fb ? " fb" : ""}`}>
+          {reel.thumbnail && <img className="rimg" src={reel.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />}
+          <div className="rplay"><i><PlayIcon size={17} fill={fb ? "#1877F2" : "#8134AF"} /></i></div>
+          <div className="rinfo"><b>{reel.account}</b><span className="mono-num">{ago(reel.publishedAt)}</span></div>
+        </Ext>
       ))}
     </div>
   );
 }
 
-function MonthlyGrowthChart({
-  rows,
-}: {
-  rows: PublicAchievements["monthlyGrowth"];
-}) {
-  if (rows.length === 0) {
-    return (
-      <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
-        لا توجد بيانات نمو لهذه الفترة.
-      </p>
-    );
-  }
-
-  const maxValue = Math.max(...rows.map((row) => row.publications), 1);
-  const width = 860;
-  const height = 260;
-  const paddingX = 48;
-  const paddingTop = 26;
-  const paddingBottom = 48;
-  const chartHeight = height - paddingTop - paddingBottom;
-  const usableWidth = width - paddingX * 2;
-  const points = rows.map((row, index) => {
-    const x = rows.length === 1 ? width / 2 : paddingX + (index / (rows.length - 1)) * usableWidth;
-    const y = paddingTop + chartHeight - (row.publications / maxValue) * chartHeight;
-    return { ...row, x, y };
-  });
-  const baseline = height - paddingBottom;
-  const linePath = points.length === 1
-    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y}`
-    : points.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
-  const areaPath = points.length === 1
-    ? `M ${paddingX} ${points[0].y} L ${width - paddingX} ${points[0].y} L ${width - paddingX} ${baseline} L ${paddingX} ${baseline} Z`
-    : `${linePath} L ${points[points.length - 1].x} ${baseline} L ${points[0].x} ${baseline} Z`;
-
-  return (
-    <div className="overflow-hidden rounded-lg border border-[#efe6d8] bg-[#fffdf8] p-4">
-      <svg viewBox={`0 0 ${width} ${height}`} className="h-[260px] w-full" role="img" aria-label="رسم النمو الشهري">
-        <defs>
-          <linearGradient id="monthlyGrowthFill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#0f5b3d" stopOpacity="0.28" />
-            <stop offset="100%" stopColor="#0f5b3d" stopOpacity="0.03" />
-          </linearGradient>
-        </defs>
-        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => {
-          const y = paddingTop + chartHeight * ratio;
-          return (
-            <line
-              key={`grid-${ratio}`}
-              x1={paddingX}
-              x2={width - paddingX}
-              y1={y}
-              y2={y}
-              stroke="#eadfcd"
-              strokeDasharray="5 7"
-            />
-          );
-        })}
-        <path d={areaPath} fill="url(#monthlyGrowthFill)" />
-        <path d={linePath} fill="none" stroke="#0f5b3d" strokeLinecap="round" strokeLinejoin="round" strokeWidth="5" />
-        {points.map((point) => {
-          const date = new Date(point.monthStart);
-          return (
-            <g key={point.monthStart}>
-              <circle cx={point.x} cy={point.y} r="7" fill="#c59226" stroke="#fffaf0" strokeWidth="4" />
-              <text x={point.x} y={point.y - 16} textAnchor="middle" className="fill-[#103c2d] text-[18px] font-black">
-                {formatNumber(point.publications)}
-              </text>
-              <text x={point.x} y={height - 18} textAnchor="middle" className="fill-[#6f8378] text-[15px] font-bold">
-                {format(date, "MMM yyyy", { locale: ar })}
-              </text>
-            </g>
-          );
-        })}
-      </svg>
-    </div>
-  );
-}
-
-// رسوم recharts محمّلة كسولًا — تُحمَّل فقط عند فتح «العرض التحليلي» كي لا تثقل
-// التحميل الأول للصفحة العامة ولا بقية الصفحات.
-const LazyPlatformDonut = lazy(() =>
-  import("./achievements-charts").then((module) => ({ default: module.PlatformDistributionDonutChart }))
-);
-const LazyMonthlyGrowth = lazy(() =>
-  import("./achievements-charts").then((module) => ({ default: module.MonthlyGrowthAreaChart }))
-);
-
-// عرض متصل للأشهر: يبدأ من أول شهر موثّق (لا شهر فارغ قبله)، ويعرض كل الأشهر بعده
-// حتى الشهر الحالي، بملء الأشهر الفارغة بقيمة صفر بدل حذفها. عرضيّ فقط — لا يمسّ الحساب.
-function fillMonthlyGrowth(rows: PublicAchievements["monthlyGrowth"]): PublicAchievements["monthlyGrowth"] {
-  if (rows.length === 0) return [];
-  const sorted = [...rows].sort((a, b) => new Date(a.monthStart).getTime() - new Date(b.monthStart).getTime());
-  const byKey = new Map<string, PublicAchievements["monthlyGrowth"][number]>();
-  for (const row of sorted) {
-    const date = new Date(row.monthStart);
-    byKey.set(`${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`, row);
-  }
-  const first = new Date(sorted[0].monthStart);
-  const now = new Date();
-  let year = first.getUTCFullYear();
-  let month = first.getUTCMonth();
-  const endYear = now.getUTCFullYear();
-  const endMonth = now.getUTCMonth();
-  const result: PublicAchievements["monthlyGrowth"] = [];
-  while (year < endYear || (year === endYear && month <= endMonth)) {
-    const key = `${year}-${String(month + 1).padStart(2, "0")}`;
-    const existing = byKey.get(key);
-    result.push(existing ?? { monthStart: new Date(Date.UTC(year, month, 1)).toISOString(), publications: 0, completedTasks: 0 });
-    month += 1;
-    if (month > 11) {
-      month = 0;
-      year += 1;
-    }
-  }
-  return result;
-}
-
-function CompactMetricCard({
-  title,
-  value,
-  hint,
-  icon: Icon,
-}: {
-  title: string;
-  value: string;
-  hint: string;
-  icon: ElementType;
-}) {
-  return (
-    <Card className="border-[#eadfcd] bg-white/90 shadow-sm">
-      <CardContent className="p-3">
-        <div className="flex items-center justify-between gap-2">
-          <div className="min-w-0">
-            <p className="truncate text-[11px] font-black text-[#5f796d]">{title}</p>
-            <p className="mt-1 text-xl font-black leading-none text-[#103c2d] sm:text-2xl">{value}</p>
-            <p className="mt-1 truncate text-[10px] font-bold text-[#7c8f85]">{hint}</p>
-          </div>
-          <div className="rounded-md border border-[#eadfcd] bg-[#fbf8ef] p-2 text-[#c59226]">
-            <Icon className="h-4 w-4" />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
-
-function CompactPeriodSwitch({
-  period,
-  onChange,
-}: {
-  period: PeriodKey;
-  onChange: (period: PeriodKey) => void;
-}) {
-  return (
-    <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-[#eadfcd] bg-white/88 px-3 py-2 shadow-sm">
-      <span className="text-xs font-black text-[#5f796d]">الفترة</span>
-      <div className="inline-flex rounded-md border border-[#d8cba9] bg-[#fffdf8] p-0.5">
-        {periodOptions.map((option) => (
-          <button
-            key={option.value}
-            type="button"
-            onClick={() => onChange(option.value)}
-            className={`rounded px-3 py-1.5 text-xs font-black ${
-              period === option.value ? "bg-[#d6a12a] text-[#103c2d]" : "text-[#5f796d]"
-            }`}
-          >
-            {option.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function AnalyticsView({
-  data,
-  period,
-  onPeriodChange,
-  last30DailyAverage,
-}: {
-  data: PublicAchievements;
-  period: PeriodKey;
-  onPeriodChange: (period: PeriodKey) => void;
-  last30DailyAverage: number;
-}) {
-  return (
-    <section className="space-y-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h2 className="flex items-center gap-2 text-lg font-black text-[#103c2d] sm:text-xl">
-            <Globe2 className="h-5 w-5 text-[#c59226]" />
-            الإنجازات العامة لتطبيق تلاوات الحرمين
-          </h2>
-          <p className="mt-1 text-xs font-semibold text-[#6f8378] sm:text-sm">
-            أرقام حقيقية .. أثر ممتد
-          </p>
-        </div>
-        <p className="rounded-full border border-[#eadfcd] bg-white/85 px-3 py-1.5 text-xs font-black text-[#5f796d] shadow-sm">
-          آخر تحديث: {formatDateTime(data.lastUpdated)}
-        </p>
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[1.55fr_0.72fr]">
-        <YoutubeViewsCard stats={data.youtubeViews} />
-        <CompactPeriodSwitch period={period} onChange={onPeriodChange} />
-      </div>
-
-      <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-        <CompactMetricCard
-          title="إجمالي المنشورات"
-          value={formatNumber(data.allTime.totalPublications)}
-          icon={LineChart}
-          hint="منشور"
-        />
-        <CompactMetricCard
-          title="منشورات آخر 30 يومًا"
-          value={formatNumber(data.last30Publications)}
-          icon={Clock}
-          hint="منشور حديث"
-        />
-        <CompactMetricCard
-          title="متوسط الإنجاز اليومي"
-          value={formatAverage(last30DailyAverage)}
-          icon={TrendingUp}
-          hint="منشور / يوم"
-        />
-      </div>
-
-      <div className="grid gap-4 xl:grid-cols-[0.88fr_1.12fr]">
-        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-          <CardContent className="p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-[#c59226]" />
-              <h3 className="text-base font-black text-[#103c2d]">توزيع الإنجازات حسب المنصات</h3>
-            </div>
-            <Suspense fallback={<Skeleton className="h-52 w-full rounded-lg bg-[#f4eddf]" />}>
-              <LazyPlatformDonut rows={data.achievementsByPlatform} />
-            </Suspense>
-          </CardContent>
-        </Card>
-
-        <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-          <CardContent className="p-4">
-            <div className="mb-3 flex items-center gap-2">
-              <LineChart className="h-4 w-4 text-[#c59226]" />
-              <h3 className="text-base font-black text-[#103c2d]">النمو الشهري</h3>
-            </div>
-            <Suspense fallback={<Skeleton className="h-[260px] w-full rounded-lg bg-[#f4eddf]" />}>
-              <LazyMonthlyGrowth rows={fillMonthlyGrowth(data.monthlyGrowth)} />
-            </Suspense>
-          </CardContent>
-        </Card>
-      </div>
-    </section>
-  );
-}
+const FEED_META: Record<Showcase["feed"][number]["platform"], { label: string; cls: string; style?: React.CSSProperties; icon: ReactNode }> = {
+  youtube: { label: "يوتيوب", cls: "c-fb", style: { background: "#C1121F" }, icon: ICONS.ytWhite },
+  instagram: { label: "انستقرام", cls: "c-ig", icon: ICONS.ig(17) },
+  facebook: { label: "فيسبوك", cls: "c-fb", icon: ICONS.fb(17) },
+  telegram: { label: "تيليجرام", cls: "c-tg", icon: ICONS.tg(17) },
+  designs: { label: "تصاميم الحرمين", cls: "c-ds", icon: ICONS.ds(17) },
+};
 
 export default function Achievements() {
-  const [period, setPeriod] = useState<PeriodKey>("all");
-  const [viewMode, setViewMode] = useState<ViewMode>("classic");
-  const { data, isLoading, isError } = useQuery({
-    queryKey: ["public-achievements", period],
-    queryFn: () => fetchPublicAchievements(period),
-    staleTime: 60_000,
+  const { data, isError } = useQuery({
+    queryKey: ["public-showcase"],
+    queryFn: async () => {
+      const res = await fetch("/api/public/showcase");
+      if (!res.ok) throw new Error("failed");
+      return (await res.json()) as Showcase;
+    },
+    staleTime: 5 * 60 * 1000,
   });
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [copied, setCopied] = useState(false);
 
-  const maxPlatform = Math.max(...(data?.achievementsByPlatform.map((row) => row.publications) ?? [0]), 1);
-  const selectedPeriodLabel = periodOptions.find((option) => option.value === period)?.label ?? "الكل";
-  const last30DailyAverage = data ? data.last30Publications / 30 : 0;
+  // الخطوط وعنوان الصفحة.
+  useEffect(() => {
+    const link = document.createElement("link");
+    link.rel = "stylesheet";
+    link.href = "https://fonts.googleapis.com/css2?family=El+Messiri:wght@500;600;700&family=Readex+Pro:wght@300;400;500;600&display=swap";
+    document.head.appendChild(link);
+    const previousTitle = document.title;
+    document.title = "منصات مشروع تطبيق تلاوات الحرمين";
+    return () => { link.remove(); document.title = previousTitle; };
+  }, []);
+
+  // العدّادات المتحرّكة (نفس نص التصميم): تبدأ عند ظهورها، مع احترام تقليل الحركة.
+  useEffect(() => {
+    if (!data || !rootRef.current) return;
+    const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const run = (el: HTMLElement) => {
+      const target = parseInt(el.getAttribute("data-to") ?? "0", 10) || 0;
+      if (reduce) { el.textContent = ar(target); return; }
+      const dur = 1600;
+      let start: number | null = null;
+      const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+      const step = (ts: number) => {
+        if (start === null) start = ts;
+        const p = Math.min((ts - start) / dur, 1);
+        el.textContent = ar(target * ease(p));
+        if (p < 1) requestAnimationFrame(step); else el.textContent = ar(target);
+      };
+      requestAnimationFrame(step);
+    };
+    const counts = Array.from(rootRef.current.querySelectorAll<HTMLElement>(".count"));
+    if (!("IntersectionObserver" in window)) { counts.forEach(run); return; }
+    const io = new IntersectionObserver((entries) => {
+      entries.forEach((entry) => { if (entry.isIntersecting) { run(entry.target as HTMLElement); io.unobserve(entry.target); } });
+    }, { threshold: 0.4 });
+    counts.forEach((el) => io.observe(el));
+    return () => io.disconnect();
+  }, [data]);
+
+  const share = () => {
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(location.href).then(() => { setCopied(true); setTimeout(() => setCopied(false), 2000); }).catch(() => {});
+    }
+  };
+
+  const hero = data?.hero ?? { youtubeViews: 0, youtubeSubscribers: 0, appsCount: 0 };
+  const p = data?.platforms;
 
   return (
-    <main dir="rtl" className="min-h-screen bg-[#f6f1e8] text-[#103c2d]">
-      <section
-        id="top"
-        className="relative overflow-hidden border-b border-[#eadfcd]"
-        style={{
-          backgroundImage:
-            "linear-gradient(90deg, rgba(246,241,232,0.96), rgba(246,241,232,0.87), rgba(246,241,232,0.72)), url('/haram-achievements-bg.jpg')",
-          backgroundPosition: "center",
-          backgroundSize: "cover",
-        }}
-      >
-        <nav className="mx-auto flex w-full max-w-7xl flex-col items-start gap-3 px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-8">
-          <JoodLogoMark />
-          <div className="text-right">
-            <p className="text-lg font-black text-[#0f3327]">إنجازات فريق تطبيق تلاوات الحرمين</p>
-            <p className="mt-1 text-xs font-semibold text-[#6d8177]">
-              {data?.lastUpdated
-                ? `آخر تحديث: ${formatDateTime(data.lastUpdated)}`
-                : "آخر تحديث: يتم تحميل البيانات"}
-            </p>
+    <div className="manassat" ref={rootRef}>
+      <style>{CSS}</style>
+      <div className="hero">
+        <div className="wrap hero-inner">
+          <div className="brandbar">
+            <span className="plate">
+              <img src="/jood-logo.png" alt="جمعية جود — Jood Charity" style={{ height: 46, width: "auto", display: "block" }} />
+            </span>
+            <button className="share-btn" id="shareBtn" type="button" onClick={share}>
+              {copied ? (
+                <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg> تم نسخ الرابط</>
+              ) : (
+                <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg> مشاركة الصفحة</>
+              )}
+            </button>
           </div>
-        </nav>
+          <h1>منصات مشروع تطبيق تلاوات الحرمين</h1>
+          <div className="hero-stats">
+            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>٠</b><span>مشاهدة على يوتيوب</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.youtubeSubscribers} key={`s-${hero.youtubeSubscribers}`}>٠</b><span>مشترك في قنواتنا</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.appsCount} key={`a-${hero.appsCount}`}>٠</b><span>تطبيقات تلاوات</span></div>
+          </div>
+        </div>
+      </div>
 
-        <div className="mx-auto w-full max-w-7xl px-5 pb-12 pt-6 sm:px-8 lg:pb-16">
-          <div className="max-w-3xl">
-            <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-[#d8c496] bg-white/70 px-3 py-1 text-sm font-bold text-[#8a641d] shadow-sm backdrop-blur">
-              <Globe2 className="h-4 w-4" />
-              واجهة عامة للإنجازات
+      <div className="wrap">
+        {isError && <div className="note" style={{ marginTop: 24 }}>تعذّر تحميل البيانات الآن — حاول بعد قليل.</div>}
+
+        {data?.featured && (
+          <div className="feat">
+            <Ext href={data.featured.url} className="fthumb">
+              {data.featured.thumbnail && <img className="timg" src={data.featured.thumbnail} alt="" referrerPolicy="no-referrer" />}
+              <span className="play"><PlayIcon size={22} /></span>
+            </Ext>
+            <div className="fbody">
+              <span className="ftag">★ الأكثر مشاهدة هذا الأسبوع</span>
+              <div className="ftitle">{data.featured.title}</div>
+              <div className="fmeta">
+                {data.featured.views != null && <strong className="mono-num">{compact(data.featured.views)} مشاهدة</strong>}
+                <span>يوتيوب · {data.featured.channelTitle}</span>
+              </div>
+              <Ext href={data.featured.url} className="btn btn-red" style={{ alignSelf: "flex-start" }}>مشاهدة المقطع ↗</Ext>
             </div>
-            <h1 className="text-4xl font-black leading-tight text-[#0f3327] sm:text-5xl">
-              إنجازات فريق تطبيق تلاوات الحرمين
-            </h1>
-            <p className="mt-4 max-w-2xl text-base font-semibold text-[#5d756b]">
-              عرض رسمي مختصر لأثر العمل ومنجزاته عبر المنصات.
-            </p>
           </div>
-        </div>
-      </section>
+        )}
 
-      <div className="mx-auto flex w-full max-w-7xl flex-col gap-8 px-5 py-8 sm:px-8 lg:py-10">
-        <div className="flex justify-center sm:justify-end">
-          <ViewModeToggle viewMode={viewMode} onChange={setViewMode} />
-        </div>
-        {isLoading ? (
-          <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-            {[...Array(5)].map((_, index) => <Skeleton key={index} className="h-32 rounded-lg bg-white/70" />)}
-          </div>
-        ) : isError || !data ? (
-          <Card className="border-red-200 bg-red-50/80">
-            <CardContent className="py-8 text-center font-bold text-red-700">
-              تعذر تحميل بيانات الإنجازات الآن.
-            </CardContent>
-          </Card>
-        ) : (
-          viewMode === "classic" ? (
-          <>
-            <section id="platforms">
-              <SectionTitle
-                icon={Globe2}
-                title="الإحصائيات التراكمية"
-                hint="أرقام عامة لعرض أثر المشروع."
-              />
-              <YoutubeViewsCard stats={data.youtubeViews} />
-              <div className="mt-4">
-                <PeriodSelectorCard period={period} onChange={setPeriod} />
+        {(data?.youtube.length ?? 0) > 0 && (
+          <section>
+            <div className="sec-head"><span className="ico">{ICONS.youtube}</span><h2>قنواتنا على يوتيوب</h2></div>
+            <p className="sec-sub">كل قناة مع آخر مقاطعها وعدد مشاهداتها.</p>
+            {data!.youtube.map((channel, index) => (
+              <div className="yt-channel" key={channel.channelId}>
+                <div className="yt-top">
+                  <span className="yt-ava" style={{ background: AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length] }}>
+                    {channel.avatar ? <img src={channel.avatar} alt="" referrerPolicy="no-referrer" /> : firstLetter(channel.title)}
+                  </span>
+                  <span className="yt-name"><b>{channel.title}</b>
+                    <span className="meta">
+                      {channel.subscribers != null && <strong className="mono-num">{compact(channel.subscribers)} مشترك</strong>}
+                      {channel.views != null && <strong className="mono-num">{compact(channel.views)} مشاهدة</strong>}
+                    </span>
+                  </span>
+                  <Ext href={channel.url} className="btn btn-red">زيارة القناة ↗</Ext>
+                </div>
+                <div className="clips">
+                  {channel.clips.map((clip) => (
+                    <Ext key={clip.url} href={clip.url} className="clip">
+                      <div className="thumb">
+                        {clip.thumbnail && <img className="timg" src={clip.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />}
+                        <span className="play"><PlayIcon /></span>
+                      </div>
+                      <div className="clip-body"><div className="t">{clip.title}</div>{clip.views != null && <div className="v mono-num">{compact(clip.views)} مشاهدة</div>}</div>
+                    </Ext>
+                  ))}
+                </div>
               </div>
-            </section>
+            ))}
+          </section>
+        )}
 
-            <section>
-              <SectionTitle
-                icon={Clock}
-                title="إحصائيات الفترة"
-                hint={`تتغير حسب اختيار الفترة الحالية: ${selectedPeriodLabel}.`}
-              />
-              <div className="grid grid-cols-2 gap-3 sm:gap-4 xl:grid-cols-3">
-                <StatCard
-                  title="إجمالي منشورات الفترة"
-                  value={formatNumber(data.totalPublications)}
-                  icon={LineChart}
-                  hint={selectedPeriodLabel}
-                />
-                <StatCard
-                  title="المهام المكتملة في الفترة"
-                  value={formatNumber(data.completedTasks)}
-                  icon={CheckCircle2}
-                  hint="حسب الفترة المختارة"
-                />
-                <StatCard
-                  title="متوسط الإنجاز اليومي"
-                  value={formatAverage(last30DailyAverage)}
-                  icon={TrendingUp}
-                  hint="آخر 30 يومًا"
-                  tone="gold"
-                />
+        {(data?.apps.length ?? 0) > 0 && (
+          <section>
+            <div className="sec-head"><span className="ico">{ICONS.apps}</span><h2>تطبيقاتنا</h2></div>
+            <p className="sec-sub">تطبيقات التلاوات على آيفون وأندرويد.</p>
+            <div className="apps">
+              {data!.apps.map((app) => (
+                <div className="app" key={app.name}>
+                  <span className="app-ico">{app.avatar ? <img src={app.avatar} alt="" referrerPolicy="no-referrer" /> : firstLetter(app.name)}</span>
+                  <b>{app.name}</b>
+                  <span className="store">
+                    {app.iosUrl && <a href={app.iosUrl} target="_blank" rel="noopener noreferrer">App Store</a>}
+                    {app.androidUrl && <a href={app.androidUrl} target="_blank" rel="noopener noreferrer">Google Play</a>}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </section>
+        )}
+
+        {p && (
+          <section>
+            <div className="sec-head"><span className="ico">{ICONS.platforms}</span><h2>تابعونا على المنصّات</h2></div>
+            <p className="sec-sub">كل حساباتنا الرسمية عبر وسائل التواصل.</p>
+
+            {(p.instagram.accounts.length > 0 || p.instagram.reels.length > 0) && (
+              <div className="plat">
+                <div className="plat-head"><span className="pico c-ig">{ICONS.ig()}</span><b>انستقرام</b><span className="n">{plural(p.instagram.accounts.length, "حساب", "حسابات")}</span></div>
+                {p.instagram.reels.length > 0 && <><div className="reels-label">أحدث المقاطع من حساباتنا على انستقرام</div><ReelsRow reels={p.instagram.reels} /></>}
+                <AccountsGrid accounts={p.instagram.accounts} unit="متابع" />
               </div>
-            </section>
+            )}
 
-            <section>
-              <Card className="mt-8 border-[#eadfcd] bg-white/88 shadow-sm">
-                <CardContent className="p-6">
-                  <SectionTitle
-                    icon={BarChart3}
-                    title="الإنجازات حسب المنصات"
-                    hint="عرض إجمالي الإنجازات لكل منصة."
-                  />
-                  {data.achievementsByPlatform.length === 0 ? (
-                    <p className="rounded-lg border border-[#eadfcd] bg-[#fbf8ef] py-10 text-center text-sm font-bold text-[#6f8378]">
-                      لا توجد منصات للعرض حاليًا.
-                    </p>
-                  ) : (
-                    <div className="space-y-4">
-                      {data.achievementsByPlatform.map((platform) => (
-                        <div key={platform.platformId} className="rounded-lg border border-[#efe6d8] bg-[#fffdf8] p-4">
-                          <div className="flex items-center justify-between gap-3">
-                            <div className="flex items-center gap-3 font-black">
-                              <span className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#f4eddf]">
-                                <PlatformIcon name={platform.name} className="h-5 w-5" />
-                              </span>
-                              <span>{platform.name}</span>
-                            </div>
-                            <span className="rounded-full bg-[#0f5b3d]/10 px-3 py-1 text-sm font-black text-[#0f5b3d]">
-                              {formatNumber(platform.publications)} منشور
-                            </span>
-                          </div>
-                          <Progress value={(platform.publications / maxPlatform) * 100} className="mt-3 h-2 bg-[#eee4d2]" />
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </section>
+            {(p.facebook.accounts.length > 0 || p.facebook.reels.length > 0) && (
+              <div className="plat">
+                <div className="plat-head"><span className="pico c-fb">{ICONS.fb()}</span><b>فيسبوك</b><span className="n">صفحات لكل قارئ</span></div>
+                {p.facebook.reels.length > 0 && <><div className="reels-label">أحدث المقاطع من صفحاتنا على فيسبوك</div><ReelsRow reels={p.facebook.reels} fb /></>}
+                <AccountsGrid accounts={p.facebook.accounts} unit="متابع" />
+              </div>
+            )}
 
-            <section>
-              <Card className="border-[#eadfcd] bg-white/88 shadow-sm">
-                <CardContent className="p-6">
-                  <SectionTitle
-                    icon={LineChart}
-                    title="النمو الشهري"
-                    hint="يرتبط بالفترة المختارة ويبدأ من أول شهر توجد فيه بيانات فعلية."
-                  />
-                  <MonthlyGrowthChart rows={data.monthlyGrowth} />
-                </CardContent>
-              </Card>
-            </section>
-          </>
-          ) : (
-            <AnalyticsView
-              data={data}
-              period={period}
-              onPeriodChange={setPeriod}
-              last30DailyAverage={last30DailyAverage}
-            />
-          )
+            {p.telegram.accounts.length > 0 && (
+              <div className="plat">
+                <div className="plat-head"><span className="pico c-tg">{ICONS.tg()}</span><b>تيليجرام</b><span className="n">{plural(p.telegram.accounts.length, "قناة", "قنوات")}</span></div>
+                <AccountsGrid accounts={p.telegram.accounts} unit="مشترك" />
+              </div>
+            )}
+
+            {p.twitter.accounts.length > 0 && (
+              <div className="plat">
+                <div className="plat-head"><span className="pico c-tw">{ICONS.tw()}</span><b>تويتر / X</b><span className="n">{plural(p.twitter.accounts.length, "حساب", "حسابات")}</span></div>
+                <AccountsGrid accounts={p.twitter.accounts} unit="متابع" />
+              </div>
+            )}
+
+            {(data!.designs.items.length > 0 || data!.designs.channel) && (
+              <div className="plat">
+                <div className="plat-head"><span className="pico c-ds">{ICONS.ds()}</span><b>تصاميم الحرمين</b><span className="n">أحدث التصاميم</span></div>
+                {data!.designs.items.length > 0 && (
+                  <div className="designs">
+                    {data!.designs.items.map((item) => (
+                      <Ext key={item.url} href={item.url} className="dcard">{ICONS.image}</Ext>
+                    ))}
+                  </div>
+                )}
+                {data!.designs.channel && (
+                  <div className="accs">
+                    <Ext href={data!.designs.channel.url} className="acc">
+                      <span className="dot" />
+                      <span className="acc-main"><b>{data!.designs.channel.name}</b>
+                        <span className="acc-sub mono-num">تيليجرام{data!.designs.channel.subscribers != null ? ` · ${compact(data!.designs.channel.subscribers)} مشترك` : ""}</span>
+                      </span>
+                      <span className="go">↗</span>
+                    </Ext>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
+
+        {(data?.feed.length ?? 0) > 0 && (
+          <section>
+            <div className="sec-head"><span className="ico">{ICONS.feed}</span><h2>أحدث ما نشرنا</h2></div>
+            <p className="sec-sub">آخر ما نُشر عبر جميع منصّاتنا، في مكان واحد.</p>
+            <div className="feed">
+              {data!.feed.map((item) => {
+                const meta = FEED_META[item.platform];
+                return (
+                  <a className="fitem" key={`${item.platform}-${item.url}`} href={item.url} target="_blank" rel="noopener noreferrer">
+                    <span className={`fi-ico ${meta.cls}`} style={meta.style}>{meta.icon}</span>
+                    <span className="fi-main"><b>{item.title}</b><span>{meta.label} · {ago(item.publishedAt)}</span></span>
+                    <span className="fi-go">↗</span>
+                  </a>
+                );
+              })}
+            </div>
+          </section>
         )}
       </div>
 
-      <footer id="contact" className="border-t border-[#eadfcd] bg-[#103c2d] px-5 py-6 text-center text-sm font-bold text-[#f8efd9]">
-        <div className="mx-auto flex max-w-7xl flex-col items-center justify-center gap-2 sm:flex-row sm:gap-6">
+      <footer>
+        <div className="wrap foot">
           <span>Tilawatalharamain.com</span>
-          <span className="hidden text-[#d3aa4f] sm:inline">|</span>
-          <span>بدعم جمعية جود لخدمة الحاج والمعتمر</span>
+          <span>بدعم <span className="jname">جمعية جود</span> لخدمة الحاج والمعتمر</span>
         </div>
       </footer>
-    </main>
+    </div>
   );
 }
+
+// أنماط التصميم المعتمد حرفيًا، محصورة تحت ‎.manassat‎ (بدل body). إضافات صغيرة فقط لعرض الصور الحقيقية
+// (‎.timg‎، صورة القناة/الشيخ، ‎.rimg‎) فوق نفس الخلفيات البديلة.
+const CSS = `
+.manassat{
+  color-scheme: light;
+  --bg:#F6F1E7; --surface:#FFFDF8; --surface-2:#FBF6EC; --ink:#2A2620; --muted:#6F675A;
+  --green:#0F5A46; --green-soft:#E4EFE9; --gold:#B88A2E; --gold-soft:#F0E6CF; --line:#E8DFCD;
+  --shadow:0 10px 30px rgba(42,38,32,.08); --radius:18px; --maxw:1120px;
+  --display:"El Messiri", "Readex Pro", system-ui, sans-serif; --body:"Readex Pro", system-ui, sans-serif;
+  background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;font-weight:400;min-height:100vh;direction:rtl;
+}
+.manassat *{box-sizing:border-box}
+.manassat .wrap{direction:rtl;max-width:var(--maxw);margin:0 auto;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+.manassat a{color:inherit;text-decoration:none}
+.manassat h1,.manassat h2,.manassat h3{font-family:var(--display);text-wrap:balance;margin:0;font-weight:700;letter-spacing:0}
+.manassat .mono-num{font-variant-numeric:tabular-nums}
+.manassat .hero{position:relative;overflow:hidden;border-radius:0 0 34px 34px;background:linear-gradient(180deg, rgba(12,58,46,.60) 0%, rgba(10,47,38,.78) 62%, rgba(9,40,33,.90) 100%),url('/haram-achievements-bg.jpg') center 26%/cover no-repeat;color:#F6F1E7}
+.manassat .hero-inner{position:relative;padding-block:28px 52px}
+.manassat .brandbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
+.manassat .plate{background:#FBF9F2;border-radius:14px;padding:9px 16px;box-shadow:0 8px 22px rgba(0,0,0,.22);display:flex;align-items:center;gap:10px}
+.manassat .hero h1{font-size:clamp(30px,6.4vw,52px);margin-top:20px;line-height:1.1}
+.manassat .hero-stats{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
+.manassat .hs{background:rgba(246,241,231,.08);border:1px solid rgba(246,241,231,.18);padding:14px 18px;border-radius:14px;min-width:118px}
+.manassat .hs b{font-family:var(--display);font-size:clamp(22px,4.4vw,32px);color:#E9D9A9;line-height:1;display:block}
+.manassat .hs span{color:rgba(246,241,231,.82);font-size:13px;margin-top:7px;display:block}
+.manassat section{padding-block:40px}
+.manassat .sec-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+.manassat .sec-head .ico{width:40px;height:40px;border-radius:12px;background:var(--green-soft);color:var(--green);display:grid;place-items:center;flex:none}
+.manassat .sec-head h2{font-size:clamp(22px,4vw,30px)}
+.manassat .sec-sub{color:var(--muted);font-size:15px;margin:0 0 22px 52px}
+@media (max-width:560px){.manassat .sec-sub{margin-inline-start:0}}
+.manassat .yt-channel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:20px}
+.manassat .yt-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
+.manassat .yt-ava{width:52px;height:52px;border-radius:14px;flex:none;display:grid;place-items:center;color:#fff;font-family:var(--display);font-weight:700;font-size:20px;background:linear-gradient(135deg,#C1121F,#8E0E17);overflow:hidden}
+.manassat .yt-ava img{width:100%;height:100%;object-fit:cover}
+.manassat .yt-name{flex:1;min-width:160px}
+.manassat .yt-name b{font-family:var(--display);font-size:18px;display:block}
+.manassat .yt-name .meta{color:var(--muted);font-size:13px;display:flex;gap:14px;flex-wrap:wrap;margin-top:3px}
+.manassat .yt-name .meta strong{color:var(--green);font-weight:600}
+.manassat .btn{display:inline-flex;align-items:center;gap:7px;border-radius:999px;font-weight:600;font-size:13.5px;padding:9px 16px;border:1px solid transparent;white-space:nowrap;cursor:pointer}
+.manassat .btn-red{background:#C1121F;color:#fff}
+.manassat .clips{display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin-top:18px}
+@media (max-width:640px){.manassat .clips{grid-template-columns:1fr}}
+.manassat .clip{border:1px solid var(--line);border-radius:14px;overflow:hidden;background:var(--surface-2);display:flex;flex-direction:column}
+.manassat .thumb{position:relative;aspect-ratio:16/9;background:linear-gradient(135deg,#143d33,#0F5A46 60%,#17715a);display:grid;place-items:center}
+.manassat .thumb .play,.manassat .fthumb .play{position:relative;z-index:1}
+.manassat .thumb .play{width:46px;height:46px;border-radius:50%;background:rgba(246,241,231,.92);display:grid;place-items:center;box-shadow:0 6px 16px rgba(0,0,0,.25)}
+.manassat .thumb .play svg{margin-right:-3px}
+.manassat .timg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.manassat .clip-body{padding:11px 12px 13px}
+.manassat .clip-body .t{font-size:13.5px;font-weight:500;line-height:1.45;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;min-height:2.9em}
+.manassat .clip-body .v{color:var(--muted);font-size:12px;margin-top:6px;display:flex;align-items:center;gap:6px}
+.manassat .apps{display:grid;grid-template-columns:repeat(2,1fr);gap:16px}
+@media (max-width:720px){.manassat .apps{grid-template-columns:1fr}}
+.manassat .app{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px;display:flex;align-items:center;gap:15px;flex-wrap:wrap}
+.manassat .app-ico{width:58px;height:58px;border-radius:50%;flex:none;display:grid;place-items:center;color:#fff;overflow:hidden;font-family:var(--display);font-size:22px;font-weight:700;background:linear-gradient(135deg,#0F5A46,#13715C);box-shadow:0 2px 9px rgba(42,38,32,.16)}
+.manassat .app-ico img{width:100%;height:100%;object-fit:cover}
+.manassat .app b{font-family:var(--display);font-size:16px;flex:1;min-width:130px}
+.manassat .store{display:flex;gap:9px;flex-wrap:wrap}
+.manassat .store a{display:inline-flex;align-items:center;gap:7px;font-size:12.5px;font-weight:600;padding:8px 13px;border-radius:11px;border:1px solid var(--line);background:var(--surface-2)}
+.manassat .plat{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:18px 18px 8px;margin-bottom:18px}
+.manassat .plat-head{display:flex;align-items:center;gap:11px;margin-bottom:6px}
+.manassat .plat-head .pico{width:38px;height:38px;border-radius:11px;display:grid;place-items:center;color:#fff;flex:none}
+.manassat .plat-head b{font-family:var(--display);font-size:17px}
+.manassat .plat-head .n{color:var(--muted);font-size:12.5px;margin-inline-start:auto}
+.manassat .accs{display:grid;grid-template-columns:repeat(2,1fr);gap:8px;padding-block:8px}
+@media (max-width:560px){.manassat .accs{grid-template-columns:1fr}}
+.manassat .acc{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line)}
+.manassat .acc .dot{width:8px;height:8px;border-radius:50%;background:var(--green);flex:none}
+.manassat .acc .go{margin-inline-start:auto;color:var(--muted);flex:none}
+.manassat .acc-main{display:flex;flex-direction:column;gap:2px;min-width:0}
+.manassat .acc-main b{font-weight:600;font-size:14px}
+.manassat .acc-sub{font-size:11.5px;color:var(--muted)}
+.manassat .c-ig{background:linear-gradient(135deg,#F58529,#DD2A7B 55%,#8134AF)}
+.manassat .c-fb{background:#1877F2}
+.manassat .c-tg{background:#2CA5E0}
+.manassat .c-tw{background:#111}
+.manassat .c-ds{background:linear-gradient(135deg,#B88A2E,#946d1f)}
+.manassat .reels-label{font-size:13px;color:var(--muted);margin:10px 2px 2px}
+.manassat .ig-reels{display:grid;grid-template-columns:repeat(3,minmax(0,190px));gap:12px;padding-block:8px}
+@media(max-width:560px){.manassat .ig-reels{grid-template-columns:repeat(2,1fr)}}
+.manassat .reel{position:relative;aspect-ratio:9/16;border-radius:14px;overflow:hidden;background:linear-gradient(160deg,#515BD4,#8134AF 40%,#DD2A7B 72%,#F58529);display:block}
+.manassat .reel .rimg{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}
+.manassat .reel .rplay{position:absolute;inset:0;display:grid;place-items:center}
+.manassat .reel .rplay i{width:44px;height:44px;border-radius:50%;background:rgba(255,255,255,.92);display:grid;place-items:center;box-shadow:0 6px 16px rgba(0,0,0,.3)}
+.manassat .reel .rinfo{position:absolute;inset-inline:0;bottom:0;padding:10px 11px;background:linear-gradient(0deg,rgba(0,0,0,.62),transparent);color:#fff}
+.manassat .reel .rinfo b{font-size:12px;font-weight:600;display:block;line-height:1.3}
+.manassat .reel .rinfo span{font-size:11px;opacity:.92}
+.manassat footer{margin-top:20px;border-top:1px solid var(--line);background:var(--surface-2)}
+.manassat .foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-block:22px;color:var(--muted);font-size:13.5px}
+.manassat .foot .jname{font-family:var(--display);color:var(--green)}
+.manassat .note{max-width:var(--maxw);margin:16px auto 34px;font-size:12px;color:var(--muted);background:var(--gold-soft);border:1px solid #E7D7AC;border-radius:12px;padding:12px 15px}
+.manassat .share-btn{display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-family:var(--body);font-weight:600;font-size:13px;background:rgba(246,241,231,.14);border:1px solid rgba(246,241,231,.3);color:#F6F1E7;padding:9px 16px;border-radius:999px}
+.manassat .feat{display:grid;grid-template-columns:320px 1fr;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-top:-26px;position:relative;z-index:2}
+@media(max-width:640px){.manassat .feat{grid-template-columns:1fr}}
+.manassat .fthumb{position:relative;aspect-ratio:16/9;background:linear-gradient(135deg,#143d33,#0F5A46 60%,#17715a);display:grid;place-items:center}
+.manassat .fthumb .play{width:58px;height:58px;border-radius:50%;background:rgba(246,241,231,.92);display:grid;place-items:center;box-shadow:0 8px 20px rgba(0,0,0,.3)}
+.manassat .fbody{padding:20px 22px;display:flex;flex-direction:column;justify-content:center;gap:9px}
+.manassat .ftag{display:inline-flex;align-items:center;gap:7px;align-self:flex-start;background:var(--gold-soft);color:#8a6a1f;border:1px solid #E7D7AC;font-size:12px;font-weight:600;padding:5px 12px;border-radius:999px}
+.manassat .ftitle{font-family:var(--display);font-size:clamp(18px,3vw,23px);line-height:1.4}
+.manassat .fmeta{color:var(--muted);font-size:13.5px;display:flex;gap:14px;flex-wrap:wrap}
+.manassat .fmeta strong{color:var(--green)}
+.manassat .feed{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media(max-width:640px){.manassat .feed{grid-template-columns:1fr}}
+.manassat .fitem{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:0 4px 14px rgba(42,38,32,.05)}
+.manassat .fi-ico{width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;color:#fff}
+.manassat .fi-main{min-width:0;flex:1}
+.manassat .fi-main b{display:block;font-size:13.5px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.manassat .fi-main span{font-size:12px;color:var(--muted)}
+.manassat .fi-go{color:var(--muted);flex:none}
+.manassat .designs{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;padding-block:8px}
+@media(max-width:640px){.manassat .designs{grid-template-columns:repeat(2,1fr)}}
+.manassat .dcard{aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:linear-gradient(135deg,#C9A74A,#9a7320);display:grid;place-items:center;color:rgba(255,255,255,.72)}
+.manassat .reel.fb{background:linear-gradient(160deg,#1877F2,#0d5bbf)}
+.manassat .reel.fb .rplay i svg{fill:#1877F2}
+`;
