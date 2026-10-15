@@ -17,12 +17,10 @@ import { INSTAGRAM_PLATFORM_NAME } from "../lib/instagram-platform";
 // كل مصدر مستقل: تعذّره يُفرغ قسمه فقط. النتيجة مخزّنة مؤقتًا 30 دقيقة، وتُقدَّم آخر نسخة سليمة عند الخطأ.
 // لا يُرسل أي مفتاح أو رمز إلى الواجهة أبدًا.
 
-export const SHOWCASE_YOUTUBE_CHANNELS: Array<{ channelId: string; reciterName: string | null }> = [
-  { channelId: "UCeLuU2J219WqFPZYJJquhRA", reciterName: "عبدالله الجهني" },
-  { channelId: "UCM7ZXt5QOxh-8ScBOyPg2sw", reciterName: "ياسر الدوسري" },
-  { channelId: "UCCoB7Hf8gjQzpAyzhvx7Ktg", reciterName: null }, // مزامير الفرقان (قناة ياسر الدوسري الثانية)
-  { channelId: "UCfbqZ0LoOdE6WB_u38y3cnQ", reciterName: "ماهر المعيقلي" },
-  { channelId: "UCqe5E-6-HxFrWGyBOdWOz8Q", reciterName: "بندر بليلة" },
+// المصدر الوحيد للقنوات والحسابات: صفحة إدارة المنصات. هذه القائمة القديمة (كانت ثابتة في الكود حتى
+// الإصدار 30) لا تُعرض إطلاقًا — تُستخدم فقط في تقرير التشخيص للمدير لبيان ما كان يظهر واختفى.
+const LEGACY_FIXED_YOUTUBE_CHANNELS = [
+  "UCeLuU2J219WqFPZYJJquhRA", "UCM7ZXt5QOxh-8ScBOyPg2sw", "UCCoB7Hf8gjQzpAyzhvx7Ktg", "UCfbqZ0LoOdE6WB_u38y3cnQ", "UCqe5E-6-HxFrWGyBOdWOz8Q",
 ];
 
 const CACHE_MS = 30 * 60 * 1000;
@@ -30,6 +28,7 @@ const FACEBOOK_PLATFORM_NAME = /فيسبوك|فيس بوك|facebook/i;
 const TELEGRAM_PLATFORM_NAME = /تلقرام|تيليجرام|تليجرام|تلغرام|telegram/i;
 const TWITTER_PLATFORM_NAME = /تويتر|twitter|^x$|\bx\b|إكس/i;
 const APP_PLATFORM_NAME = /^تطبيق/;
+const YOUTUBE_PLATFORM_NAME = /يوتيوب|youtube/i;
 
 export type ShowcaseClip = { title: string; views: number | null; url: string; thumbnail: string | null; publishedAt: string | null };
 export type ShowcaseAccount = { name: string; url: string | null; followers: number | null; posts: number };
@@ -48,16 +47,65 @@ export type ShowcaseData = {
   };
   designs: { items: Array<{ url: string; publishedAt: string }>; channel: { name: string; url: string | null; subscribers: number | null } | null };
   feed: Array<{ platform: "youtube" | "instagram" | "facebook" | "telegram" | "designs"; title: string; url: string; publishedAt: string }>;
+  // للمدير فقط (يُحذف من الرد العام): ما ينقص القنوات المسجّلة، وما لم يعد يظهر ولماذا.
+  diagnostics?: ShowcaseDiagnostics;
+};
+export type ShowcaseDiagnostics = {
+  youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null }>;
+  hidden: Array<{ what: string; why: string }>;
 };
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
 const nameKey = (value: string) => value.replace(/\s+/g, "").replace(/[أإآ]/g, "ا").replace(/ة/g, "ه");
 
-// ── يوتيوب ───────────────────────────────────────────────────────────────────────────────────
+// ── يوتيوب (القنوات = صفحات منصة يوتيوب المسجّلة) ─────────────────────────────────────────────
 type YoutubeChannelData = ShowcaseData["youtube"][number] & { reciterName: string | null; recent: ShowcaseClip[] };
+type YoutubeTarget = { pageId: number; pageName: string; pageUrl: string | null; reciterName: string | null };
 
-async function loadYoutube(): Promise<YoutubeChannelData[]> {
-  const ids = SHOWCASE_YOUTUBE_CHANNELS.map((c) => c.channelId);
+// معرّف القناة من رابط صفحة يوتيوب: /channel/UC… مباشرة، أو @handle و/user/ تُحلّ عبر الواجهة.
+export function parseYoutubeChannelUrl(url: string | null): { kind: "id" | "handle" | "user"; value: string } | { kind: "invalid"; problem: string } {
+  const raw = (url ?? "").trim();
+  if (!raw) return { kind: "invalid", problem: "لا يوجد رابط للقناة في صفحة المنصات (أضف رابط القناة: youtube.com/@… أو youtube.com/channel/UC…)" };
+  let parsed: URL;
+  try { parsed = new URL(/^https?:\/\//i.test(raw) ? raw : `https://${raw}`); } catch { return { kind: "invalid", problem: `الرابط غير صالح: ${raw}` }; }
+  if (!/(^|\.)youtube\.com$/i.test(parsed.hostname)) return { kind: "invalid", problem: `الرابط ليس رابط قناة يوتيوب: ${raw}` };
+  const segments = parsed.pathname.split("/").filter(Boolean);
+  if (segments[0] === "channel" && /^UC[\w-]{22}$/.test(segments[1] ?? "")) return { kind: "id", value: segments[1] };
+  if (segments[0]?.startsWith("@") && segments[0].length > 1) return { kind: "handle", value: decodeURIComponent(segments[0]) };
+  if (segments[0] === "user" && segments[1]) return { kind: "user", value: segments[1] };
+  if (segments[0] === "c") return { kind: "invalid", problem: `رابط بصيغة /c/ لا يحدّد القناة بدقة — استبدله برابط @الاسم أو /channel/UC…: ${raw}` };
+  return { kind: "invalid", problem: `تعذّر استخراج معرّف القناة من الرابط — استخدم youtube.com/@… أو youtube.com/channel/UC…: ${raw}` };
+}
+
+const resolvedHandles = new Map<string, string | null>();
+async function resolveYoutubeTargets(targets: YoutubeTarget[]) {
+  const resolved: Array<YoutubeTarget & { channelId: string }> = [];
+  const report: ShowcaseDiagnostics["youtube"] = [];
+  for (const target of targets) {
+    const parsed = parseYoutubeChannelUrl(target.pageUrl);
+    let channelId: string | null = null;
+    let problem: string | null = null;
+    if (parsed.kind === "invalid") problem = parsed.problem;
+    else if (parsed.kind === "id") channelId = parsed.value;
+    else {
+      const cacheKey = `${parsed.kind}:${parsed.value.toLowerCase()}`;
+      if (!resolvedHandles.has(cacheKey)) {
+        const data = await callYoutubeApi<{ items?: Array<{ id: string }> }>("channels", { part: "id", [parsed.kind === "handle" ? "forHandle" : "forUsername"]: parsed.value }).catch(() => null);
+        if (data) resolvedHandles.set(cacheKey, data.items?.[0]?.id ?? null);
+        else problem = "تعذّر الاتصال بيوتيوب لتحويل اسم القناة إلى معرّف — سيُعاد المحاولة";
+      }
+      channelId = resolvedHandles.get(cacheKey) ?? null;
+      if (!channelId && !problem) problem = `لم يجد يوتيوب قناة بالاسم ${parsed.value} — تحقّق من الرابط`;
+    }
+    if (channelId) resolved.push({ ...target, channelId });
+    report.push({ pageId: target.pageId, pageName: target.pageName, pageUrl: target.pageUrl, status: channelId ? "ok" : "missing", channelId, problem });
+  }
+  return { resolved, report };
+}
+
+async function loadYoutube(targets: Array<YoutubeTarget & { channelId: string }>, report: ShowcaseDiagnostics["youtube"]): Promise<YoutubeChannelData[]> {
+  const ids = [...new Set(targets.map((t) => t.channelId))];
+  if (ids.length === 0) return [];
   const channels = await callYoutubeApi<{ items?: any[] }>("channels", { part: "snippet,statistics,contentDetails", id: ids.join(","), maxResults: "50" });
   const byId = new Map((channels.items ?? []).map((item) => [String(item.id), item]));
   const uploadsByChannel = new Map<string, string[]>();
@@ -85,17 +133,25 @@ async function loadYoutube(): Promise<YoutubeChannelData[]> {
       publishedAt: video.snippet?.publishedAt ?? null,
     };
   };
-  return SHOWCASE_YOUTUBE_CHANNELS.flatMap((config) => {
-    const channel = byId.get(config.channelId);
-    if (!channel) return [];
-    const recent = (uploadsByChannel.get(config.channelId) ?? []).map(toClip).filter((clip): clip is ShowcaseClip => Boolean(clip));
+  const seen = new Set<string>();
+  return targets.flatMap((target) => {
+    const channel = byId.get(target.channelId);
+    if (!channel) {
+      // المعرّف موجود لكن يوتيوب لا يعرفه (قناة محذوفة/خاطئة) — لا يُخفى بصمت.
+      const row = report.find((r) => r.pageId === target.pageId);
+      if (row) { row.status = "missing"; row.problem = `معرّف القناة ${target.channelId} غير موجود على يوتيوب — تحقّق من الرابط`; }
+      return [];
+    }
+    if (seen.has(target.channelId)) return []; // نفس القناة مسجّلة في صفحتين ⇐ تُعرض مرة واحدة
+    seen.add(target.channelId);
+    const recent = (uploadsByChannel.get(target.channelId) ?? []).map(toClip).filter((clip): clip is ShowcaseClip => Boolean(clip));
     const thumbs = channel.snippet?.thumbnails ?? {};
     const stats = channel.statistics ?? {};
     return [{
-      channelId: config.channelId,
-      reciterName: config.reciterName,
-      title: String(channel.snippet?.title ?? ""),
-      url: `https://www.youtube.com/channel/${config.channelId}`,
+      channelId: target.channelId,
+      reciterName: target.reciterName,
+      title: String(channel.snippet?.title ?? target.pageName),
+      url: `https://www.youtube.com/channel/${target.channelId}`,
       avatar: (thumbs.high ?? thumbs.medium ?? thumbs.default)?.url ?? null,
       subscribers: stats.hiddenSubscriberCount ? null : stats.subscriberCount != null ? Number(stats.subscriberCount) : null,
       views: stats.viewCount != null ? Number(stats.viewCount) : null,
@@ -191,7 +247,7 @@ async function fbGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadFacebook(): Promise<{ followersByReciter: Map<number, number>; reels: ShowcaseReel[] }> {
+async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; reels: ShowcaseReel[] }> {
   const followersByReciter = new Map<number, number>();
   const reels: ShowcaseReel[] = [];
   const config = getFacebookConfig();
@@ -205,6 +261,11 @@ async function loadFacebook(): Promise<{ followersByReciter: Map<number, number>
     JOIN reciters r ON r.id = a.reciter_id
     WHERE a.fb_page_id IS NOT NULL`));
   await Promise.all(pages.map(async (page) => {
+    // صفحة فيسبوك مربوطة في المراقبة لكن القارئ بلا صفحة فيسبوك في صفحة المنصات ⇐ لا تُعرض.
+    if (!registeredReciterIds.has(Number(page.reciter_id))) {
+      hidden.push({ what: `فيسبوك — ${page.reciter_name} (صفحة ${page.fb_page_id})`, why: "صفحة فيسبوك مربوطة في «مراقبة إنستقرام» لكن لا توجد صفحة فيسبوك لهذا القارئ في صفحة المنصات" });
+      return;
+    }
     const token = decryptToken(page.access_token_encrypted, config.appSecret);
     if (!token) return;
     const name = String(page.reciter_name);
@@ -239,16 +300,34 @@ async function telegramMembers(username: string | null): Promise<number | null> 
 // ── التجميع ───────────────────────────────────────────────────────────────────────────────────
 export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   await ensureShowcaseSchema();
-  const [youtube, pages, apps, instagram, facebook] = await Promise.all([
-    loadYoutube().catch(() => [] as YoutubeChannelData[]),
-    loadPages(),
-    loadApps(),
-    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }> })),
-    loadFacebook().catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[] })),
-  ]);
-
+  const pages = await loadPages();
   const accountName = (page: PageRow) => page.reciterName ?? page.name;
   const pagesOf = (pattern: RegExp) => pages.filter((page) => pattern.test(page.platformName));
+  const hidden: ShowcaseDiagnostics["hidden"] = [];
+
+  const youtubeTargets = pagesOf(YOUTUBE_PLATFORM_NAME).map((page) => ({ pageId: page.id, pageName: page.name, pageUrl: page.pageUrl, reciterName: page.reciterName }));
+  const { resolved: youtubeResolved, report: youtubeReport } = await resolveYoutubeTargets(youtubeTargets).catch(() => ({ resolved: [] as Array<YoutubeTarget & { channelId: string }>, report: [] as ShowcaseDiagnostics["youtube"] }));
+  const facebookReciters = new Set(pagesOf(FACEBOOK_PLATFORM_NAME).map((page) => page.reciterId).filter((id): id is number => id != null));
+  const [youtube, apps, instagram, facebook] = await Promise.all([
+    loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
+    loadApps(),
+    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }> })),
+    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[] })),
+  ]);
+  // ما كان يظهر من القائمة الثابتة القديمة ولم يعد مسجّلًا في صفحة المنصات.
+  const shownIds = new Set(youtube.map((channel) => channel.channelId));
+  const legacyMissing = LEGACY_FIXED_YOUTUBE_CHANNELS.filter((id) => !shownIds.has(id));
+  if (legacyMissing.length > 0) {
+    const titles = await callYoutubeApi<{ items?: any[] }>("channels", { part: "snippet", id: legacyMissing.join(",") }).catch(() => ({ items: [] as any[] }));
+    const titleOf = new Map((titles.items ?? []).map((item) => [String(item.id), String(item.snippet?.title ?? "")]));
+    for (const id of legacyMissing) {
+      const registeredButBroken = youtubeReport.some((row) => row.channelId === id && row.status === "missing");
+      hidden.push({
+        what: `قناة يوتيوب «${titleOf.get(id) || id}» (${id})`,
+        why: registeredButBroken ? "مسجّلة لكن تنقصها بيانات (انظر قائمة قنوات يوتيوب)" : "كانت في القائمة الثابتة القديمة، وغير مسجّلة في صفحة المنصات (لا صفحة يوتيوب برابطها)",
+      });
+    }
+  }
 
   const instagramAccounts: ShowcaseAccount[] = pagesOf(INSTAGRAM_PLATFORM_NAME).map((page) => ({
     name: accountName(page), url: page.pageUrl, followers: instagram.followersByPage.get(page.id) ?? page.manualFollowers, posts: page.posts,
@@ -267,6 +346,9 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
 
   // التطبيقات: صورة الشيخ من صورة قناته على يوتيوب (مطابقة اسم القارئ في اسم التطبيق).
   const avatarFor = (appName: string) => youtube.find((channel) => channel.reciterName && nameKey(appName).includes(nameKey(channel.reciterName)))?.avatar ?? null;
+  // قنوات تلقرام المسجّلة (باسم المستخدم من رابط الصفحة) — لا تُعرض منشورات قناة غير مسجّلة.
+  const registeredTelegram = new Set(telegramPages.map((page) => telegramUsername(page.pageUrl)?.toLowerCase()).filter(Boolean) as string[]);
+  const registeredPageIds = new Set(pages.map((page) => page.id));
 
   // الأكثر مشاهدة هذا الأسبوع: أعلى مشاهدات بين مقاطع يوتيوب المنشورة هذا الأسبوع (الأحد→السبت، الرياض).
   const weekStart = riyadhWeekStart(now);
@@ -275,7 +357,10 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const featured = thisWeek.sort((a, b) => (b.views ?? 0) - (a.views ?? 0))[0] ?? null;
 
   // تصاميم الحرمين: أحدث منشورات قناة التصاميم.
-  const designChannel = rowsOf(await db.execute(sql`SELECT chat_id, title, username FROM telegram_channels WHERE kind = 'designs' ORDER BY id LIMIT 1`).catch(() => ({ rows: [] })))[0];
+  const designCandidate = rowsOf(await db.execute(sql`SELECT chat_id, title, username, page_id FROM telegram_channels WHERE kind = 'designs' ORDER BY id LIMIT 1`).catch(() => ({ rows: [] })))[0];
+  const designRegistered = designCandidate && ((designCandidate.page_id != null && registeredPageIds.has(Number(designCandidate.page_id))) || (designCandidate.username && registeredTelegram.has(String(designCandidate.username).toLowerCase())));
+  if (designCandidate && !designRegistered) hidden.push({ what: `قناة التصاميم «${designCandidate.title ?? designCandidate.chat_id}»`, why: "غير مربوطة بصفحة مسجّلة في صفحة المنصات" });
+  const designChannel = designRegistered ? designCandidate : null;
   const designItems = designChannel ? rowsOf(await db.execute(sql`
     SELECT post_url, published_at FROM telegram_channel_posts
     WHERE chat_id = ${String(designChannel.chat_id)} AND kind = 'design' AND post_url IS NOT NULL
@@ -283,10 +368,17 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const designUsername = designChannel?.username ? String(designChannel.username) : null;
 
   // أحدث ما نشرنا: دمج كل المنصّات، الأحدث أولًا.
-  const recitationPosts = rowsOf(await db.execute(sql`
+  const recitationChannels = rowsOf(await db.execute(sql`SELECT chat_id, title, username, page_id FROM telegram_channels WHERE kind = 'recitations'`).catch(() => ({ rows: [] })));
+  const feedChatIds: string[] = [];
+  for (const channel of recitationChannels) {
+    const registered = (channel.page_id != null && registeredPageIds.has(Number(channel.page_id))) || (channel.username && registeredTelegram.has(String(channel.username).toLowerCase()));
+    if (registered) feedChatIds.push(String(channel.chat_id));
+    else hidden.push({ what: `منشورات قناة تلقرام «${channel.title ?? channel.chat_id}» في «أحدث ما نشرنا»`, why: "القناة غير مسجّلة في صفحة المنصات (لا صفحة تلقرام برابطها)" });
+  }
+  const recitationPosts = feedChatIds.length === 0 ? [] : rowsOf(await db.execute(sql`
     SELECT p.caption, p.post_url, p.published_at, r.name AS reciter_name FROM telegram_channel_posts p
     LEFT JOIN reciters r ON r.id = p.reciter_id
-    WHERE p.kind = 'recitation' AND p.post_url IS NOT NULL
+    WHERE p.kind = 'recitation' AND p.post_url IS NOT NULL AND p.chat_id IN (${sql.join(feedChatIds.map((id) => sql`${id}`), sql`, `)})
     ORDER BY p.published_at DESC LIMIT 6`).catch(() => ({ rows: [] })));
   const feed: ShowcaseData["feed"] = [
     ...youtube.flatMap((channel) => channel.recent.slice(0, 3).filter((clip) => clip.publishedAt).map((clip) => ({ platform: "youtube" as const, title: clip.title, url: clip.url, publishedAt: clip.publishedAt! }))),
@@ -321,6 +413,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
       channel: designChannel ? { name: String(designChannel.title ?? "قناة التصاميم"), url: designUsername ? `https://t.me/${designUsername}` : null, subscribers: await telegramMembers(designUsername) } : null,
     },
     feed,
+    diagnostics: { youtube: youtubeReport, hidden },
   };
 }
 
@@ -345,6 +438,12 @@ export async function getShowcase(options: { force?: boolean } = {}): Promise<Sh
 
 export function clearShowcaseCache() {
   cached = null;
+}
+
+// الرد العام بلا تقرير التشخيص.
+export function publicShowcase(data: ShowcaseData): ShowcaseData {
+  const { diagnostics: _d, ...rest } = data;
+  return rest;
 }
 
 export { pickInstagramRow, telegramUsername };

@@ -3,7 +3,7 @@ import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureShowcaseSchema } from "../services/showcase-schema";
-import { clearShowcaseCache, getShowcase } from "../services/showcase";
+import { clearShowcaseCache, getShowcase, publicShowcase } from "../services/showcase";
 
 // ── عام: بيانات صفحة «منصات المشروع» (/achievements) — بلا تسجيل دخول، بلا أي مفتاح ──────────────
 export const showcasePublicRouter = Router();
@@ -12,7 +12,7 @@ showcasePublicRouter.get("/public/showcase", async (_req, res) => {
   try {
     const data = await getShowcase();
     res.set("Cache-Control", "public, max-age=300");
-    res.json(data);
+    res.json(publicShowcase(data));
   } catch {
     res.status(503).json({ message: "تعذّر تحميل البيانات الآن" });
   }
@@ -65,7 +65,14 @@ router.put("/showcase/manual/pages/:id", async (req, res) => {
 
 router.post("/showcase/refresh", async (_req, res) => {
   clearShowcaseCache();
-  res.json(await getShowcase({ force: true }));
+  const data = await getShowcase({ force: true });
+  res.json(data.diagnostics ?? { youtube: [], hidden: [] });
+});
+
+// تشخيص للمدير: ما ينقص قنوات يوتيوب المسجّلة، وما لم يعد يظهر في الصفحة العامة ولماذا.
+router.get("/showcase/diagnostics", async (_req, res) => {
+  const data = await getShowcase();
+  res.json(data.diagnostics ?? { youtube: [], hidden: [] });
 });
 
 export default router;
