@@ -19,11 +19,11 @@ import { INSTAGRAM_PLATFORM_NAME } from "../lib/instagram-platform";
 // تقدير. تعذّر الرقم ⇐ يُعرض الحساب بلا رقم، ويُذكر السبب للمدير في التشخيص.
 // لا يُرسل أي مفتاح أو رمز إلى الواجهة أبدًا.
 
-// المصدر الوحيد للقنوات والحسابات: صفحة إدارة المنصات. هذه القائمة القديمة (كانت ثابتة في الكود حتى
-// الإصدار 30) لا تُعرض إطلاقًا — تُستخدم فقط في تقرير التشخيص للمدير لبيان ما كان يظهر واختفى.
-const LEGACY_FIXED_YOUTUBE_CHANNELS = [
-  "UCeLuU2J219WqFPZYJJquhRA", "UCM7ZXt5QOxh-8ScBOyPg2sw", "UCCoB7Hf8gjQzpAyzhvx7Ktg", "UCfbqZ0LoOdE6WB_u38y3cnQ", "UCqe5E-6-HxFrWGyBOdWOz8Q",
-];
+// المصدر الوحيد للقنوات والحسابات: صفحة إدارة المنصات (لا قائمة قنوات في الكود).
+// قرار المدير (2026-10-15): إخفاء هاتين القناتين من الصفحة العامة فقط — يُطبَّق مرة واحدة على صفحاتهما
+// (بمعرّف القناة بعد التحويل، ولو سُجّلت باسم @) عبر علامة hide_from_showcase، ويمكن إظهارهما من البطاقة.
+const ONE_TIME_HIDE_CHANNELS = ["UCiBb4d9_Z5SqMVCpS5TW-MA", "UChDhl60fz0qmorOJlJNeEyg"];
+const ONE_TIME_HIDE_MIGRATION = "showcase_hide_two_youtube_channels_v31";
 
 const CACHE_MS = 30 * 60 * 1000;
 const FACEBOOK_PLATFORM_NAME = /فيسبوك|فيس بوك|facebook/i;
@@ -54,7 +54,9 @@ export type ShowcaseData = {
   diagnostics?: ShowcaseDiagnostics;
 };
 export type ShowcaseDiagnostics = {
-  youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null }>;
+  youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null; hiddenByAdmin?: boolean }>;
+  // صفحات مخفية من الصفحة العامة بقرار المدير (تبقى في النظام).
+  hiddenPages: Array<{ pageId: number; platformName: string; name: string }>;
   hidden: Array<{ what: string; why: string }>;
   // لكل حساب معروض: هل رقم المتابعين آلي الآن؟ وإن لا، لماذا.
   followers: Array<{ platform: "instagram" | "facebook" | "telegram" | "twitter" | "designs"; account: string; automatic: boolean; reason: string | null }>;
@@ -172,12 +174,12 @@ async function loadYoutube(targets: Array<YoutubeTarget & { channelId: string }>
 }
 
 // ── قاعدة البيانات: المنصات والصفحات وعدد المنشورات ───────────────────────────────────────────────
-type PageRow = { id: number; platformId: number; platformName: string; name: string; reciterId: number | null; reciterName: string | null; pageUrl: string | null; posts: number };
+type PageRow = { id: number; platformId: number; platformName: string; name: string; reciterId: number | null; reciterName: string | null; pageUrl: string | null; posts: number; hidden: boolean };
 
 async function loadPages(): Promise<PageRow[]> {
   // المنشورات = الشواهد الموثّقة الفعّالة على مهام الصفحة غير المحذوفة (بلا الشواهد التكميلية).
   return rowsOf(await db.execute(sql`
-    SELECT pp.id, pp.platform_id, p.name AS platform_name, pp.name, pp.reciter_id, r.name AS reciter_name, pp.page_url,
+    SELECT pp.id, pp.platform_id, p.name AS platform_name, pp.name, pp.reciter_id, r.name AS reciter_name, pp.page_url, pp.hide_from_showcase,
       (SELECT count(*)::int FROM task_proofs tp JOIN tasks t ON t.id = tp.task_id
         WHERE t.page_id = pp.id AND t.deleted_at IS NULL AND tp.deleted_at IS NULL AND NOT tp.is_supplementary) AS posts
     FROM platform_pages pp
@@ -186,7 +188,7 @@ async function loadPages(): Promise<PageRow[]> {
     ORDER BY pp.id`)).map((row) => ({
     id: Number(row.id), platformId: Number(row.platform_id), platformName: String(row.platform_name), name: String(row.name),
     reciterId: row.reciter_id == null ? null : Number(row.reciter_id), reciterName: row.reciter_name ? String(row.reciter_name) : null,
-    pageUrl: row.page_url ? String(row.page_url) : null, posts: Number(row.posts ?? 0),
+    pageUrl: row.page_url ? String(row.page_url) : null, posts: Number(row.posts ?? 0), hidden: row.hide_from_showcase === true,
   }));
 }
 
@@ -343,38 +345,47 @@ function resolveTelegramChat(page: PageRow, linkedChats: Map<number, string>, se
     : "لا رابط عام للقناة والبوت ليس عضوًا فيها — أضف رابط t.me/الاسم في صفحة المنصات، أو أضف البوت @Tilawatalharamain_bot للقناة" };
 }
 
+// قرار إخفاء لمرة واحدة (انظر ONE_TIME_HIDE_CHANNELS): يُعلَّم في القاعدة ولا يُعاد بعد ذلك — فإظهار المدير
+// لها لاحقًا يبقى نافذًا. إن لم تُسجَّل القناتان بعد، يُعاد الفحص لاحقًا بلا أثر.
+async function applyOneTimeHide(resolved: Array<YoutubeTarget & { channelId: string }>, pages: PageRow[]) {
+  const done = rowsOf(await db.execute(sql`SELECT name FROM app_one_time_migrations WHERE name = ${ONE_TIME_HIDE_MIGRATION}`).catch(() => ({ rows: [{ name: "skip" }] })));
+  if (done.length > 0) return;
+  const pageIds = resolved.filter((target) => ONE_TIME_HIDE_CHANNELS.includes(target.channelId)).map((target) => target.pageId);
+  if (pageIds.length === 0) return;
+  await db.execute(sql`UPDATE platform_pages SET hide_from_showcase = true WHERE id IN (${sql.join(pageIds.map((id) => sql`${id}`), sql`, `)})`);
+  await db.execute(sql`INSERT INTO app_one_time_migrations (name, details) VALUES (${ONE_TIME_HIDE_MIGRATION}, ${JSON.stringify({ pageIds })}::jsonb) ON CONFLICT (name) DO NOTHING`);
+  for (const page of pages) if (pageIds.includes(page.id)) page.hidden = true;
+}
+
 // ── التجميع ───────────────────────────────────────────────────────────────────────────────────
 export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   await ensureShowcaseSchema();
-  const pages = await loadPages();
+  const allPages = await loadPages();
   const accountName = (page: PageRow) => page.reciterName ?? page.name;
-  const pagesOf = (pattern: RegExp) => pages.filter((page) => pattern.test(page.platformName));
   const hidden: ShowcaseDiagnostics["hidden"] = [];
 
-  const youtubeTargets = pagesOf(YOUTUBE_PLATFORM_NAME).map((page) => ({ pageId: page.id, pageName: page.name, pageUrl: page.pageUrl, reciterName: page.reciterName }));
-  const { resolved: youtubeResolved, report: youtubeReport } = await resolveYoutubeTargets(youtubeTargets).catch(() => ({ resolved: [] as Array<YoutubeTarget & { channelId: string }>, report: [] as ShowcaseDiagnostics["youtube"] }));
+  // يوتيوب: كل الصفحات المسجّلة تُحلّ (حتى المخفية، لتطبيق قرار الإخفاء ولعرض حالتها للمدير).
+  const allYoutubeTargets = allPages.filter((page) => YOUTUBE_PLATFORM_NAME.test(page.platformName)).map((page) => ({ pageId: page.id, pageName: page.name, pageUrl: page.pageUrl, reciterName: page.reciterName }));
+  const { resolved: allYoutubeResolved, report: youtubeReport } = await resolveYoutubeTargets(allYoutubeTargets).catch(() => ({ resolved: [] as Array<YoutubeTarget & { channelId: string }>, report: [] as ShowcaseDiagnostics["youtube"] }));
+  await applyOneTimeHide(allYoutubeResolved, allPages);
+  const pages = allPages.filter((page) => !page.hidden);
+  const pagesOf = (pattern: RegExp) => pages.filter((page) => pattern.test(page.platformName));
+  const hiddenPageIds = new Set(allPages.filter((page) => page.hidden).map((page) => page.id));
+  for (const row of youtubeReport) row.hiddenByAdmin = hiddenPageIds.has(row.pageId);
+  const youtubeResolved = allYoutubeResolved.filter((target) => !hiddenPageIds.has(target.pageId));
   const facebookReciters = new Set(pagesOf(FACEBOOK_PLATFORM_NAME).map((page) => page.reciterId).filter((id): id is number => id != null));
-  const [youtube, apps, instagram, facebook] = await Promise.all([
+  const [youtubeAll, apps, instagram, facebook] = await Promise.all([
     loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
     loadApps(),
     loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }>, problems: new Map<number, string>(), configured: true })),
     loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[], problems: new Map<number, string>(), configured: true })),
   ]);
-  // ما كان يظهر من القائمة الثابتة القديمة ولم يعد مسجّلًا في صفحة المنصات.
-  const shownIds = new Set(youtube.map((channel) => channel.channelId));
-  const legacyMissing = LEGACY_FIXED_YOUTUBE_CHANNELS.filter((id) => !shownIds.has(id));
-  if (legacyMissing.length > 0) {
-    const titles = await callYoutubeApi<{ items?: any[] }>("channels", { part: "snippet", id: legacyMissing.join(",") }).catch(() => ({ items: [] as any[] }));
-    const titleOf = new Map((titles.items ?? []).map((item) => [String(item.id), String(item.snippet?.title ?? "")]));
-    for (const id of legacyMissing) {
-      const registeredButBroken = youtubeReport.some((row) => row.channelId === id && row.status === "missing");
-      hidden.push({
-        what: `قناة يوتيوب «${titleOf.get(id) || id}» (${id})`,
-        why: registeredButBroken ? "مسجّلة لكن تنقصها بيانات (انظر قائمة قنوات يوتيوب)" : "كانت في القائمة الثابتة القديمة، وغير مسجّلة في صفحة المنصات (لا صفحة يوتيوب برابطها)",
-      });
-    }
-  }
-
+  const youtube = youtubeAll.filter((channel) => {
+    if (channel.subscribers != null || channel.views != null) return true;
+    hidden.push({ what: `قناة يوتيوب «${channel.title}» (${channel.channelId})`, why: "مخفية لأن يوتيوب لم يُرجع لها أي رقم (مشتركين أو مشاهدات)" });
+    return false;
+  });
+  for (const page of allPages.filter((p) => p.hidden)) hidden.push({ what: `${page.platformName} — ${page.name}`, why: "مخفية من الصفحة العامة بقرار المدير (باقية في النظام وصفحة المنصات)" });
   const followerReport: ShowcaseDiagnostics["followers"] = [];
   const report = (platform: ShowcaseDiagnostics["followers"][number]["platform"], account: string, value: number | null, reason: string | null) =>
     followerReport.push({ platform, account, automatic: value != null, reason: value != null ? null : reason ?? "تعذّر الجلب" });
@@ -411,6 +422,13 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const twitterAccounts: ShowcaseAccount[] = pagesOf(TWITTER_PLATFORM_NAME).map((page) => {
     report("twitter", accountName(page), null, "واجهة X الرسمية لقراءة عدد المتابعين تتطلب اشتراكًا مدفوعًا (X API Basic أو أعلى) — يُعرض الحساب بلا رقم");
     return { name: accountName(page), url: page.pageUrl, followers: null, posts: page.posts };
+  });
+
+  // لا رقم آلي ⇐ لا يُعرض الحساب (يظهر من نفسه متى توفّر رقمه). السبب يبقى في التشخيص.
+  const withNumber = (accounts: ShowcaseAccount[], platform: string) => accounts.filter((account) => {
+    if (account.followers != null) return true;
+    hidden.push({ what: `${platform} — ${account.name}`, why: "مخفي لأنه بلا رقم متابعين آلي (يظهر تلقائيًا متى توفّر الرقم — انظر «أرقام المتابعين لكل حساب»)" });
+    return false;
   });
 
   // التطبيقات: صورة الشيخ من صورة قناته على يوتيوب (مطابقة اسم القارئ في اسم التطبيق).
@@ -477,18 +495,20 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     youtube: youtube.map(({ reciterName: _r, recent: _recent, ...channel }) => channel),
     apps: apps.map((app) => ({ name: app.name, iosUrl: app.iosUrl, androidUrl: app.androidUrl, avatar: avatarFor(app.name) })),
     platforms: {
-      instagram: { accounts: instagramAccounts, reels: pickInstagramRow(instagram.reels) },
-      facebook: { accounts: facebookAccounts, reels: [...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3) },
-      telegram: { accounts: telegramAccounts },
-      twitter: { accounts: twitterAccounts },
+      instagram: { accounts: withNumber(instagramAccounts, "انستقرام"), reels: pickInstagramRow(instagram.reels) },
+      facebook: { accounts: withNumber(facebookAccounts, "فيسبوك"), reels: [...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3) },
+      telegram: { accounts: withNumber(telegramAccounts, "تيليجرام") },
+      twitter: { accounts: withNumber(twitterAccounts, "تويتر / X") },
     },
     designs: {
       items: designItems,
-      channel: designChannel ? { name: String(designChannel.title ?? "قناة التصاميم"), url: designUsername ? `https://t.me/${designUsername}` : null, subscribers: designMembers.count } : null,
+      // بطاقة القناة تُعرض فقط برقم مشتركين آلي.
+      channel: designChannel && designMembers.count != null ? { name: String(designChannel.title ?? "قناة التصاميم"), url: designUsername ? `https://t.me/${designUsername}` : null, subscribers: designMembers.count } : null,
     },
     feed,
     diagnostics: {
       youtube: youtubeReport,
+      hiddenPages: allPages.filter((page) => page.hidden).map((page) => ({ pageId: page.id, platformName: page.platformName, name: page.name })),
       hidden,
       followers: followerReport,
       youtubeBreakdown: {

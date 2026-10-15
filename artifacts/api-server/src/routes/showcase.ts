@@ -47,16 +47,24 @@ router.put("/showcase/manual/platforms/:id", async (req, res) => {
   res.json({ ok: true });
 });
 
+// إخفاء/إظهار صفحة من الصفحة العامة فقط (لا حذف) — قرار عرض.
+router.put("/showcase/pages/:id/visibility", async (req, res) => {
+  const id = Number(req.params.id);
+  await db.execute(sql`UPDATE platform_pages SET hide_from_showcase = ${req.body?.hidden === true} WHERE id = ${id}`);
+  clearShowcaseCache();
+  res.json({ ok: true });
+});
+
 router.post("/showcase/refresh", async (_req, res) => {
   clearShowcaseCache();
   const data = await getShowcase({ force: true });
-  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [], youtubeBreakdown: { channels: [], totalViews: 0, totalSubscribers: 0 }, apps: [] });
+  res.json(data.diagnostics ?? { youtube: [], hiddenPages: [], hidden: [], followers: [], youtubeBreakdown: { channels: [], totalViews: 0, totalSubscribers: 0 }, apps: [] });
 });
 
 // تشخيص للمدير: ما ينقص قنوات يوتيوب المسجّلة، وما لم يعد يظهر في الصفحة العامة ولماذا.
 router.get("/showcase/diagnostics", async (_req, res) => {
   const data = await getShowcase();
-  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [], youtubeBreakdown: { channels: [], totalViews: 0, totalSubscribers: 0 }, apps: [] });
+  res.json(data.diagnostics ?? { youtube: [], hiddenPages: [], hidden: [], followers: [], youtubeBreakdown: { channels: [], totalViews: 0, totalSubscribers: 0 }, apps: [] });
 });
 
 export default router;

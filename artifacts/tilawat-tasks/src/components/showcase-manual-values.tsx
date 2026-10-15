@@ -9,7 +9,8 @@ import { useToast } from "@/hooks/use-toast";
 // ثابتة، ليست أرقامًا) — وتقرير تشخيص. كل الأرقام آلية من مصدرها الرسمي فقط، ولا إدخال يدوي لأي رقم.
 
 type Diagnostics = {
-  youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null }>;
+  youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null; hiddenByAdmin?: boolean }>;
+  hiddenPages: Array<{ pageId: number; platformName: string; name: string }>;
   hidden: Array<{ what: string; why: string }>;
   followers: Array<{ platform: string; account: string; automatic: boolean; reason: string | null }>;
   youtubeBreakdown: { channels: Array<{ channelId: string; title: string; subscribers: number | null; views: number | null; pages: string[] }>; totalViews: number; totalSubscribers: number };
@@ -39,6 +40,11 @@ export function ShowcaseManualValues() {
   const saveApp = useMutation({
     mutationFn: (v: { id: number; iosUrl: string; androidUrl: string }) => api(`/api/showcase/manual/platforms/${v.id}`, { method: "PUT", body: JSON.stringify({ iosUrl: v.iosUrl || null, androidUrl: v.androidUrl || null }) }),
     onSuccess: done,
+    onError,
+  });
+  const visibility = useMutation({
+    mutationFn: (v: { pageId: number; hidden: boolean }) => api(`/api/showcase/pages/${v.pageId}/visibility`, { method: "PUT", body: JSON.stringify({ hidden: v.hidden }) }),
+    onSuccess: () => refresh.mutate(),
     onError,
   });
   const refresh = useMutation({
@@ -77,6 +83,10 @@ export function ShowcaseManualValues() {
               <span className={row.status === "ok" ? "text-green-700" : "text-red-700"}>{row.status === "ok" ? "✔" : "✘"}</span>{" "}
               <b>{row.pageName}</b>{" "}
               {row.status === "ok" ? <span className="text-muted-foreground" dir="ltr">({row.channelId})</span> : <span className="text-red-700">— ينقصها: {row.problem}</span>}
+              {row.hiddenByAdmin && <span className="text-amber-700"> — مخفية من الصفحة العامة</span>}{" "}
+              <button type="button" className="text-sidebar-primary hover:underline" disabled={visibility.isPending} onClick={() => visibility.mutate({ pageId: row.pageId, hidden: !row.hiddenByAdmin })}>
+                {row.hiddenByAdmin ? "إظهار" : "إخفاء من الصفحة العامة"}
+              </button>
             </div>
           ))}
           {diagnostics && diagnostics.youtubeBreakdown.channels.length > 0 && (
@@ -113,6 +123,16 @@ export function ShowcaseManualValues() {
                   <span className={row.automatic ? "text-green-700" : "text-red-700"}>{row.automatic ? "✔ آلي" : "✘ بلا رقم"}</span>{" "}
                   <span className="text-muted-foreground">{PLATFORM_LABEL[row.platform] ?? row.platform}</span> — <b>{row.account}</b>
                   {!row.automatic && row.reason && <span className="text-muted-foreground"> — {row.reason}</span>}
+                </div>
+              ))}
+            </div>
+          )}
+          {diagnostics && diagnostics.hiddenPages.filter((p) => !diagnostics.youtube.some((y) => y.pageId === p.pageId)).length > 0 && (
+            <div className="pt-2 text-xs">
+              <div className="text-sm font-semibold">صفحات مخفية من الصفحة العامة (باقية في النظام)</div>
+              {diagnostics.hiddenPages.filter((p) => !diagnostics.youtube.some((y) => y.pageId === p.pageId)).map((p) => (
+                <div key={p.pageId}>{p.platformName} — {p.name}{" "}
+                  <button type="button" className="text-sidebar-primary hover:underline" onClick={() => visibility.mutate({ pageId: p.pageId, hidden: false })}>إظهار</button>
                 </div>
               ))}
             </div>
