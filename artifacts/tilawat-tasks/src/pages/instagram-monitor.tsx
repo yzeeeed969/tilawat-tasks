@@ -41,7 +41,9 @@ type Setup = {
 };
 type CleanupPreview = {
   weekStart: string;
-  candidates: Array<{ id: number; title: string; dueDate: string; seriesId: number | null; weeklyQuotaRequired: number }>;
+  candidates: Array<{ id: number; title: string; dueDate: string; seriesId: number | null; weeklyQuotaRequired: number; weekStart: string; past: boolean; monitorTaskId: number | null }>;
+  historical: Array<{ legacyTaskId: number; title: string; dueDate: string; weekStart: string; hasProofs: boolean }>;
+  historicalCount: number;
   transfers: Array<{ legacyTaskId: number; title: string; dueDate: string; weekStart: string; links: string[]; newLinks: string[]; monitorTaskId: number; monitorTitle: string; monitorCountBefore: number; monitorRequired: number }>;
   unmatched: Array<{ legacyTaskId: number; title: string; dueDate: string; reason: string }>;
   protectedCount: number;
@@ -350,8 +352,9 @@ export default function InstagramMonitorPage() {
         <CardHeader>
           <CardTitle className="text-lg">تنظيف المهام الأسبوعية القديمة المكرّرة</CardTitle>
           <CardDescription>
-            مهام «هدف أسبوعي بعدد مرات» على إنستقرام من سلاسل يدوية قديمة (غير مهام المراقبة)، للأسبوع الجاري وما بعده.
-            التي بلا شواهد تُحذف مباشرة، والتي فيها شواهد تُنقل روابطها (بلا تكرار) إلى مهمة المراقبة لنفس القارئ والأسبوع ثم تُحذف.
+            مهام «هدف أسبوعي بعدد مرات» على إنستقرام من سلاسل يدوية قديمة (غير مهام المراقبة)، لكل الأسابيع.
+            التي بلا شواهد تُحذف، والتي فيها شواهد تُنقل روابطها (بلا تكرار بالرابط) إلى مهمة المراقبة لنفس القارئ والأسبوع ثم تُحذف.
+            الأسابيع الماضية التي ليس لها مهمة مراقبة (قبل تشغيل المراقب) تبقى كما هي سجلًا تاريخيًا.
             الحذف ناعم (قابل للاسترجاع من المحذوفات)، وتُوقف السلاسل القديمة فلا تُولّد مجددًا.
           </CardDescription>
         </CardHeader>
@@ -364,13 +367,19 @@ export default function InstagramMonitorPage() {
               <p>
                 من أسبوع {cleanupPreview.weekStart}: <b>{cleanupPreview.candidates.length + cleanupPreview.transfers.length}</b> مهمة ستُحذف حذفًا ناعمًا
                 (منها {cleanupPreview.transfers.length} تُنقل شواهدها أولًا)، و<b>{cleanupPreview.seriesToStop.length}</b> سلسلة ستُوقف
-                {cleanupPreview.unmatched.length > 0 && <>، و{cleanupPreview.unmatched.length} مهمة لن تُمس</>}.
+                {cleanupPreview.unmatched.length > 0 && <>، و{cleanupPreview.unmatched.length} مهمة لن تُمس</>}
+                {cleanupPreview.historicalCount > 0 && <>، و{cleanupPreview.historicalCount} مهمة من أسابيع قبل المراقب تبقى سجلًا تاريخيًا</>}.
               </p>
               {cleanupPreview.candidates.length > 0 && (
                 <div>
                   <div className="text-xs font-semibold">بلا شواهد — حذف مباشر:</div>
                   <ul className="max-h-40 list-disc overflow-y-auto pr-5 text-xs text-muted-foreground">
-                    {cleanupPreview.candidates.map((c) => <li key={c.id}>#{c.id} — {c.title} — {c.dueDate} (هدف {c.weeklyQuotaRequired})</li>)}
+                    {cleanupPreview.candidates.map((c) => (
+                      <li key={c.id}>
+                        #{c.id} — {c.title} — أسبوع {c.weekStart} (هدف {c.weeklyQuotaRequired})
+                        {c.past && c.monitorTaskId && <> — أسبوع ماضٍ، مهمة المراقبة #{c.monitorTaskId} موجودة</>}
+                      </li>
+                    ))}
                   </ul>
                 </div>
               )}
@@ -385,6 +394,14 @@ export default function InstagramMonitorPage() {
                         {" "}({t.monitorCountBefore}/{t.monitorRequired} ← {t.monitorCountBefore + t.newLinks.length}/{t.monitorRequired})
                       </li>
                     ))}
+                  </ul>
+                </div>
+              )}
+              {cleanupPreview.historicalCount > 0 && (
+                <div>
+                  <div className="text-xs font-semibold text-muted-foreground">سجل تاريخي — لن يُمس ({cleanupPreview.historicalCount}{cleanupPreview.historicalCount > cleanupPreview.historical.length ? `، تُعرض أول ${cleanupPreview.historical.length}` : ""}):</div>
+                  <ul className="max-h-32 list-disc overflow-y-auto pr-5 text-xs text-muted-foreground">
+                    {cleanupPreview.historical.map((h) => <li key={h.legacyTaskId}>#{h.legacyTaskId} — {h.title} — أسبوع {h.weekStart}{h.hasProofs ? " (فيها شواهد)" : ""}</li>)}
                   </ul>
                 </div>
               )}

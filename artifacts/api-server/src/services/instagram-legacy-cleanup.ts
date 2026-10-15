@@ -10,14 +10,16 @@ import { safeAnchorFromDateKey } from "../lib/hijri";
 // ولّدتها سلاسل يدوية متكررة (task-engine)، وتكرّر مهمة المراقبة. حذف ناعم قابل للاسترجاع (deleted_at).
 //
 // الأساس المشترك (كله معًا): منصة المهمة إنستقرام (بالاسم)، weekly_quota_required ليس فارغًا، غير محذوفة،
-// ليست مهمة مراقبة (غير موجودة في instagram_weekly_tasks)، وأسبوعها الجاري أو لاحق (due_date ≥ أحد الأسبوع).
-// ثم فئتان:
-// 1) بلا عمل (بلا شاهد فعّال ولا رابط تسليم وغير مكتملة) ⇐ حذف ناعم مباشرة.
-// 2) فيها شواهد ⇐ تُنقل روابطها (بلا تكرار) إلى مهمة المراقبة المقابلة (نفس الحساب ونفس الأسبوع) بنفس
-//    منطق إضافة الشاهد (يرتفع X/N)، ثم حذف ناعم. لا مهمة مراقبة مقابلة ⇐ لا تُمس وتُذكر في التقرير.
+// وليست مهمة مراقبة (غير موجودة في instagram_weekly_tasks). ثم فئتان:
+// 1) بلا عمل (بلا شاهد فعّال ولا رابط تسليم وغير مكتملة) ⇐ حذف ناعم: للأسبوع الجاري وما بعده دائمًا،
+//    وللأسابيع الماضية فقط إن وُجدت مهمة مراقبة لنفس الحساب ونفس الأسبوع (توحيد).
+// 2) فيها شواهد (أي أسبوع) ⇐ تُنقل روابطها (بلا تكرار بالرابط) إلى مهمة المراقبة المقابلة (نفس الحساب ونفس
+//    الأسبوع) بنفس منطق إضافة الشاهد (يرتفع X/N)، ثم حذف ناعم.
+// الأسابيع الماضية بلا مهمة مراقبة (قبل تشغيل المراقب) ⇐ تُترك كما هي سجلًا تاريخيًا (فارغة أو بشواهد).
 // ويُوقَف (stopped) كل سلسلة متكررة نشطة تملك مهام «هدف أسبوعي» على إنستقرام، كي لا تُولّد مجددًا.
 
-type Candidate = { id: number; title: string; dueDate: string; seriesId: number | null; weeklyQuotaRequired: number };
+type Candidate = { id: number; title: string; dueDate: string; seriesId: number | null; weeklyQuotaRequired: number; weekStart: string; past: boolean; monitorTaskId: number | null };
+type Historical = { legacyTaskId: number; title: string; dueDate: string; weekStart: string; hasProofs: boolean };
 type Transfer = {
   legacyTaskId: number;
   title: string;
@@ -80,28 +82,44 @@ export async function previewInstagramLegacyCleanup(now = new Date()) {
   await ensureInstagramSchema();
   const weekStart = riyadhWeekStart(now);
   const platformIds = await instagramPlatformIds();
-  if (platformIds.length === 0) return { weekStart, candidates: [] as Candidate[], transfers: [] as Transfer[], unmatched: [] as Unmatched[], protectedCount: 0, seriesToStop: [] as number[] };
+  if (platformIds.length === 0) return { weekStart, candidates: [] as Candidate[], transfers: [] as Transfer[], unmatched: [] as Unmatched[], historical: [] as Historical[], historicalCount: 0, protectedCount: 0, seriesToStop: [] as number[] };
+
+  const historical: Historical[] = [];
+  const weekOf = (row: any) => sundayOf(row.period_start ? String(row.period_start) : String(row.due_date));
+  const pageOf = (row: any) => (row.page_id == null ? null : Number(row.page_id));
+  const reciterOf = (row: any) => (row.reciter_id == null ? null : Number(row.reciter_id));
 
   // 1) بلا عمل.
-  const candidates: Candidate[] = rowsOf(await db.execute(sql`
-    SELECT t.id, t.title, to_char(t.due_date, 'YYYY-MM-DD') AS due_date, t.series_id, t.weekly_quota_required
+  const emptyRows = rowsOf(await db.execute(sql`
+    SELECT t.id, t.title, t.page_id, t.reciter_id, to_char(t.due_date, 'YYYY-MM-DD') AS due_date,
+      to_char(t.weekly_quota_period_start, 'YYYY-MM-DD') AS period_start, t.series_id, t.weekly_quota_required
     FROM tasks t
     WHERE ${legacyBase(platformIds)}
-      AND to_char(t.due_date, 'YYYY-MM-DD') >= ${weekStart}
       AND t.status <> 'completed'
       AND t.submission_url IS NULL
       AND NOT EXISTS (SELECT 1 FROM task_proofs p WHERE p.task_id = t.id AND p.deleted_at IS NULL)
-    ORDER BY t.due_date, t.id`)).map((row) => ({
-    id: Number(row.id), title: String(row.title), dueDate: String(row.due_date), seriesId: row.series_id == null ? null : Number(row.series_id), weeklyQuotaRequired: Number(row.weekly_quota_required),
-  }));
+    ORDER BY t.due_date, t.id`));
+  const candidates: Candidate[] = [];
+  for (const row of emptyRows) {
+    const dueDate = String(row.due_date);
+    const taskWeek = weekOf(row);
+    const past = dueDate < weekStart;
+    const base = { id: Number(row.id), title: String(row.title), dueDate, seriesId: row.series_id == null ? null : Number(row.series_id), weeklyQuotaRequired: Number(row.weekly_quota_required), weekStart: taskWeek, past };
+    if (!past) {
+      candidates.push({ ...base, monitorTaskId: null });
+      continue;
+    }
+    const monitor = await monitorTaskFor(pageOf(row), reciterOf(row), taskWeek);
+    if (monitor.task) candidates.push({ ...base, monitorTaskId: monitor.task.id });
+    else historical.push({ legacyTaskId: base.id, title: base.title, dueDate, weekStart: taskWeek, hasProofs: false });
+  }
 
-  // 2) فيها عمل (شاهد/رابط تسليم/مكتملة).
+  // 2) فيها عمل (شاهد/رابط تسليم/مكتملة) — أي أسبوع.
   const withWork = rowsOf(await db.execute(sql`
     SELECT t.id, t.title, t.page_id, t.reciter_id, t.submission_url,
       to_char(t.due_date, 'YYYY-MM-DD') AS due_date, to_char(t.weekly_quota_period_start, 'YYYY-MM-DD') AS period_start
     FROM tasks t
     WHERE ${legacyBase(platformIds)}
-      AND to_char(t.due_date, 'YYYY-MM-DD') >= ${weekStart}
       AND (t.status = 'completed' OR t.submission_url IS NOT NULL OR EXISTS (SELECT 1 FROM task_proofs p WHERE p.task_id = t.id AND p.deleted_at IS NULL))
     ORDER BY t.due_date, t.id`));
   const transfers: Transfer[] = [];
@@ -109,14 +127,20 @@ export async function previewInstagramLegacyCleanup(now = new Date()) {
   for (const row of withWork) {
     const legacyTaskId = Number(row.id);
     const dueDate = String(row.due_date);
-    const taskWeek = sundayOf(row.period_start ? String(row.period_start) : dueDate);
-    const links = await activeLinks(legacyTaskId, row.submission_url ? String(row.submission_url) : null);
+    const taskWeek = weekOf(row);
+    const past = dueDate < weekStart;
     const base = { legacyTaskId, title: String(row.title), dueDate };
+    const monitor = await monitorTaskFor(pageOf(row), reciterOf(row), taskWeek);
+    if (!monitor.task && past) {
+      // أسبوع ماضٍ قبل تشغيل المراقب (أو بلا حساب مراقبة): سجل تاريخي كما هو.
+      historical.push({ legacyTaskId, title: base.title, dueDate, weekStart: taskWeek, hasProofs: true });
+      continue;
+    }
+    const links = await activeLinks(legacyTaskId, row.submission_url ? String(row.submission_url) : null);
     if (links.length === 0) {
       unmatched.push({ ...base, reason: "مكتملة بلا أي شاهد أو رابط — لا شيء يُنقل، فلم تُمس" });
       continue;
     }
-    const monitor = await monitorTaskFor(row.page_id == null ? null : Number(row.page_id), row.reciter_id == null ? null : Number(row.reciter_id), taskWeek);
     if (!monitor.task) {
       unmatched.push({ ...base, reason: monitor.accountFound ? `لا توجد مهمة مراقبة لأسبوع ${taskWeek} بعد — لم تُمس` : "لا يوجد حساب مراقبة إنستقرام لهذا القارئ/الصفحة — لم تُمس" });
       continue;
@@ -143,7 +167,8 @@ export async function previewInstagramLegacyCleanup(now = new Date()) {
       AND NOT EXISTS (SELECT 1 FROM instagram_weekly_tasks w WHERE w.task_id = t.id)
     ORDER BY s.id`)).map((row) => Number(row.id));
 
-  return { weekStart, candidates, transfers, unmatched, protectedCount: unmatched.length, seriesToStop };
+  // السجل التاريخي قد يطول: نعيد العدد كاملًا وأول 100 للعرض.
+  return { weekStart, candidates, transfers, unmatched, historical: historical.slice(0, 100), historicalCount: historical.length, protectedCount: unmatched.length, seriesToStop };
 }
 
 // التطبيق: المعايير تُعاد الآن (لا نثق بمعاينة قديمة). النقل بنفس منطق إضافة الشاهد (addQuotaProof)، ثم
@@ -208,7 +233,7 @@ export async function applyInstagramLegacyCleanup(userId: number | null, now = n
     entityType: "task",
     entityId: null,
     entityName: `حذف ناعم لـ ${deletedTaskIds.length} مهمة، نقل ${movedProofs} شاهد، وإيقاف ${preview.seriesToStop.length} سلسلة`,
-    meta: { taskIds: deletedTaskIds, emptyTaskIds: emptyIds, moved, seriesIds: preview.seriesToStop, unmatched: [...preview.unmatched, ...failed], deletedAt: deletedAt.toISOString(), weekStart: preview.weekStart },
+    meta: { taskIds: deletedTaskIds, emptyTaskIds: emptyIds, moved, seriesIds: preview.seriesToStop, unmatched: [...preview.unmatched, ...failed], historicalKept: preview.historicalCount, deletedAt: deletedAt.toISOString(), weekStart: preview.weekStart },
   });
   return {
     deletedTasks: deletedTaskIds.length,
@@ -216,6 +241,7 @@ export async function applyInstagramLegacyCleanup(userId: number | null, now = n
     mergedTasks: moved.length,
     stoppedSeries: preview.seriesToStop.length,
     protectedCount: preview.unmatched.length + failed.length,
+    historicalCount: preview.historicalCount,
     unmatched: [...preview.unmatched, ...failed],
     taskIds: deletedTaskIds,
     seriesIds: preview.seriesToStop,
