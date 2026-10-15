@@ -37,6 +37,7 @@ export type ShowcaseAccount = { name: string; url: string | null; followers: num
 export type ShowcaseReel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null };
 export type ShowcaseData = {
   generatedAt: string;
+  dataVersion?: number;
   hero: { youtubeViews: number; youtubeSubscribers: number; appsCount: number };
   featured: (ShowcaseClip & { channelTitle: string }) | null;
   youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; clips: ShowcaseClip[] }>;
@@ -57,6 +58,10 @@ export type ShowcaseDiagnostics = {
   hidden: Array<{ what: string; why: string }>;
   // لكل حساب معروض: هل رقم المتابعين آلي الآن؟ وإن لا، لماذا.
   followers: Array<{ platform: "instagram" | "facebook" | "telegram" | "twitter" | "designs"; account: string; automatic: boolean; reason: string | null }>;
+  // تفصيل مجموع يوتيوب قناةً قناة (كل قناة مرة واحدة) + الصفحات المسجّلة التي تشير إليها.
+  youtubeBreakdown: { channels: Array<{ channelId: string; title: string; subscribers: number | null; views: number | null; pages: string[] }>; totalViews: number; totalSubscribers: number };
+  // التطبيقات المحسوبة في العدّاد (منصات اسمها يبدأ بـ«تطبيق»).
+  apps: string[];
 };
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -185,9 +190,11 @@ async function loadPages(): Promise<PageRow[]> {
   }));
 }
 
+const cleanName = (value: unknown) => String(value ?? "").replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u0640]/g, "").trim();
+
 async function loadApps() {
   return rowsOf(await db.execute(sql`SELECT id, name, ios_url, android_url, covers_all_reciters FROM platforms ORDER BY covers_all_reciters DESC, id`))
-    .filter((row) => APP_PLATFORM_NAME.test(String(row.name).trim()) || row.covers_all_reciters)
+    .filter((row) => APP_PLATFORM_NAME.test(cleanName(row.name)) || row.covers_all_reciters)
     .map((row) => ({ id: Number(row.id), name: String(row.name), iosUrl: row.ios_url ? String(row.ios_url) : null, androidUrl: row.android_url ? String(row.android_url) : null }));
 }
 
@@ -460,6 +467,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
 
   return {
     generatedAt: now.toISOString(),
+    dataVersion: 2,
     hero: {
       youtubeViews: youtube.reduce((sum, channel) => sum + (channel.views ?? 0), 0),
       youtubeSubscribers: youtube.reduce((sum, channel) => sum + (channel.subscribers ?? 0), 0),
@@ -479,7 +487,23 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
       channel: designChannel ? { name: String(designChannel.title ?? "قناة التصاميم"), url: designUsername ? `https://t.me/${designUsername}` : null, subscribers: designMembers.count } : null,
     },
     feed,
-    diagnostics: { youtube: youtubeReport, hidden, followers: followerReport },
+    diagnostics: {
+      youtube: youtubeReport,
+      hidden,
+      followers: followerReport,
+      youtubeBreakdown: {
+        channels: youtube.map((channel) => ({
+          channelId: channel.channelId,
+          title: channel.title,
+          subscribers: channel.subscribers,
+          views: channel.views,
+          pages: youtubeReport.filter((row) => row.channelId === channel.channelId).map((row) => row.pageName),
+        })),
+        totalViews: youtube.reduce((sum, channel) => sum + (channel.views ?? 0), 0),
+        totalSubscribers: youtube.reduce((sum, channel) => sum + (channel.subscribers ?? 0), 0),
+      },
+      apps: apps.map((app) => app.name),
+    },
   };
 }
 

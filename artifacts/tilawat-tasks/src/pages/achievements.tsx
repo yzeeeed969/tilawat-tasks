@@ -145,10 +145,13 @@ export default function Achievements() {
   useEffect(() => {
     if (!data || !rootRef.current) return;
     const reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const timers: number[] = [];
     const run = (el: HTMLElement) => {
       const target = parseInt(el.getAttribute("data-to") ?? "0", 10) || 0;
       if (reduce) { el.textContent = ar(target); return; }
       const dur = 1600;
+      // ضمان الرقم النهائي حتى لو توقّف الرسم المتحرّك (تبويب في الخلفية/نافذة مخفية يوقف requestAnimationFrame).
+      timers.push(window.setTimeout(() => { el.textContent = ar(target); }, dur + 150));
       let start: number | null = null;
       const ease = (t: number) => 1 - Math.pow(1 - t, 3);
       const step = (ts: number) => {
@@ -160,12 +163,12 @@ export default function Achievements() {
       requestAnimationFrame(step);
     };
     const counts = Array.from(rootRef.current.querySelectorAll<HTMLElement>(".count"));
-    if (!("IntersectionObserver" in window)) { counts.forEach(run); return; }
+    if (!("IntersectionObserver" in window)) { counts.forEach(run); return () => timers.forEach(clearTimeout); }
     const io = new IntersectionObserver((entries) => {
       entries.forEach((entry) => { if (entry.isIntersecting) { run(entry.target as HTMLElement); io.unobserve(entry.target); } });
     }, { threshold: 0.4 });
     counts.forEach((el) => io.observe(el));
-    return () => io.disconnect();
+    return () => { io.disconnect(); timers.forEach(clearTimeout); };
   }, [data]);
 
   const share = () => {
@@ -196,9 +199,9 @@ export default function Achievements() {
           </div>
           <h1>منصات مشروع تطبيق تلاوات الحرمين</h1>
           <div className="hero-stats">
-            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>٠</b><span>مشاهدة على يوتيوب</span></div>
-            <div className="hs"><b className="mono-num count" data-to={hero.youtubeSubscribers} key={`s-${hero.youtubeSubscribers}`}>٠</b><span>مشترك في قنواتنا</span></div>
-            <div className="hs"><b className="mono-num count" data-to={hero.appsCount} key={`a-${hero.appsCount}`}>٠</b><span>تطبيقات تلاوات</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>{ar(hero.youtubeViews)}</b><span>مشاهدة على يوتيوب</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.youtubeSubscribers} key={`s-${hero.youtubeSubscribers}`}>{ar(hero.youtubeSubscribers)}</b><span>مشترك في قنواتنا</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.appsCount} key={`a-${hero.appsCount}`}>{ar(hero.appsCount)}</b><span>تطبيقات تلاوات</span></div>
           </div>
         </div>
       </div>

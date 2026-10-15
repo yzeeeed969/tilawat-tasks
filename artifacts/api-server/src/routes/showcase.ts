@@ -50,13 +50,13 @@ router.put("/showcase/manual/platforms/:id", async (req, res) => {
 router.post("/showcase/refresh", async (_req, res) => {
   clearShowcaseCache();
   const data = await getShowcase({ force: true });
-  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [] });
+  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [], youtubeBreakdown: { channels: [], totalViews: 0, totalSubscribers: 0 }, apps: [] });
 });
 
 // تشخيص للمدير: ما ينقص قنوات يوتيوب المسجّلة، وما لم يعد يظهر في الصفحة العامة ولماذا.
 router.get("/showcase/diagnostics", async (_req, res) => {
   const data = await getShowcase();
-  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [] });
+  res.json(data.diagnostics ?? { youtube: [], hidden: [], followers: [], youtubeBreakdown: { channels: [], totalViews: 0, totalSubscribers: 0 }, apps: [] });
 });
 
 export default router;

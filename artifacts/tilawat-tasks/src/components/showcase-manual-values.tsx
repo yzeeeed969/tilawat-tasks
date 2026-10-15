@@ -12,7 +12,10 @@ type Diagnostics = {
   youtube: Array<{ pageId: number; pageName: string; pageUrl: string | null; status: "ok" | "missing"; channelId: string | null; problem: string | null }>;
   hidden: Array<{ what: string; why: string }>;
   followers: Array<{ platform: string; account: string; automatic: boolean; reason: string | null }>;
+  youtubeBreakdown: { channels: Array<{ channelId: string; title: string; subscribers: number | null; views: number | null; pages: string[] }>; totalViews: number; totalSubscribers: number };
+  apps: string[];
 };
+const num = (n: number | null) => (n == null ? "—" : n.toLocaleString("ar-EG"));
 const PLATFORM_LABEL: Record<string, string> = { instagram: "انستقرام", facebook: "فيسبوك", telegram: "تيليجرام", twitter: "تويتر / X", designs: "تصاميم (تيليجرام)" };
 type Manual = {
   platforms: Array<{ id: number; name: string; iosUrl: string | null; androidUrl: string | null }>;
@@ -76,6 +79,32 @@ export function ShowcaseManualValues() {
               {row.status === "ok" ? <span className="text-muted-foreground" dir="ltr">({row.channelId})</span> : <span className="text-red-700">— ينقصها: {row.problem}</span>}
             </div>
           ))}
+          {diagnostics && diagnostics.youtubeBreakdown.channels.length > 0 && (
+            <div className="overflow-x-auto pt-2">
+              <div className="text-sm font-semibold">تفصيل مجموع يوتيوب (كل قناة تُحسب مرة واحدة)</div>
+              <table className="w-full min-w-[560px] text-xs">
+                <thead><tr className="text-muted-foreground"><th className="p-1 text-right font-medium">القناة</th><th className="p-1 text-right font-medium">المعرّف</th><th className="p-1 text-right font-medium">المشتركون</th><th className="p-1 text-right font-medium">المشاهدات</th><th className="p-1 text-right font-medium">مسجّلة في</th></tr></thead>
+                <tbody>
+                  {diagnostics.youtubeBreakdown.channels.map((c) => (
+                    <tr key={c.channelId} className="border-t">
+                      <td className="p-1">{c.title}</td>
+                      <td className="p-1 font-mono" dir="ltr">{c.channelId}</td>
+                      <td className="p-1">{num(c.subscribers)}</td>
+                      <td className="p-1">{num(c.views)}</td>
+                      <td className="p-1">{c.pages.join("، ")}{c.pages.length > 1 && <span className="text-amber-700"> (أكثر من صفحة — حُسبت مرة واحدة)</span>}</td>
+                    </tr>
+                  ))}
+                  <tr className="border-t font-semibold"><td className="p-1" colSpan={2}>المجموع ({num(diagnostics.youtubeBreakdown.channels.length)} قنوات)</td><td className="p-1">{num(diagnostics.youtubeBreakdown.totalSubscribers)}</td><td className="p-1">{num(diagnostics.youtubeBreakdown.totalViews)}</td><td /></tr>
+                </tbody>
+              </table>
+            </div>
+          )}
+          {diagnostics && (
+            <div className="pt-2 text-xs">
+              <span className="text-sm font-semibold">التطبيقات المحسوبة في العدّاد ({num(diagnostics.apps.length)}): </span>
+              {diagnostics.apps.join("، ") || "لا شيء"}
+            </div>
+          )}
           {diagnostics && diagnostics.followers.length > 0 && (
             <div className="pt-2">
               <div className="text-sm font-semibold">أرقام المتابعين لكل حساب</div>
