@@ -209,7 +209,11 @@ export function FacebookCrosspostSection({ facebook, accounts, settings, onChang
               <div key={link.id} className="space-y-1 rounded-md border border-border bg-background p-3">
                 <div className="flex flex-wrap items-start justify-between gap-2">
                   <div className="min-w-0 space-y-1">
-                    <div className="text-sm font-medium">{link.reciterName}{link.taskId ? ` · مهمة #${link.taskId}` : ""}</div>
+                    <div className="text-sm font-medium">
+                      {link.reciterName}
+                      {/* المهمة الأسبوعية نفسها التي عليها شواهد إنستقرام (يفتحها مباشرة). */}
+                      {link.taskId ? <> · <a href={`/tasks/${link.taskId}`} className="text-sidebar-primary hover:underline">مهمة #{link.taskId}</a></> : null}
+                    </div>
                     <div className="text-xs text-muted-foreground">إنستقرام: {riyadh(link.igPublishedAt)} {link.igPermalink && <a href={link.igPermalink} target="_blank" rel="noreferrer" className="text-sidebar-primary hover:underline">فتح</a>}</div>
                     {link.igCaption && <p className="line-clamp-1 text-xs text-muted-foreground">{link.igCaption}</p>}
                   </div>

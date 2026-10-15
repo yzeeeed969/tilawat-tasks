@@ -425,7 +425,8 @@ export default function InstagramMonitorPage() {
                       {item.mediaProductType === "REELS" && <span className="mr-1 text-xs text-muted-foreground">(ريل)</span>}
                     </div>
                     <div className="text-xs text-muted-foreground">
-                      نُشر: {riyadh(item.publishedAt)} · أسبوع {item.weekStart}{item.taskId ? ` · مهمة #${item.taskId}` : ""}
+                      نُشر: {riyadh(item.publishedAt)} · أسبوع {item.weekStart}
+                      {item.taskId ? <> · <a href={`/tasks/${item.taskId}`} className="text-sidebar-primary hover:underline">مهمة #{item.taskId}</a></> : null}
                     </div>
                     {item.caption && <p className="line-clamp-2 text-xs text-muted-foreground">{item.caption}</p>}
                   </div>
