@@ -2,7 +2,9 @@ import crypto from "node:crypto";
 import { and, asc, desc, eq, gte, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import {
   db,
+  instagramWeeklyTasksTable,
   membersTable,
+  notificationsTable,
   notificationLogsTable,
   personalRemindersTable,
   platformsTable,
@@ -19,6 +21,8 @@ import {
 import { ensureTelegramSchema } from "./telegram-schema";
 import { ensurePersonalRemindersSchema } from "./personal-reminders-schema";
 import { ensureTaskQuotaSchema } from "./task-quota-schema";
+import { ensureTaskProofSupplementarySchema } from "./task-proof-supplementary-schema";
+import { ensureInstagramSchema } from "./instagram-schema";
 import { sendTelegramMessage } from "./telegram";
 import { getTaskUrl } from "../lib/public-url";
 import { logger } from "../lib/logger";
@@ -42,6 +46,7 @@ type NotificationType =
   | "telegram_weekly_schedule"
   | "telegram_task_dependency_ready"
   | "telegram_weekly_quota_reminder"
+  | "telegram_instagram_weekly_assignment"
   | "telegram_personal_reminder"
   | "telegram_password_reset"
   | "telegram_instagram_reconnect"
@@ -540,6 +545,7 @@ async function getOverdueTasks(cutoff: Date) {
 }
 
 async function getWeeklyQuotaReminderTasks(start: Date, end: Date): Promise<WeeklyQuotaTaskRow[]> {
+  await ensureTaskProofSupplementarySchema();
   const rows = await db
     .select({
       id: tasksTable.id,
@@ -564,6 +570,8 @@ async function getWeeklyQuotaReminderTasks(start: Date, end: Date): Promise<Week
     .leftJoin(taskProofsTable, and(
       eq(taskProofsTable.taskId, tasksTable.id),
       isNull(taskProofsTable.deletedAt),
+      // نفس قاعدة الإكمال (addQuotaProof): شواهد فيسبوك الإضافية لا تُحتسب في الهدف الأسبوعي.
+      eq(taskProofsTable.isSupplementary, false),
     ))
     .where(and(
       isNull(tasksTable.deletedAt),
@@ -595,6 +603,7 @@ async function getWeeklyQuotaReminderTasks(start: Date, end: Date): Promise<Week
 
 async function getWeeklyQuotaReminderTasksForMember(memberId: number, start: Date, end: Date): Promise<WeeklyQuotaTaskRow[]> {
   await ensureTaskQuotaSchema();
+  await ensureTaskProofSupplementarySchema();
   const rows = await db
     .select({
       id: tasksTable.id,
@@ -623,6 +632,8 @@ async function getWeeklyQuotaReminderTasksForMember(memberId: number, start: Dat
     .leftJoin(taskProofsTable, and(
       eq(taskProofsTable.taskId, tasksTable.id),
       isNull(taskProofsTable.deletedAt),
+      // نفس قاعدة الإكمال (addQuotaProof): شواهد فيسبوك الإضافية لا تُحتسب في الهدف الأسبوعي.
+      eq(taskProofsTable.isSupplementary, false),
     ))
     .where(and(
       isNull(tasksTable.deletedAt),
@@ -1627,16 +1638,123 @@ async function sendDuePersonalReminders(now: Date) {
   };
 }
 
+// بلاغ إسناد أسبوعي لمهام إنستقرام: مهام الأسبوع تُنشأ تلقائيًا (بلا بلاغ إسناد)، فيصل كل عضو لديه مهمة
+// إنستقرام هذا الأسبوع بلاغٌ واحد يوم الأحد عند «وقت التذكير اليومي» (09:00 افتراضيًا) — بغضّ النظر عن وقت
+// إنشاء المهمة. نفس قناتي بلاغ المهمة العادية: إشعار داخل الموقع دائمًا + تيليجرام إن كان مفعّلًا والعضو رابطًا
+// حسابه. مرة واحدة لكل عضو في الأسبوع (مفتاح منع التكرار لكل قناة)، ورسالة واحدة تجمع كل مهامه إن تعدّدت حساباته.
+async function sendInstagramWeeklyAssignments(settings: TelegramSettings, now: Date) {
+  const result = { inApp: 0, telegram: 0 };
+  if (riyadhParts(now).weekday !== 0 || !isTimeReached(now, settings.dailyReminderTime)) return result;
+
+  await ensureInstagramSchema();
+  const weekKey = riyadhWeekKey(now);
+  const rows = await db
+    .select({
+      taskId: tasksTable.id,
+      memberId: tasksTable.memberId,
+      required: tasksTable.weeklyQuotaRequired,
+      dueDate: tasksTable.dueDate,
+      reciterName: recitersTable.name,
+      platformName: platformsTable.name,
+    })
+    .from(instagramWeeklyTasksTable)
+    .innerJoin(tasksTable, eq(tasksTable.id, instagramWeeklyTasksTable.taskId))
+    .innerJoin(platformsTable, eq(tasksTable.platformId, platformsTable.id))
+    .leftJoin(recitersTable, eq(tasksTable.reciterId, recitersTable.id))
+    .where(and(
+      eq(instagramWeeklyTasksTable.weekStart, weekKey),
+      isNull(tasksTable.deletedAt),
+      or(eq(tasksTable.status, "pending"), eq(tasksTable.status, "in_progress")),
+    ))
+    .orderBy(asc(tasksTable.id));
+  if (rows.length === 0) return result;
+
+  const tasksByMember = new Map<number, typeof rows>();
+  for (const row of rows) {
+    for (const memberId of await getAssignedMemberIds(row.taskId, row.memberId)) {
+      tasksByMember.set(memberId, [...(tasksByMember.get(memberId) ?? []), row]);
+    }
+  }
+
+  for (const [memberId, memberTasks] of tasksByMember) {
+    const deadline = formatRiyadhDate(memberTasks[0].dueDate);
+    const taskLines = memberTasks.map((task) => `${task.reciterName ?? task.platformName}: الهدف ${task.required ?? 0} منشورات`);
+
+    // إشعار داخل الموقع — مرة واحدة لكل عضو في الأسبوع.
+    const [inAppLog] = await db
+      .insert(notificationLogsTable)
+      .values({
+        channel: "in_app",
+        type: "in_app_instagram_weekly_assignment",
+        recipientMemberId: memberId,
+        taskId: memberTasks[0].taskId,
+        dedupeKey: `in_app:instagram_weekly_assignment:${weekKey}:member:${memberId}`,
+        status: "pending",
+      })
+      .onConflictDoNothing({ target: notificationLogsTable.dedupeKey })
+      .returning();
+    if (inAppLog) {
+      const users = await db
+        .select({ id: usersTable.id })
+        .from(usersTable)
+        .where(and(eq(usersTable.memberId, memberId), eq(usersTable.isApproved, true)));
+      if (users.length > 0) {
+        await db.insert(notificationsTable).values(users.map((user) => ({
+          userId: user.id,
+          type: "task_assigned",
+          title: "مهمتك على إنستقرام لهذا الأسبوع",
+          body: `${taskLines.join(" · ")} — الموعد النهائي: السبت ${deadline}`,
+          taskId: memberTasks[0].taskId,
+          isRead: false,
+        })));
+        result.inApp += users.length;
+      }
+      await db.update(notificationLogsTable).set({ status: "success", sentAt: new Date() }).where(eq(notificationLogsTable.id, inAppLog.id));
+    }
+
+    // تيليجرام — فقط إن كان مفعّلًا والعضو رابطًا حسابه.
+    if (!settings.enabled) continue;
+    const recipients = await getMemberRecipients([memberId]);
+    for (const recipient of recipients) {
+      if (recipient.memberId !== memberId) continue;
+      const text = [
+        "📸 <b>مهمتك على إنستقرام لهذا الأسبوع</b>",
+        ...memberTasks.map((task) => `• ${escapeHtml(task.reciterName ?? task.platformName)} — الهدف: <b>${task.required ?? 0}</b> منشورات`),
+        `الموعد النهائي: السبت ${escapeHtml(deadline)}`,
+        "كل منشور على إنستقرام يُحتسب شاهدًا تلقائيًا.",
+        `فتح المهمة: ${escapeHtml(getTaskUrl(memberTasks[0].taskId))}`,
+      ].join("\n");
+      const sent = await sendLoggedTelegram({
+        type: "telegram_instagram_weekly_assignment",
+        dedupeKey: `telegram:instagram_weekly_assignment:${weekKey}:member:${memberId}:user:${recipient.userId}`,
+        chatId: recipient.chatId,
+        text,
+        recipientUserId: recipient.userId,
+        recipientMemberId: recipient.memberId,
+        taskId: memberTasks[0].taskId,
+      });
+      if (sent.sent) result.telegram += 1;
+    }
+  }
+  return result;
+}
+
 export async function runTelegramNotificationCycle(now = new Date()) {
   await ensureTelegramSchema();
   await ensurePersonalRemindersSchema();
   const personalReminders = await sendDuePersonalReminders(now);
   const settings = await getTelegramSettings();
+  // بلاغ إنستقرام الأسبوعي قبل فحص «تيليجرام مفعّل»: إشعار الموقع يُرسل دائمًا، وتيليجرام فقط إن كان مفعّلًا.
+  const instagramWeeklyAssignment = await sendInstagramWeeklyAssignments(settings, now).catch((err) => {
+    logger.warn({ err }, "Instagram weekly assignment notice failed");
+    return { inApp: 0, telegram: 0 };
+  });
   if (!settings.enabled) {
     return {
       enabled: false,
       sent: personalReminders.sent,
       personalReminders,
+      instagramWeeklyAssignment,
       telegramSettingsDisabled: true,
     };
   }
@@ -1650,7 +1768,8 @@ export async function runTelegramNotificationCycle(now = new Date()) {
 
   return {
     enabled: true,
-    sent: daily + overdue + weeklyQuota + weeklyAppreciation + summary + publicSummary + personalReminders.sent,
+    sent: daily + overdue + weeklyQuota + weeklyAppreciation + summary + publicSummary + personalReminders.sent + instagramWeeklyAssignment.telegram,
+    instagramWeeklyAssignment,
     daily,
     overdue,
     weeklyQuota,
