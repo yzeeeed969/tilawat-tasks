@@ -397,7 +397,8 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   // اسم الحساب: اسم القارئ، وإلا اسم الصفحة بلا أي رابط وُضع فيه خطأً.
   const accountName = (page: PageRow) => page.reciterName ?? (stripUrls(page.name) || page.name);
   // رابط الحساب: خانة الرابط، وإلا رابط وُضع في خانة الاسم.
-  const accountUrl = (page: PageRow) => page.pageUrl ?? urlInName(page.name);
+  // (أول رابط فقط: خانة الرابط قد تحمل الرابط متبوعًا بالاسم.)
+  const accountUrl = (page: PageRow) => urlInName(page.pageUrl ?? "") ?? urlInName(page.name);
   const hidden: ShowcaseDiagnostics["hidden"] = [];
 
   // يوتيوب: كل الصفحات المسجّلة تُحلّ (حتى المخفية، لتطبيق قرار الإخفاء ولعرض حالتها للمدير).
