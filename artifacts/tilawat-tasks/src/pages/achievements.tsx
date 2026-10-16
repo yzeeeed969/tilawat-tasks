@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { arabicNumberWords } from "@/lib/arabic-number-words";
+import { ACH_LANGS, dateLocale, fontPlan, initialLang, isRtl, saveLang, translate, type AchKey, type AchLang } from "@/lib/achievements-i18n";
 
 // صفحة «منصات مشروع تطبيق تلاوات الحرمين» (/achievements) — عامة.
 // الشكل منقول حرفيًا من التصميم المعتمد (manassatna.html): نفس الألوان والخطوط والتخطيط والأقسام وترتيبها،
@@ -23,8 +24,10 @@ type Showcase = {
     twitter: { accounts: Account[] };
   };
   designs: { items: Array<{ url: string; publishedAt: string }>; channel: { name: string; url: string | null; subscribers: number | null } | null };
-  feed: Array<{ platform: "youtube" | "instagram" | "facebook" | "telegram" | "designs"; title: string; url: string; publishedAt: string }>;
+  feed: Array<{ platform: "youtube" | "instagram" | "facebook" | "telegram" | "designs"; title: string; kind?: "clip" | "recitation" | "design"; name?: string; url: string; publishedAt: string }>;
 };
+
+type T = (key: AchKey, vars?: Record<string, string | number>) => string;
 
 // كل الأرقام بالأرقام اللاتينية مع فواصل الآلاف (227,117,540).
 const ar = (n: number) => Math.round(n).toLocaleString("en-US");
@@ -32,19 +35,21 @@ const ar = (n: number) => Math.round(n).toLocaleString("en-US");
 function compact(n: number | null | undefined): string | null {
   return n == null ? null : ar(n);
 }
-function ago(iso: string | null): string {
+// الوقت النسبي بلغة الصفحة؛ الأقدم من 10 أيام ⇐ تاريخ منسّق بلغة الصفحة (بأرقام لاتينية).
+function ago(iso: string | null, t: T, lang: AchLang): string {
   if (!iso) return "";
   const hours = (Date.now() - new Date(iso).getTime()) / 3_600_000;
-  if (hours < 1) return "قبل قليل";
-  if (hours < 24) { const h = Math.floor(hours); return h === 1 ? "قبل ساعة" : h === 2 ? "قبل ساعتين" : `قبل ${ar(h)} ساعات`; }
+  if (hours < 1) return t("time.justNow");
+  if (hours < 24) { const h = Math.floor(hours); return h === 1 ? t("time.hourAgo") : h === 2 ? t("time.twoHoursAgo") : t("time.hoursAgo", { n: ar(h) }); }
   const days = Math.floor(hours / 24);
-  if (days === 1) return "أمس";
-  if (days === 2) return "قبل يومين";
-  if (days <= 10) return `قبل ${ar(days)} أيام`;
-  return new Date(iso).toLocaleDateString("ar-SA-u-nu-latn", { timeZone: "Asia/Riyadh", day: "numeric", month: "long" });
+  if (days === 1) return t("time.yesterday");
+  if (days === 2) return t("time.twoDaysAgo");
+  if (days <= 10) return t("time.daysAgo", { n: ar(days) });
+  return new Date(iso).toLocaleDateString(dateLocale(lang), { timeZone: "Asia/Riyadh", day: "numeric", month: "long" });
 }
 const firstLetter = (name: string) => name.replace(/^(تطبيق|تلاوات|الشيخ)\s+/g, "").replace(/^(الشيخ)\s+/, "").trim().charAt(0) || "ت";
-const plural = (n: number, one: string, many: string) => `${ar(n)} ${n === 1 ? one : many}`;
+// صيغة المفرد/الجمع حسب العدد.
+const plural = (t: T, n: number, one: AchKey, many: AchKey) => t(n === 1 ? one : many, { n: ar(n) });
 
 const PlayIcon = ({ size = 18, fill = "#0F5A46" }: { size?: number; fill?: string }) => (
   <svg width={size} height={size} viewBox="0 0 24 24" fill={fill}><path d="M8 5v14l11-7z" /></svg>
@@ -77,15 +82,15 @@ function Ext({ href, className, style, children }: { href: string | null | undef
     : <span className={className} style={style}>{children}</span>;
 }
 
-function AccountsGrid({ accounts, unit }: { accounts: Account[]; unit: string }) {
+function AccountsGrid({ accounts, unit, t }: { accounts: Account[]; unit: AchKey; t: T }) {
   return (
     <div className="accs">
       {accounts.map((account, index) => {
-        const parts = [account.followers != null ? `${compact(account.followers)} ${unit}` : null, `${ar(account.posts)} منشور`].filter(Boolean);
+        const parts = [account.followers != null ? t(unit, { n: compact(account.followers)! }) : null, t("unit.posts", { n: ar(account.posts) })].filter(Boolean);
         return (
           <Ext key={`${account.name}-${index}`} href={account.url} className="acc">
             <span className="dot" />
-            <span className="acc-main"><b>{account.name}</b><span className="acc-sub mono-num">{parts.join(" · ")}</span></span>
+            <span className="acc-main"><b><bdi>{account.name}</bdi></b><span className="acc-sub mono-num">{parts.join(" · ")}</span></span>
             <span className="go">↗</span>
           </Ext>
         );
@@ -94,27 +99,35 @@ function AccountsGrid({ accounts, unit }: { accounts: Account[]; unit: string })
   );
 }
 
-function ReelsRow({ reels, fb }: { reels: Reel[]; fb?: boolean }) {
+function ReelsRow({ reels, fb, t, lang }: { reels: Reel[]; fb?: boolean; t: T; lang: AchLang }) {
   return (
     <div className="ig-reels">
       {reels.map((reel) => (
         <Ext key={reel.url} href={reel.url} className={`reel${fb ? " fb" : ""}`}>
           {reel.thumbnail && <img className="rimg" src={reel.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />}
           <div className="rplay"><i><PlayIcon size={17} fill={fb ? "#1877F2" : "#8134AF"} /></i></div>
-          <div className="rinfo"><b>{reel.account}</b><span className="mono-num">{ago(reel.publishedAt)}</span></div>
+          <div className="rinfo"><b><bdi>{reel.account}</bdi></b><span className="mono-num">{ago(reel.publishedAt, t, lang)}</span></div>
         </Ext>
       ))}
     </div>
   );
 }
 
-const FEED_META: Record<Showcase["feed"][number]["platform"], { label: string; cls: string; style?: React.CSSProperties; icon: ReactNode }> = {
-  youtube: { label: "يوتيوب", cls: "c-fb", style: { background: "#C1121F" }, icon: ICONS.ytWhite },
-  instagram: { label: "انستقرام", cls: "c-ig", icon: ICONS.ig(17) },
-  facebook: { label: "فيسبوك", cls: "c-fb", icon: ICONS.fb(17) },
-  telegram: { label: "تيليجرام", cls: "c-tg", icon: ICONS.tg(17) },
-  designs: { label: "تصاميم الحرمين", cls: "c-ds", icon: ICONS.ds(17) },
+const FEED_META: Record<Showcase["feed"][number]["platform"], { label: AchKey; cls: string; style?: React.CSSProperties; icon: ReactNode }> = {
+  youtube: { label: "platform.youtube", cls: "c-fb", style: { background: "#C1121F" }, icon: ICONS.ytWhite },
+  instagram: { label: "platform.instagram", cls: "c-ig", icon: ICONS.ig(17) },
+  facebook: { label: "platform.facebook", cls: "c-fb", icon: ICONS.fb(17) },
+  telegram: { label: "platform.telegram", cls: "c-tg", icon: ICONS.tg(17) },
+  designs: { label: "platform.designs", cls: "c-ds", icon: ICONS.ds(17) },
 };
+
+// عنوان عنصر «أحدث ما نشرنا»: العنوان الحقيقي كما هو، وإلا الجملة من الترجمة حسب نوع المنشور.
+function feedTitle(item: Showcase["feed"][number], t: T): string {
+  if (item.kind === "clip") return t("feed.newClip", { name: item.name ?? "" });
+  if (item.kind === "recitation") return [t("feed.newRecitation"), item.name].filter(Boolean).join(" — ");
+  if (item.kind === "design") return t("feed.newDesign");
+  return item.title;
+}
 
 export default function Achievements() {
   const { data, isError } = useQuery({
@@ -128,17 +141,33 @@ export default function Achievements() {
   });
   const rootRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
+  const [lang, setLang] = useState<AchLang>(initialLang);
+  const t: T = (key, vars) => translate(lang, key, vars);
+  const rtl = isRtl(lang);
+  const fonts = fontPlan(lang);
 
-  // الخطوط وعنوان الصفحة.
+  const chooseLang = (next: AchLang) => {
+    setLang(next);
+    saveLang(next);
+  };
+
+  // الخطوط (حسب اللغة) — رابط واحد يُحدَّث عند تغيير اللغة.
   useEffect(() => {
     const link = document.createElement("link");
     link.rel = "stylesheet";
-    link.href = "https://fonts.googleapis.com/css2?family=El+Messiri:wght@500;600;700&family=Readex+Pro:wght@300;400;500;600&display=swap";
+    link.href = fonts.href;
     document.head.appendChild(link);
+    return () => { link.remove(); };
+  }, [fonts.href]);
+
+  // عنوان التبويب بلغة الصفحة، ويُعاد العنوان السابق عند المغادرة.
+  useEffect(() => {
     const previousTitle = document.title;
-    document.title = "منصات مشروع تطبيق تلاوات الحرمين";
-    return () => { link.remove(); document.title = previousTitle; };
+    return () => { document.title = previousTitle; };
   }, []);
+  useEffect(() => {
+    document.title = translate(lang, "page.title");
+  }, [lang]);
 
   // العدّادات المتحرّكة (نفس نص التصميم): تبدأ عند ظهورها، مع احترام تقليل الحركة.
   useEffect(() => {
@@ -177,36 +206,52 @@ export default function Achievements() {
   };
 
   const hero = data?.hero ?? { youtubeViews: 0, youtubeSubscribers: 0, appsCount: 0 };
+  // الحاشية: اسم الجمعية بخط مميّز داخل الجملة، أينما وقع {charityName} في ترجمة اللغة.
+  const [footerBefore, footerAfter = ""] = translate(lang, "footer.supportedBy", { charityName: "\u0001" }).split("\u0001");
   const p = data?.platforms;
 
   return (
-    <div className="manassat" ref={rootRef}>
+    <div
+      className="manassat"
+      ref={rootRef}
+      dir={rtl ? "rtl" : "ltr"}
+      lang={lang}
+      style={{ "--display": fonts.display, "--body": fonts.body } as React.CSSProperties}
+    >
       <style>{CSS}</style>
       <div className="hero">
         <div className="wrap hero-inner">
           <div className="brandbar">
             <span className="plate">
-              <img src="/jood-logo.png" alt="جمعية جود — Jood Charity" style={{ height: 46, width: "auto", display: "block" }} />
+              <img src="/jood-logo.png" alt={t("logo.alt")} style={{ height: 46, width: "auto", display: "block" }} />
             </span>
-            <button className="share-btn" id="shareBtn" type="button" onClick={share}>
-              {copied ? (
-                <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg> تم نسخ الرابط</>
-              ) : (
-                <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg> مشاركة الصفحة</>
-              )}
-            </button>
+            <div className="hero-actions">
+              <label className="lang-pick">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9" /><path d="M3 12h18M12 3a14 14 0 010 18M12 3a14 14 0 000 18" /></svg>
+                <select value={lang} onChange={(event) => chooseLang(event.target.value as AchLang)} aria-label="Language / اللغة">
+                  {ACH_LANGS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
+                </select>
+              </label>
+              <button className="share-btn" id="shareBtn" type="button" onClick={share}>
+                {copied ? (
+                  <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg> {t("share.copied")}</>
+                ) : (
+                  <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4" /></svg> {t("share.button")}</>
+                )}
+              </button>
+            </div>
           </div>
-          <h1>منصات مشروع تطبيق تلاوات الحرمين</h1>
+          <h1>{t("hero.title")}</h1>
           <div className="hero-stats">
-            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>{ar(hero.youtubeViews)}</b>{hero.youtubeViews > 0 && <em className="words">{arabicNumberWords(hero.youtubeViews)}</em>}<span>مشاهدة على يوتيوب</span></div>
-            <div className="hs"><b className="mono-num count" data-to={hero.youtubeSubscribers} key={`s-${hero.youtubeSubscribers}`}>{ar(hero.youtubeSubscribers)}</b><span>مشترك في قنواتنا</span></div>
-            <div className="hs"><b className="mono-num count" data-to={hero.appsCount} key={`a-${hero.appsCount}`}>{ar(hero.appsCount)}</b><span>تطبيقات تلاوات</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>{ar(hero.youtubeViews)}</b>{lang === "ar" && hero.youtubeViews > 0 && <em className="words">{arabicNumberWords(hero.youtubeViews)}</em>}<span>{t("hero.views")}</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.youtubeSubscribers} key={`s-${hero.youtubeSubscribers}`}>{ar(hero.youtubeSubscribers)}</b><span>{t("hero.subscribers")}</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.appsCount} key={`a-${hero.appsCount}`}>{ar(hero.appsCount)}</b><span>{t("hero.apps")}</span></div>
           </div>
         </div>
       </div>
 
       <div className="wrap">
-        {isError && <div className="note" style={{ marginTop: 24 }}>تعذّر تحميل البيانات الآن — حاول بعد قليل.</div>}
+        {isError && <div className="note" style={{ marginTop: 24 }}>{t("error.loadFailed")}</div>}
 
         {data?.featured && (
           <div className="feat">
@@ -215,34 +260,34 @@ export default function Achievements() {
               <span className="play"><PlayIcon size={22} /></span>
             </Ext>
             <div className="fbody">
-              <span className="ftag">★ الأكثر مشاهدة هذا الأسبوع</span>
-              <div className="ftitle">{data.featured.title}</div>
+              <span className="ftag">{t("featured.tag")}</span>
+              <div className="ftitle" dir="auto">{data.featured.title}</div>
               <div className="fmeta">
-                {data.featured.views != null && <strong className="mono-num">{compact(data.featured.views)} مشاهدة</strong>}
-                <span>يوتيوب · {data.featured.channelTitle}</span>
+                {data.featured.views != null && <strong className="mono-num">{t("unit.views", { n: compact(data.featured.views)! })}</strong>}
+                <span><bdi>{t("featured.source", { name: data.featured.channelTitle })}</bdi></span>
               </div>
-              <Ext href={data.featured.url} className="btn btn-red" style={{ alignSelf: "flex-start" }}>مشاهدة المقطع ↗</Ext>
+              <Ext href={data.featured.url} className="btn btn-red" style={{ alignSelf: "flex-start" }}>{t("featured.watch")}</Ext>
             </div>
           </div>
         )}
 
         {(data?.youtube.length ?? 0) > 0 && (
           <section>
-            <div className="sec-head"><span className="ico">{ICONS.youtube}</span><h2>قنواتنا على يوتيوب</h2></div>
-            <p className="sec-sub">كل قناة مع آخر مقاطعها وعدد مشاهداتها.</p>
+            <div className="sec-head"><span className="ico">{ICONS.youtube}</span><h2>{t("youtube.title")}</h2></div>
+            <p className="sec-sub">{t("youtube.subtitle")}</p>
             {data!.youtube.map((channel, index) => (
               <div className="yt-channel" key={channel.channelId}>
                 <div className="yt-top">
                   <span className="yt-ava" style={{ background: AVATAR_GRADIENTS[index % AVATAR_GRADIENTS.length] }}>
                     {channel.avatar ? <img src={channel.avatar} alt="" referrerPolicy="no-referrer" /> : firstLetter(channel.title)}
                   </span>
-                  <span className="yt-name"><b>{channel.title}</b>
+                  <span className="yt-name"><b><bdi>{channel.title}</bdi></b>
                     <span className="meta">
-                      {channel.subscribers != null && <strong className="mono-num">{compact(channel.subscribers)} مشترك</strong>}
-                      {channel.views != null && <strong className="mono-num">{compact(channel.views)} مشاهدة</strong>}
+                      {channel.subscribers != null && <strong className="mono-num">{t("unit.subscribers", { n: compact(channel.subscribers)! })}</strong>}
+                      {channel.views != null && <strong className="mono-num">{t("unit.views", { n: compact(channel.views)! })}</strong>}
                     </span>
                   </span>
-                  <Ext href={channel.url} className="btn btn-red">زيارة القناة ↗</Ext>
+                  <Ext href={channel.url} className="btn btn-red">{t("youtube.visitChannel")}</Ext>
                 </div>
                 <div className="clips">
                   {channel.clips.map((clip) => (
@@ -251,7 +296,7 @@ export default function Achievements() {
                         {clip.thumbnail && <img className="timg" src={clip.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />}
                         <span className="play"><PlayIcon /></span>
                       </div>
-                      <div className="clip-body"><div className="t">{clip.title}</div>{clip.views != null && <div className="v mono-num">{compact(clip.views)} مشاهدة</div>}</div>
+                      <div className="clip-body"><div className="t" dir="auto">{clip.title}</div>{clip.views != null && <div className="v mono-num">{t("unit.views", { n: compact(clip.views)! })}</div>}</div>
                     </Ext>
                   ))}
                 </div>
@@ -262,13 +307,13 @@ export default function Achievements() {
 
         {(data?.apps.length ?? 0) > 0 && (
           <section>
-            <div className="sec-head"><span className="ico">{ICONS.apps}</span><h2>تطبيقاتنا</h2></div>
-            <p className="sec-sub">تطبيقات التلاوات على آيفون وأندرويد.</p>
+            <div className="sec-head"><span className="ico">{ICONS.apps}</span><h2>{t("apps.title")}</h2></div>
+            <p className="sec-sub">{t("apps.subtitle")}</p>
             <div className="apps">
               {data!.apps.map((app) => (
                 <div className="app" key={app.name}>
                   <span className="app-ico">{app.avatar ? <img src={app.avatar} alt="" referrerPolicy="no-referrer" /> : firstLetter(app.name)}</span>
-                  <b>{app.name}</b>
+                  <b><bdi>{app.name}</bdi></b>
                   <span className="store">
                     {app.iosUrl && <a href={app.iosUrl} target="_blank" rel="noopener noreferrer">App Store</a>}
                     {app.androidUrl && <a href={app.androidUrl} target="_blank" rel="noopener noreferrer">Google Play</a>}
@@ -281,42 +326,42 @@ export default function Achievements() {
 
         {p && (
           <section>
-            <div className="sec-head"><span className="ico">{ICONS.platforms}</span><h2>تابعونا على المنصّات</h2></div>
-            <p className="sec-sub">كل حساباتنا الرسمية عبر وسائل التواصل.</p>
+            <div className="sec-head"><span className="ico">{ICONS.platforms}</span><h2>{t("platforms.title")}</h2></div>
+            <p className="sec-sub">{t("platforms.subtitle")}</p>
 
             {(p.instagram.accounts.length > 0 || p.instagram.reels.length > 0) && (
               <div className="plat">
-                <div className="plat-head"><span className="pico c-ig">{ICONS.ig()}</span><b>انستقرام</b><span className="n">{plural(p.instagram.accounts.length, "حساب", "حسابات")}</span></div>
-                {p.instagram.reels.length > 0 && <><div className="reels-label">أحدث المقاطع من حساباتنا على انستقرام</div><ReelsRow reels={p.instagram.reels} /></>}
-                <AccountsGrid accounts={p.instagram.accounts} unit="متابع" />
+                <div className="plat-head"><span className="pico c-ig">{ICONS.ig()}</span><b>{t("platform.instagram")}</b><span className="n">{plural(t, p.instagram.accounts.length, "unit.account", "unit.accounts")}</span></div>
+                {p.instagram.reels.length > 0 && <><div className="reels-label">{t("instagram.reelsLabel")}</div><ReelsRow reels={p.instagram.reels} t={t} lang={lang} /></>}
+                <AccountsGrid accounts={p.instagram.accounts} unit="unit.followers" t={t} />
               </div>
             )}
 
             {(p.facebook.accounts.length > 0 || p.facebook.reels.length > 0) && (
               <div className="plat">
-                <div className="plat-head"><span className="pico c-fb">{ICONS.fb()}</span><b>فيسبوك</b><span className="n">صفحات لكل قارئ</span></div>
-                {p.facebook.reels.length > 0 && <><div className="reels-label">أحدث المقاطع من صفحاتنا على فيسبوك</div><ReelsRow reels={p.facebook.reels} fb /></>}
-                <AccountsGrid accounts={p.facebook.accounts} unit="متابع" />
+                <div className="plat-head"><span className="pico c-fb">{ICONS.fb()}</span><b>{t("platform.facebook")}</b><span className="n">{t("facebook.pagesNote")}</span></div>
+                {p.facebook.reels.length > 0 && <><div className="reels-label">{t("facebook.reelsLabel")}</div><ReelsRow reels={p.facebook.reels} fb t={t} lang={lang} /></>}
+                <AccountsGrid accounts={p.facebook.accounts} unit="unit.followers" t={t} />
               </div>
             )}
 
             {p.telegram.accounts.length > 0 && (
               <div className="plat">
-                <div className="plat-head"><span className="pico c-tg">{ICONS.tg()}</span><b>تيليجرام</b><span className="n">{plural(p.telegram.accounts.length, "قناة", "قنوات")}</span></div>
-                <AccountsGrid accounts={p.telegram.accounts} unit="مشترك" />
+                <div className="plat-head"><span className="pico c-tg">{ICONS.tg()}</span><b>{t("platform.telegram")}</b><span className="n">{plural(t, p.telegram.accounts.length, "unit.channel", "unit.channels")}</span></div>
+                <AccountsGrid accounts={p.telegram.accounts} unit="unit.subscribers" t={t} />
               </div>
             )}
 
             {p.twitter.accounts.length > 0 && (
               <div className="plat">
-                <div className="plat-head"><span className="pico c-tw">{ICONS.tw()}</span><b>تويتر / X</b><span className="n">{plural(p.twitter.accounts.length, "حساب", "حسابات")}</span></div>
-                <AccountsGrid accounts={p.twitter.accounts} unit="متابع" />
+                <div className="plat-head"><span className="pico c-tw">{ICONS.tw()}</span><b>{t("platform.twitter")}</b><span className="n">{plural(t, p.twitter.accounts.length, "unit.account", "unit.accounts")}</span></div>
+                <AccountsGrid accounts={p.twitter.accounts} unit="unit.followers" t={t} />
               </div>
             )}
 
             {(data!.designs.items.length > 0 || data!.designs.channel) && (
               <div className="plat">
-                <div className="plat-head"><span className="pico c-ds">{ICONS.ds()}</span><b>تصاميم الحرمين</b><span className="n">أحدث التصاميم</span></div>
+                <div className="plat-head"><span className="pico c-ds">{ICONS.ds()}</span><b>{t("platform.designs")}</b><span className="n">{t("designs.latest")}</span></div>
                 {data!.designs.items.length > 0 && (
                   <div className="designs">
                     {data!.designs.items.map((item) => (
@@ -328,8 +373,8 @@ export default function Achievements() {
                   <div className="accs">
                     <Ext href={data!.designs.channel.url} className="acc">
                       <span className="dot" />
-                      <span className="acc-main"><b>{data!.designs.channel.name}</b>
-                        <span className="acc-sub mono-num">تيليجرام{data!.designs.channel.subscribers != null ? ` · ${compact(data!.designs.channel.subscribers)} مشترك` : ""}</span>
+                      <span className="acc-main"><b><bdi>{data!.designs.channel.name}</bdi></b>
+                        <span className="acc-sub mono-num">{t("platform.telegram")}{data!.designs.channel.subscribers != null ? ` · ${t("unit.subscribers", { n: compact(data!.designs.channel.subscribers)! })}` : ""}</span>
                       </span>
                       <span className="go">↗</span>
                     </Ext>
@@ -342,15 +387,15 @@ export default function Achievements() {
 
         {(data?.feed.length ?? 0) > 0 && (
           <section>
-            <div className="sec-head"><span className="ico">{ICONS.feed}</span><h2>أحدث ما نشرنا</h2></div>
-            <p className="sec-sub">آخر ما نُشر عبر جميع منصّاتنا، في مكان واحد.</p>
+            <div className="sec-head"><span className="ico">{ICONS.feed}</span><h2>{t("feed.title")}</h2></div>
+            <p className="sec-sub">{t("feed.subtitle")}</p>
             <div className="feed">
               {data!.feed.map((item) => {
                 const meta = FEED_META[item.platform];
                 return (
                   <a className="fitem" key={`${item.platform}-${item.url}`} href={item.url} target="_blank" rel="noopener noreferrer">
                     <span className={`fi-ico ${meta.cls}`} style={meta.style}>{meta.icon}</span>
-                    <span className="fi-main"><b>{item.title}</b><span>{meta.label} · {ago(item.publishedAt)}</span></span>
+                    <span className="fi-main"><b dir="auto">{feedTitle(item, t)}</b><span>{t(meta.label)} · {ago(item.publishedAt, t, lang)}</span></span>
                     <span className="fi-go">↗</span>
                   </a>
                 );
@@ -363,7 +408,7 @@ export default function Achievements() {
       <footer>
         <div className="wrap foot">
           <span>Tilawatalharamain.com</span>
-          <span>بدعم <span className="jname">جمعية جود</span> لخدمة الحاج والمعتمر</span>
+          <span>{footerBefore}<span className="jname">{t("footer.charityName")}</span>{footerAfter}</span>
         </div>
       </footer>
     </div>
@@ -379,10 +424,10 @@ const CSS = `
   --green:#0F5A46; --green-soft:#E4EFE9; --gold:#B88A2E; --gold-soft:#F0E6CF; --line:#E8DFCD;
   --shadow:0 10px 30px rgba(42,38,32,.08); --radius:18px; --maxw:1120px;
   --display:"El Messiri", "Readex Pro", system-ui, sans-serif; --body:"Readex Pro", system-ui, sans-serif;
-  background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;font-weight:400;min-height:100vh;direction:rtl;
+  background:var(--bg);color:var(--ink);font-family:var(--body);line-height:1.6;font-weight:400;min-height:100vh;text-align:start;
 }
 .manassat *{box-sizing:border-box}
-.manassat .wrap{direction:rtl;max-width:var(--maxw);margin:0 auto;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
+.manassat .wrap{max-width:var(--maxw);margin:0 auto;padding-left:max(18px,env(safe-area-inset-left,0px));padding-right:max(18px,env(safe-area-inset-right,0px))}
 .manassat a{color:inherit;text-decoration:none}
 .manassat h1,.manassat h2,.manassat h3{font-family:var(--display);text-wrap:balance;margin:0;font-weight:700;letter-spacing:0}
 .manassat .mono-num{font-variant-numeric:tabular-nums}
@@ -400,7 +445,7 @@ const CSS = `
 .manassat .sec-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
 .manassat .sec-head .ico{width:40px;height:40px;border-radius:12px;background:var(--green-soft);color:var(--green);display:grid;place-items:center;flex:none}
 .manassat .sec-head h2{font-size:clamp(22px,4vw,30px)}
-.manassat .sec-sub{color:var(--muted);font-size:15px;margin:0 0 22px 52px}
+.manassat .sec-sub{color:var(--muted);font-size:15px;margin-block:0 22px;margin-inline:0 52px}
 @media (max-width:560px){.manassat .sec-sub{margin-inline-start:0}}
 .manassat .yt-channel{background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);padding:20px;margin-bottom:20px}
 .manassat .yt-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap}
@@ -463,6 +508,10 @@ const CSS = `
 .manassat .foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-block:22px;color:var(--muted);font-size:13.5px}
 .manassat .foot .jname{font-family:var(--display);color:var(--green)}
 .manassat .note{max-width:var(--maxw);margin:16px auto 34px;font-size:12px;color:var(--muted);background:var(--gold-soft);border:1px solid #E7D7AC;border-radius:12px;padding:12px 15px}
+.manassat .hero-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.manassat .lang-pick{display:inline-flex;align-items:center;gap:6px;background:rgba(246,241,231,.14);border:1px solid rgba(246,241,231,.3);color:#F6F1E7;padding:0 12px;border-radius:999px;height:38px}
+.manassat .lang-pick select{appearance:auto;background:transparent;border:0;color:#F6F1E7;font-family:var(--body);font-weight:600;font-size:13px;height:100%;cursor:pointer;outline:none;max-width:170px}
+.manassat .lang-pick select option{color:#2A2620;background:#FFFDF8}
 .manassat .share-btn{display:inline-flex;align-items:center;gap:7px;cursor:pointer;font-family:var(--body);font-weight:600;font-size:13px;background:rgba(246,241,231,.14);border:1px solid rgba(246,241,231,.3);color:#F6F1E7;padding:9px 16px;border-radius:999px}
 .manassat .feat{display:grid;grid-template-columns:320px 1fr;gap:0;background:var(--surface);border:1px solid var(--line);border-radius:var(--radius);box-shadow:var(--shadow);overflow:hidden;margin-top:-26px;position:relative;z-index:2}
 @media(max-width:640px){.manassat .feat{grid-template-columns:1fr}}

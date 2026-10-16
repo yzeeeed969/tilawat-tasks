@@ -49,7 +49,9 @@ export type ShowcaseData = {
     twitter: { accounts: ShowcaseAccount[] };
   };
   designs: { items: Array<{ url: string; publishedAt: string }>; channel: { name: string; url: string | null; subscribers: number | null } | null };
-  feed: Array<{ platform: "youtube" | "instagram" | "facebook" | "telegram" | "designs"; title: string; url: string; publishedAt: string }>;
+  // title = عنوان حقيقي من المحتوى (مقطع يوتيوب، نص منشور تلقرام) ويبقى كما هو. عند غيابه يُرسل kind (+ name)
+  // وتكوّن الصفحة الجملة («مقطع جديد — {name}»…) بلغة الزائر من ملف الترجمات.
+  feed: Array<{ platform: "youtube" | "instagram" | "facebook" | "telegram" | "designs"; title: string; kind?: "clip" | "recitation" | "design"; name?: string; url: string; publishedAt: string }>;
   // للمدير فقط (يُحذف من الرد العام): ما ينقص القنوات المسجّلة، وما لم يعد يظهر ولماذا.
   diagnostics?: ShowcaseDiagnostics;
 };
@@ -510,19 +512,24 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     ORDER BY p.published_at DESC LIMIT 6`).catch(() => ({ rows: [] })));
   const feed: ShowcaseData["feed"] = [
     ...youtube.flatMap((channel) => channel.recent.slice(0, 3).filter((clip) => clip.publishedAt).map((clip) => ({ platform: "youtube" as const, title: clip.title, url: clip.url, publishedAt: clip.publishedAt! }))),
-    ...instagram.reels.filter((reel) => reel.publishedAt).map((reel) => ({ platform: "instagram" as const, title: `مقطع جديد — ${reel.account}`, url: reel.url, publishedAt: reel.publishedAt! })),
-    ...facebook.reels.filter((reel) => reel.publishedAt).map((reel) => ({ platform: "facebook" as const, title: `مقطع جديد — ${reel.account}`, url: reel.url, publishedAt: reel.publishedAt! })),
-    ...recitationPosts.map((row) => ({
-      platform: "telegram" as const,
-      title: [String(row.caption ?? "").split("\n")[0].replace(/#\S+/g, "").trim() || "تلاوة جديدة", row.reciter_name ? String(row.reciter_name) : null].filter(Boolean).join(" — "),
-      url: String(row.post_url), publishedAt: new Date(row.published_at).toISOString(),
-    })),
-    ...designItems.slice(0, 3).map((item) => ({ platform: "designs" as const, title: "تصميم جديد", url: item.url, publishedAt: item.publishedAt })),
+    ...instagram.reels.filter((reel) => reel.publishedAt).map((reel) => ({ platform: "instagram" as const, title: "", kind: "clip" as const, name: reel.account, url: reel.url, publishedAt: reel.publishedAt! })),
+    ...facebook.reels.filter((reel) => reel.publishedAt).map((reel) => ({ platform: "facebook" as const, title: "", kind: "clip" as const, name: reel.account, url: reel.url, publishedAt: reel.publishedAt! })),
+    ...recitationPosts.map((row) => {
+      const caption = String(row.caption ?? "").split("\n")[0].replace(/#\S+/g, "").trim();
+      const reciter = row.reciter_name ? String(row.reciter_name) : null;
+      return {
+        platform: "telegram" as const,
+        // بلا نص ⇐ «تلاوة جديدة» تُترجم في الصفحة، واسم القارئ (إن وُجد) يُلحق كما هو.
+        ...(caption ? { title: [caption, reciter].filter(Boolean).join(" — ") } : { title: "", kind: "recitation" as const, ...(reciter ? { name: reciter } : {}) }),
+        url: String(row.post_url), publishedAt: new Date(row.published_at).toISOString(),
+      };
+    }),
+    ...designItems.slice(0, 3).map((item) => ({ platform: "designs" as const, title: "", kind: "design" as const, url: item.url, publishedAt: item.publishedAt })),
   ].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 8);
 
   return {
     generatedAt: now.toISOString(),
-    dataVersion: 2,
+    dataVersion: 3,
     hero: {
       youtubeViews: youtube.reduce((sum, channel) => sum + (channel.views ?? 0), 0),
       youtubeSubscribers: youtube.reduce((sum, channel) => sum + (channel.subscribers ?? 0), 0),
