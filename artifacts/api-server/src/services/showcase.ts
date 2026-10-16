@@ -67,6 +67,9 @@ export type ShowcaseDiagnostics = {
 };
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
+const URL_IN_TEXT = /https?:\/\/\S+/i;
+const stripUrls = (value: string) => value.replace(/https?:\/\/\S+/gi, "").replace(/\s+/g, " ").trim();
+const urlInName = (value: string) => value.match(URL_IN_TEXT)?.[0] ?? null;
 const nameKey = (value: string) => value.replace(/\s+/g, "").replace(/[أإآ]/g, "ا").replace(/ة/g, "ه");
 
 // ── يوتيوب (القنوات = صفحات منصة يوتيوب المسجّلة) ─────────────────────────────────────────────
@@ -114,6 +117,31 @@ async function resolveYoutubeTargets(targets: YoutubeTarget[]) {
   return { resolved, report };
 }
 
+// الأكثر مشاهدة في القناة (كل الأوقات): search بترتيب المشاهدات يكلّف 100 وحدة، فيُخزَّن 24 ساعة لكل قناة.
+const POPULAR_CACHE_MS = 24 * 60 * 60 * 1000;
+const popularByChannel = new Map<string, { ids: string[]; at: number }>();
+async function popularVideoIds(channelId: string): Promise<string[] | null> {
+  const cachedPopular = popularByChannel.get(channelId);
+  if (cachedPopular && Date.now() - cachedPopular.at < POPULAR_CACHE_MS) return cachedPopular.ids;
+  const data = await callYoutubeApi<{ items?: any[] }>("search", { part: "id", channelId, order: "viewCount", type: "video", maxResults: "5" }).catch(() => null);
+  if (!data) return cachedPopular?.ids ?? null;
+  const ids = (data.items ?? []).map((item) => String(item?.id?.videoId ?? "")).filter(Boolean);
+  popularByChannel.set(channelId, { ids, at: Date.now() });
+  return ids;
+}
+
+// 3 مقاطع بلا تكرار: الأحدث، ثم أكثر مقطعين مشاهدة (إن كان الأحدث ضمنهما يُضاف التالي).
+export function mixClips(recent: ShowcaseClip[], popular: ShowcaseClip[]): ShowcaseClip[] {
+  const latest = recent[0];
+  const byViews = (list: ShowcaseClip[]) => [...list].sort((a, b) => (b.views ?? 0) - (a.views ?? 0));
+  const picked: ShowcaseClip[] = latest ? [latest] : [];
+  for (const clip of [...byViews(popular), ...byViews(recent)]) {
+    if (picked.length >= 3) break;
+    if (!picked.some((p) => p.url === clip.url)) picked.push(clip);
+  }
+  return picked;
+}
+
 async function loadYoutube(targets: Array<YoutubeTarget & { channelId: string }>, report: ShowcaseDiagnostics["youtube"]): Promise<YoutubeChannelData[]> {
   const ids = [...new Set(targets.map((t) => t.channelId))];
   if (ids.length === 0) return [];
@@ -126,7 +154,12 @@ async function loadYoutube(targets: Array<YoutubeTarget & { channelId: string }>
     const items = await callYoutubeApi<{ items?: any[] }>("playlistItems", { part: "contentDetails", playlistId: playlist, maxResults: "12" }).catch(() => ({ items: [] }));
     uploadsByChannel.set(id, (items.items ?? []).map((row) => String(row?.contentDetails?.videoId ?? "")).filter(Boolean));
   }));
-  const allVideoIds = [...uploadsByChannel.values()].flat();
+  const popularIds = new Map<string, string[]>();
+  await Promise.all(ids.map(async (id) => {
+    const popular = await popularVideoIds(id);
+    if (popular) popularIds.set(id, popular);
+  }));
+  const allVideoIds = [...new Set([...[...uploadsByChannel.values()].flat(), ...[...popularIds.values()].flat()])];
   const videos = new Map<string, any>();
   for (let i = 0; i < allVideoIds.length; i += 50) {
     const batch = await callYoutubeApi<{ items?: any[] }>("videos", { part: "snippet,statistics", id: allVideoIds.slice(i, i + 50).join(",") });
@@ -166,8 +199,8 @@ async function loadYoutube(targets: Array<YoutubeTarget & { channelId: string }>
       avatar: (thumbs.high ?? thumbs.medium ?? thumbs.default)?.url ?? null,
       subscribers: stats.hiddenSubscriberCount ? null : stats.subscriberCount != null ? Number(stats.subscriberCount) : null,
       views: stats.viewCount != null ? Number(stats.viewCount) : null,
-      // آخر 3 مقاطع، مرتّبة من الأكثر مشاهدة.
-      clips: recent.slice(0, 3).sort((a, b) => (b.views ?? 0) - (a.views ?? 0)),
+      // الأحدث + أكثر مقطعين مشاهدة في القناة (احتياطًا: الأكثر مشاهدة بين المقاطع الحديثة).
+      clips: mixClips(recent, (popularIds.get(target.channelId) ?? []).map(toClip).filter((clip): clip is ShowcaseClip => Boolean(clip))),
       recent,
     }];
   });
@@ -304,7 +337,7 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
 
 // ── تلقرام (Bot API: getChatMemberCount — مجاني، للعامة باسمها وللخاصة التي البوت عضو/مشرف فيها) ─────
 function telegramUsername(url: string | null): string | null {
-  const match = String(url ?? "").match(/(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{4,})(?:[/?#]|$)/i);
+  const match = String(url ?? "").match(/(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{4,})(?:[/?#\s]|$)/i);
   return match && match[1].toLowerCase() !== "c" && match[1].toLowerCase() !== "joinchat" ? match[1] : null;
 }
 
@@ -327,9 +360,9 @@ type SeenChat = { chatId: string; title: string; botStatus: string | null };
 // تحديد قناة الصفحة آليًا: (1) اسم مستخدم عام من الرابط، (2) رابط t.me/c/…، (3) قناة مراقَبة مربوطة بالصفحة،
 // (4) قناة دخلها البوت (عضو/مشرف) بعنوان يطابق اسم الصفحة أو اسم القارئ — مطابقة واحدة فقط، لا تخمين.
 function resolveTelegramChat(page: PageRow, linkedChats: Map<number, string>, seenChats: SeenChat[]): TelegramChatRef {
-  const username = telegramUsername(page.pageUrl);
+  const username = telegramUsername(page.pageUrl) ?? telegramUsername(page.name);
   if (username) return { chatId: `@${username}`, reason: null };
-  const privateId = telegramPrivateChatId(page.pageUrl);
+  const privateId = telegramPrivateChatId(page.pageUrl) ?? telegramPrivateChatId(page.name);
   if (privateId) return { chatId: privateId, reason: null };
   const linked = linkedChats.get(page.id);
   if (linked) return { chatId: linked, reason: null };
@@ -361,7 +394,10 @@ async function applyOneTimeHide(resolved: Array<YoutubeTarget & { channelId: str
 export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   await ensureShowcaseSchema();
   const allPages = await loadPages();
-  const accountName = (page: PageRow) => page.reciterName ?? page.name;
+  // اسم الحساب: اسم القارئ، وإلا اسم الصفحة بلا أي رابط وُضع فيه خطأً.
+  const accountName = (page: PageRow) => page.reciterName ?? (stripUrls(page.name) || page.name);
+  // رابط الحساب: خانة الرابط، وإلا رابط وُضع في خانة الاسم.
+  const accountUrl = (page: PageRow) => page.pageUrl ?? urlInName(page.name);
   const hidden: ShowcaseDiagnostics["hidden"] = [];
 
   // يوتيوب: كل الصفحات المسجّلة تُحلّ (حتى المخفية، لتطبيق قرار الإخفاء ولعرض حالتها للمدير).
@@ -395,7 +431,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const instagramAccounts: ShowcaseAccount[] = pagesOf(INSTAGRAM_PLATFORM_NAME).map((page) => {
     const followers = instagram.followersByPage.get(page.id) ?? null;
     report("instagram", accountName(page), followers, !instagram.configured ? "متغيرات إنستقرام غير مضبوطة في Railway" : !igLinked.has(page.id) ? "الحساب غير مربوط (أو انقطع ربطه) في «مراقبة إنستقرام» — اربطه هناك" : instagram.problems.get(page.id) ?? null);
-    return { name: accountName(page), url: page.pageUrl, followers, posts: page.posts };
+    return { name: accountName(page), url: accountUrl(page), followers, posts: page.posts };
   });
   // فيسبوك: Graph API لصفحة القارئ المربوطة في «مراقبة إنستقرام» (حساب القارئ ← صفحة فيسبوك).
   const fbMapped = new Set(rowsOf(await db.execute(sql`SELECT a.reciter_id FROM instagram_accounts a JOIN facebook_pages fp ON fp.fb_page_id = a.fb_page_id AND fp.status = 'connected'`).catch(() => ({ rows: [] }))).map((row) => Number(row.reciter_id)));
@@ -405,7 +441,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
       : page.reciterId == null ? "الصفحة غير مربوطة بقارئ في صفحة المنصات"
       : !fbMapped.has(page.reciterId) ? "صفحة فيسبوك هذا القارئ غير مربوطة في «مراقبة إنستقرام» (أو تحتاج إعادة ربط فيسبوك) — اربطها هناك"
       : facebook.problems.get(page.reciterId) ?? null);
-    return { name: accountName(page), url: page.pageUrl, followers, posts: page.posts };
+    return { name: accountName(page), url: accountUrl(page), followers, posts: page.posts };
   });
   // تلقرام: Bot API (getChatMemberCount) للقنوات العامة، وللخاصة التي البوت عضو/مشرف فيها.
   const telegramPages = pagesOf(TELEGRAM_PLATFORM_NAME);
@@ -416,12 +452,12 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     const ref = resolveTelegramChat(page, linkedChats, seenChats);
     const result = await telegramMembers(ref.chatId);
     report("telegram", accountName(page), result.count, ref.reason ?? (result.error ? `رفض تلقرام الطلب (${result.error}) — إن كانت القناة خاصة فأضف البوت @Tilawatalharamain_bot عضوًا/مشرفًا فيها` : null));
-    return { name: accountName(page), url: page.pageUrl, followers: result.count, posts: page.posts };
+    return { name: accountName(page), url: accountUrl(page), followers: result.count, posts: page.posts };
   }));
   // تويتر/X: لا يوجد مصدر رسمي مجاني ⇐ الحساب بلا رقم دائمًا (لا رقم يدوي ولا تقديري).
   const twitterAccounts: ShowcaseAccount[] = pagesOf(TWITTER_PLATFORM_NAME).map((page) => {
     report("twitter", accountName(page), null, "واجهة X الرسمية لقراءة عدد المتابعين تتطلب اشتراكًا مدفوعًا (X API Basic أو أعلى) — يُعرض الحساب بلا رقم");
-    return { name: accountName(page), url: page.pageUrl, followers: null, posts: page.posts };
+    return { name: accountName(page), url: accountUrl(page), followers: null, posts: page.posts };
   });
 
   // لا رقم آلي ⇐ لا يُعرض الحساب (يظهر من نفسه متى توفّر رقمه). السبب يبقى في التشخيص.
@@ -434,7 +470,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   // التطبيقات: صورة الشيخ من صورة قناته على يوتيوب (مطابقة اسم القارئ في اسم التطبيق).
   const avatarFor = (appName: string) => youtube.find((channel) => channel.reciterName && nameKey(appName).includes(nameKey(channel.reciterName)))?.avatar ?? null;
   // قنوات تلقرام المسجّلة (باسم المستخدم من رابط الصفحة) — لا تُعرض منشورات قناة غير مسجّلة.
-  const registeredTelegram = new Set(telegramPages.map((page) => telegramUsername(page.pageUrl)?.toLowerCase()).filter(Boolean) as string[]);
+  const registeredTelegram = new Set(telegramPages.map((page) => (telegramUsername(page.pageUrl) ?? telegramUsername(page.name))?.toLowerCase()).filter(Boolean) as string[]);
   const registeredTelegramPageIds = new Set(telegramPages.map((page) => page.id));
   const registeredPageIds = new Set(pages.map((page) => page.id));
 
