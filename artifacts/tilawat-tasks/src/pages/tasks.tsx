@@ -1409,7 +1409,7 @@ function MemberMultiSelect({
   if (!members || members.length === 0) {
     return (
       <div className="border border-dashed border-muted-foreground/30 rounded-md p-4 text-center text-sm text-muted-foreground">
-        لا يوجد أعضاء — أضف أعضاء من صفحة الإعدادات أولاً
+        لا يوجد أعضاء — أضف أعضاء من صفحة «الأعضاء» أولاً
       </div>
     );
   }

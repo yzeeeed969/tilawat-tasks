@@ -2,8 +2,6 @@ import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth-context";
 import { APP_VERSION, APP_VERSION_DATE } from "@/lib/app-version";
-import { format } from "date-fns";
-import { ar } from "date-fns/locale";
 import {
   LayoutDashboard,
   CheckSquare,
@@ -16,12 +14,8 @@ import {
   Sun,
   HelpCircle,
   User,
-  KeyRound,
-  Mail,
   Loader2,
   CalendarDays,
-  CheckCircle2,
-  ListTodo,
   RefreshCw,
   Bell,
   AlarmClock,
@@ -36,14 +30,6 @@ import {
   ShieldCheck,
   Radar,
 } from "lucide-react";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
 import { NotificationsPanel } from "@/components/notifications-panel";
 import { useHijriPreference } from "@/lib/hijri-date";
 import {
@@ -166,165 +152,6 @@ function CollapsibleNavGroup({ group, location, open, onToggle, onNavigate }: {
   );
 }
 
-// ── الملف الشخصي (كلمة المرور + البريد + إحصاءاتي) — كما كان، داخل حوار ──────────────────────────
-function ProfileDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
-  const { user, refetch } = useAuth();
-  const role = useRole();
-  const [pwCurrent, setPwCurrent] = useState("");
-  const [pwNew, setPwNew] = useState("");
-  const [pwConfirm, setPwConfirm] = useState("");
-  const [pwLoading, setPwLoading] = useState(false);
-  const [pwError, setPwError] = useState("");
-  const [pwSuccess, setPwSuccess] = useState(false);
-  const [emailNew, setEmailNew] = useState("");
-  const [emailPw, setEmailPw] = useState("");
-  const [emailLoading, setEmailLoading] = useState(false);
-  const [emailError, setEmailError] = useState("");
-  const [emailSuccess, setEmailSuccess] = useState(false);
-  const [stats, setStats] = useState<{ total: number; completed: number } | null>(null);
-
-  useEffect(() => {
-    if (!open || !user?.memberId) return;
-    fetch(`/api/tasks?memberId=${user.memberId}`, { credentials: "include" })
-      .then((r) => r.json())
-      .then((tasks: { status: string }[]) => {
-        if (!Array.isArray(tasks)) return;
-        setStats({ total: tasks.length, completed: tasks.filter((t) => t.status === "completed").length });
-      })
-      .catch(() => {});
-  }, [open, user?.memberId]);
-
-  const name = user?.displayName || user?.username || "مستخدم";
-  const initials = initialsOf(name);
-
-  const handleChangePassword = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setPwError("");
-    setPwSuccess(false);
-    if (pwNew !== pwConfirm) { setPwError("كلمة المرور الجديدة وتأكيدها غير متطابقتين"); return; }
-    if (pwNew.length < 6) { setPwError("كلمة المرور الجديدة يجب أن تكون 6 أحرف على الأقل"); return; }
-    setPwLoading(true);
-    try {
-      const res = await fetch("/api/auth/change-password", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ currentPassword: pwCurrent, newPassword: pwNew }),
-      });
-      const data = await res.json();
-      if (!res.ok) { setPwError(data.error || "حدث خطأ"); }
-      else { setPwSuccess(true); setPwCurrent(""); setPwNew(""); setPwConfirm(""); }
-    } catch {
-      setPwError("حدث خطأ في الاتصال بالخادم");
-    } finally {
-      setPwLoading(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-sm" dir="rtl">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-base">
-            <User className="h-4 w-4 text-sidebar-primary" />
-            الملف الشخصي
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="flex items-center gap-3 p-3 rounded-lg bg-sidebar-primary/5 border border-sidebar-primary/15">
-          <div className="w-11 h-11 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-base shrink-0">
-            {initials}
-          </div>
-          <div className="min-w-0">
-            <p className="font-semibold text-sm truncate">{name}</p>
-            <p className="text-xs text-muted-foreground truncate">{user?.username}</p>
-            <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>
-              {getRoleLabel(role)}
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-3 gap-2">
-          {user?.createdAt && (
-            <div className="col-span-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/40 text-xs text-muted-foreground">
-              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-sidebar-primary/60" />
-              <span>انضممت في {format(new Date(user.createdAt), "d MMMM yyyy", { locale: ar })}</span>
-            </div>
-          )}
-          {stats !== null && (
-            <>
-              <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-muted/40 text-center">
-                <ListTodo className="h-4 w-4 text-sidebar-primary/70" />
-                <span className="text-base font-bold text-foreground">{stats.total}</span>
-                <span className="text-[10px] text-muted-foreground leading-tight">إجمالي المهام</span>
-              </div>
-              <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-green-50 text-center">
-                <CheckCircle2 className="h-4 w-4 text-green-600" />
-                <span className="text-base font-bold text-green-700">{stats.completed}</span>
-                <span className="text-[10px] text-green-600 leading-tight">مكتملة</span>
-              </div>
-              <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-amber-50 text-center">
-                <ListTodo className="h-4 w-4 text-amber-600" />
-                <span className="text-base font-bold text-amber-700">{stats.total - stats.completed}</span>
-                <span className="text-[10px] text-amber-600 leading-tight">قيد الانتظار</span>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="space-y-2">
-          <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-            <KeyRound className="h-3.5 w-3.5" />
-            تغيير كلمة المرور
-          </p>
-          <form onSubmit={handleChangePassword} className="space-y-2">
-            <Input type="password" placeholder="كلمة المرور الحالية" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} className="h-8 text-sm" autoComplete="current-password" />
-            <Input type="password" placeholder="كلمة المرور الجديدة" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="h-8 text-sm" autoComplete="new-password" />
-            <Input type="password" placeholder="تأكيد كلمة المرور الجديدة" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} className="h-8 text-sm" autoComplete="new-password" />
-            {pwError && <p className="text-xs text-red-500">{pwError}</p>}
-            {pwSuccess && <p className="text-xs text-green-600">تم تغيير كلمة المرور بنجاح ✓</p>}
-            <Button type="submit" size="sm" className="w-full h-8 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground text-xs" disabled={pwLoading || !pwCurrent || !pwNew || !pwConfirm}>
-              {pwLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "حفظ كلمة المرور"}
-            </Button>
-          </form>
-        </div>
-
-        <div className="space-y-2 border-t border-border pt-3">
-          <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-            <Mail className="h-3.5 w-3.5" />
-            البريد الإلكتروني
-            {user?.email && <span className="text-sidebar-primary font-normal truncate max-w-[140px]" dir="ltr">{user.email}</span>}
-          </p>
-          <form onSubmit={async (e) => {
-            e.preventDefault();
-            setEmailError(""); setEmailSuccess(false);
-            if (!emailNew.trim() || !emailPw) { setEmailError("أدخل البريد وكلمة المرور"); return; }
-            setEmailLoading(true);
-            try {
-              const res = await fetch("/api/auth/change-email", {
-                method: "PATCH",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ newEmail: emailNew.trim(), currentPassword: emailPw }),
-              });
-              const data = await res.json();
-              if (!res.ok) { setEmailError(data.error || "حدث خطأ"); }
-              else { setEmailSuccess(true); setEmailNew(""); setEmailPw(""); await refetch(); }
-            } catch { setEmailError("خطأ في الاتصال"); }
-            finally { setEmailLoading(false); }
-          }} className="space-y-2">
-            <Input type="email" placeholder="البريد الإلكتروني الجديد" value={emailNew} onChange={(e) => setEmailNew(e.target.value)} className="h-8 text-sm" dir="ltr" />
-            <Input type="password" placeholder="كلمة المرور للتحقق" value={emailPw} onChange={(e) => setEmailPw(e.target.value)} className="h-8 text-sm" />
-            {emailError && <p className="text-xs text-red-500">{emailError}</p>}
-            {emailSuccess && <p className="text-xs text-green-600">تم تحديث البريد الإلكتروني ✓</p>}
-            <Button type="submit" size="sm" variant="outline" className="w-full h-8 text-xs" disabled={emailLoading || !emailNew || !emailPw}>
-              {emailLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "حفظ البريد الإلكتروني"}
-            </Button>
-          </form>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
 function initialsOf(name: string) {
   return name.split(" ").slice(0, 2).map((n: string) => n[0]).join("").toUpperCase();
 }
@@ -354,11 +181,9 @@ function SettingsPanel({ open, onOpenChange, navMain, navGroups, location }: {
 }) {
   const { user, logout, refetch } = useAuth();
   const role = useRole();
-  const canManageSettings = useCanAccessSettings();
   const isAdmin = useIsAdmin();
   const { dark, setDarkMode } = useDarkMode();
   const { showHijri, toggleHijri } = useHijriPreference();
-  const [profileOpen, setProfileOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
   const { openKey, toggle: toggleGroup } = useOpenGroup(navGroups ?? [], location);
   const close = () => onOpenChange(false);
@@ -433,15 +258,13 @@ function SettingsPanel({ open, onOpenChange, navMain, navGroups, location }: {
 
             <section>
               <p className="px-3 pb-1 text-[11px] font-bold text-muted-foreground">الحساب</p>
-              <PanelRow icon={User} label="الملف الشخصي" hint="كلمة المرور والبريد" onClick={() => setProfileOpen(true)} />
-              <PanelRow icon={Bell} label="حسابي وربط Telegram" href="/account" onClick={close} />
+              <PanelRow icon={User} label="حسابي" hint="كلمة المرور · البريد · Telegram" href="/account" onClick={close} />
               <PanelRow icon={switching ? Loader2 : RefreshCw} label={user?.role === "admin" ? "تبديل إلى حساب عضو" : "تبديل إلى حساب المدير"} onClick={handleSwitchAccount} />
             </section>
 
             <section>
               <p className="px-3 pb-1 text-[11px] font-bold text-muted-foreground">عام</p>
               <PanelRow icon={HelpCircle} label="دليل الاستخدام" href="/help" onClick={close} />
-              {canManageSettings && <PanelRow icon={Settings} label="كل إعدادات النظام" hint="صفحة واحدة" href="/settings" onClick={close} />}
               {isAdmin && <PanelRow icon={Globe} label="صفحة المنصات العامة" hint="↗" href="/achievements" external onClick={close} />}
             </section>
           </div>
@@ -452,7 +275,6 @@ function SettingsPanel({ open, onOpenChange, navMain, navGroups, location }: {
           </div>
         </SheetContent>
       </Sheet>
-      <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
     </>
   );
 }

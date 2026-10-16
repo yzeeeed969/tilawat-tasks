@@ -10,7 +10,7 @@ import Dashboard from "@/pages/dashboard";
 import Tasks from "@/pages/tasks";
 import Members from "@/pages/members";
 import Reports from "@/pages/reports";
-import Settings, {
+import {
   GeneralSettingsPage,
   TelegramSettingsPage,
 } from "@/pages/settings";
@@ -86,6 +86,26 @@ function TaskLinkRoute() {
   return <TasksRoute taskId={Number.isFinite(parsedTaskId) ? parsedTaskId : undefined} />;
 }
 
+// صفحة «كل إعدادات النظام» القديمة حُذفت (كانت تكرّر أربع صفحات). أي رابط قديم إليها يُحوَّل
+// إلى الصفحة الأصلية المقابلة لقسمها، وإلا فإلى «المستخدمون والصلاحيات».
+const LEGACY_SETTINGS_SECTIONS: Record<string, string> = {
+  telegram: "/settings/telegram",
+  general: "/settings/general",
+  reciters: "/reciters",
+  platforms: "/platforms",
+};
+
+function LegacySettingsRedirect() {
+  const [, setLocation] = useLocation();
+
+  useEffect(() => {
+    const section = window.location.hash.replace("#", "");
+    setLocation(LEGACY_SETTINGS_SECTIONS[section] ?? "/settings/general", { replace: true });
+  }, [setLocation]);
+
+  return null;
+}
+
 function TaskGenerationDisabledRoute() {
   const [, setLocation] = useLocation();
 
@@ -137,9 +157,7 @@ function AppRouter() {
         </ProtectedRoute>
       </Route>
       <Route path="/settings">
-        <ProtectedRoute>
-          <AppLayout><Settings /></AppLayout>
-        </ProtectedRoute>
+        <LegacySettingsRedirect />
       </Route>
       <Route path="/reciters">
         <ProtectedRoute>
