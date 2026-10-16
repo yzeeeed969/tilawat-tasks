@@ -4,6 +4,8 @@ import {
   instagramAccountsTable,
   instagramMediaTable,
   instagramWeeklyTasksTable,
+  membersTable,
+  pageMembersTable,
   recitersTable,
   taskMembersTable,
   taskProofsTable,
@@ -159,11 +161,28 @@ async function weeklyTaskFor(accountId: number, weekStart: string) {
   return row ?? null;
 }
 
+// المكلّفون بمهمة الأسبوع: كل أعضاء الصفحة النشطين (page_members — نفس مصدر اقتراح الأعضاء للمهام العادية)،
+// وإن لم يكن للصفحة أعضاء ⇐ «العضو المسؤول» في بطاقة الحساب. العضو الأساسي في المهمة: عضو الحساب إن كان
+// ضمنهم، وإلا أولهم.
+async function weeklyTaskAssignees(account: InstagramAccount): Promise<{ primary: number; all: number[] }> {
+  const rows = await db
+    .select({ memberId: pageMembersTable.memberId })
+    .from(pageMembersTable)
+    .innerJoin(membersTable, eq(membersTable.id, pageMembersTable.memberId))
+    .where(and(eq(pageMembersTable.pageId, account.pageId), eq(membersTable.isActive, true)))
+    .orderBy(pageMembersTable.memberId);
+  const all = [...new Set(rows.map((row) => row.memberId as number))];
+  if (all.length === 0) return { primary: account.memberId, all: [account.memberId] };
+  return { primary: all.includes(account.memberId) ? account.memberId : all[0], all };
+}
+
 // إنشاء مهمة الأسبوع من القالب: «هدف أسبوعي بعدد مرات» = هدف الحساب، من الأحد إلى السبت، على صفحة
-// القارئ، للعضو المسؤول. تبدأ 0/N معلّقة، وتصبح متأخرة بعد السبت إن لم تبلغ الهدف.
+// القارئ، لكل أعضاء الصفحة (مهمة واحدة مشتركة بهدف واحد — لا مهمة لكل عضو). تبدأ 0/N معلّقة، وتصبح
+// متأخرة بعد السبت إن لم تبلغ الهدف.
 async function createWeeklyTask(account: InstagramAccount, weekStart: string): Promise<number> {
   const reciterName = await reciterNameOf(account.reciterId);
   const weekEnd = addDaysToKey(weekStart, 6);
+  const assignees = await weeklyTaskAssignees(account);
   return db.transaction(async (tx: any) => {
     // مهمة سابقة لنفس الأسبوع حُذفت: نزيل ربطها كي تُنشأ مهمة جديدة.
     await tx.execute(sql`DELETE FROM instagram_weekly_tasks w USING tasks t WHERE w.task_id = t.id AND w.account_id = ${account.id} AND w.week_start = ${weekStart} AND t.deleted_at IS NOT NULL`);
@@ -172,7 +191,7 @@ async function createWeeklyTask(account: InstagramAccount, weekStart: string): P
       title: `إنستقرام — ${reciterName} — أسبوع ${weekStart}`,
       platformId: account.platformId,
       pageId: account.pageId,
-      memberId: account.memberId,
+      memberId: assignees.primary,
       reciterId: account.reciterId,
       status: "pending",
       priority: "normal",
@@ -186,7 +205,7 @@ async function createWeeklyTask(account: InstagramAccount, weekStart: string): P
       weeklyQuotaPeriodEnd: dateOfKey(weekEnd),
       assigneeNote: `هدف أسبوعي: ${account.weeklyGoal} منشورات على إنستقرام — كل منشور يُحتسب شاهدًا تلقائيًا`,
     }).returning({ id: tasksTable.id });
-    await tx.insert(taskMembersTable).values({ taskId: task.id, memberId: account.memberId });
+    await tx.insert(taskMembersTable).values(assignees.all.map((memberId) => ({ taskId: task.id, memberId })));
     await tx.insert(instagramWeeklyTasksTable).values({ accountId: account.id, weekStart, taskId: task.id });
     return task.id as number;
   });

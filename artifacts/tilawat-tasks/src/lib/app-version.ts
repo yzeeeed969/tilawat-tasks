@@ -1,4 +1,4 @@
 // رقم إصدار الموقع — يُحدَّث يدويًا مع كل تحديث للتأكد من وصول التغيير إلى المتصفح.
 // عند كل تحديث جديد: زد الرقم بمقدار 1، وحدّث التاريخ والوقت أدناه.
-export const APP_VERSION = 39;
-export const APP_VERSION_DATE = "2026-10-17 03:00";
+export const APP_VERSION = 40;
+export const APP_VERSION_DATE = "2026-10-17 05:00";
