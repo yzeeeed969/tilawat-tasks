@@ -56,6 +56,9 @@ app.get("/health", (_req, res) => {
   res.json({ status: "ok" });
 });
 
+// الواجهة (artifacts/tilawat-tasks) تُبنى وتُقدَّم من خدمة api-server نفسها على Railway. تنبيه: مسارات
+// المراقبة لهذه الخدمة في Railway لا تشمل مجلد الواجهة، فتعديل يخص الواجهة وحدها لا يُعيد النشر —
+// أضف ‎/artifacts/tilawat-tasks/**‎ إلى Watch Paths لخدمة api-server.
 app.use(express.static(clientDistDir, {
   setHeaders(res, filePath) {
     if (filePath.endsWith("sw.js")) {
