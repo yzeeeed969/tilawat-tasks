@@ -12,7 +12,6 @@ import Members from "@/pages/members";
 import Reports from "@/pages/reports";
 import Settings, {
   GeneralSettingsPage,
-  PublicStatsSettingsPage,
   TelegramSettingsPage,
 } from "@/pages/settings";
 import RecitersPage from "@/pages/reciters";
@@ -130,11 +129,6 @@ function AppRouter() {
       <Route path="/settings/telegram">
         <ProtectedRoute>
           <AppLayout><TelegramSettingsPage /></AppLayout>
-        </ProtectedRoute>
-      </Route>
-      <Route path="/settings/public-stats">
-        <ProtectedRoute>
-          <AppLayout><PublicStatsSettingsPage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/settings/general">

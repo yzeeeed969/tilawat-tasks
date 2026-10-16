@@ -146,14 +146,6 @@ interface TelegramLog {
   createdAt: string;
 }
 
-interface PublicSiteSettingsData {
-  id: number;
-  youtubeTotalViews: number | null;
-  youtubeBaselineViews: number | null;
-  youtubeViewsUpdatedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
 
 // ── API helpers ───────────────────────────────────────────────────────────────
 async function fetchAdminUsers(): Promise<AppUser[]> {
@@ -276,24 +268,6 @@ async function sendTelegramPublicSummaryNow(date: string) {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body.error ?? "فشل إرسال ملخص منشورات اليوم");
   return body as { sent: number; publications: number; messages: number; date: string };
-}
-
-async function fetchPublicSiteSettings(): Promise<PublicSiteSettingsData> {
-  const res = await fetch("/api/public-site-settings", { credentials: "include" });
-  if (!res.ok) throw new Error("فشل تحميل الإحصائيات العامة");
-  return res.json();
-}
-
-async function patchPublicSiteSettings(updates: { youtubeTotalViews: number | null; youtubeBaselineViews: number }) {
-  const res = await fetch("/api/public-site-settings", {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(updates),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? "فشل حفظ الإحصائيات العامة");
-  return body as PublicSiteSettingsData;
 }
 
 function formatRiyadhDateTime(value?: string | null) {
@@ -1728,111 +1702,6 @@ export function TelegramSettingsSection() {
   );
 }
 
-export function PublicStatsSettingsSection() {
-  const { toast } = useToast();
-  const queryClient = useQueryClient();
-  const [youtubeViewsInput, setYoutubeViewsInput] = useState("");
-  const [youtubeBaselineViewsInput, setYoutubeBaselineViewsInput] = useState("0");
-
-  const { data, isLoading } = useQuery({
-    queryKey: ["public-site-settings"],
-    queryFn: fetchPublicSiteSettings,
-  });
-
-  useEffect(() => {
-    if (data) {
-      setYoutubeViewsInput(data.youtubeTotalViews === null ? "" : String(data.youtubeTotalViews));
-      setYoutubeBaselineViewsInput(String(data.youtubeBaselineViews ?? 0));
-    }
-  }, [data?.youtubeTotalViews, data?.youtubeBaselineViews]);
-
-  const saveMutation = useMutation({
-    mutationFn: () => {
-      const youtubeTotalViews = parseNonNegativeIntegerInput(youtubeViewsInput);
-      const youtubeBaselineViews = parseNonNegativeIntegerInput(youtubeBaselineViewsInput);
-      if (Number.isNaN(youtubeTotalViews)) {
-        throw new Error("أدخل رقمًا صحيحًا لمشاهدات يوتيوب");
-      }
-      if (Number.isNaN(youtubeBaselineViews)) {
-        throw new Error("أدخل رقمًا صحيحًا للرقم التأسيسي لمشاهدات يوتيوب");
-      }
-      return patchPublicSiteSettings({ youtubeTotalViews, youtubeBaselineViews: youtubeBaselineViews ?? 0 });
-    },
-    onSuccess: () => {
-      toast({ title: "تم حفظ الإحصائيات العامة" });
-      queryClient.invalidateQueries({ queryKey: ["public-site-settings"] });
-      queryClient.invalidateQueries({ queryKey: ["public-achievements"] });
-    },
-    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
-  });
-
-  return (
-    <Card className="border-border/50 shadow-sm lg:col-span-2">
-      <CardHeader className="bg-sidebar/5 border-b border-border/50 pb-6">
-        <CardTitle className="flex items-center gap-2">
-          <BarChart3 className="h-5 w-5 text-sidebar-primary" />
-          إحصائيات عامة
-        </CardTitle>
-        <CardDescription className="text-base mt-2">
-          أرقام عامة تظهر في صفحة الإنجازات للزوار بدون أي بيانات تشغيلية داخلية
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="p-6 space-y-4">
-        {isLoading ? (
-          <div className="flex justify-center p-8"><Loader2 className="h-6 w-6 animate-spin text-sidebar-primary" /></div>
-        ) : (
-          <>
-            <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto] gap-4 lg:items-end">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold">الرقم التأسيسي لمشاهدات YouTube</label>
-                  <Input
-                    value={youtubeBaselineViewsInput}
-                    onChange={(event) => setYoutubeBaselineViewsInput(event.target.value)}
-                    inputMode="numeric"
-                    dir="ltr"
-                    placeholder="مثال: 50000000"
-                    className="text-lg font-semibold"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    رقم تراكمي سابق يضاف إلى الرقم اليدوي الحالي، ولا يوضع داخل الكود.
-                  </p>
-                </div>
-                <div className="space-y-2">
-                  <label className="text-sm font-semibold">الرقم اليدوي الحالي لمشاهدات YouTube</label>
-                  <Input
-                    value={youtubeViewsInput}
-                    onChange={(event) => setYoutubeViewsInput(event.target.value)}
-                    inputMode="numeric"
-                    dir="ltr"
-                    placeholder="مثال: 3341630"
-                    className="text-lg font-semibold"
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    عند الحفظ يضع النظام وقت آخر تحديث تلقائيًا، ويظهر هذا الوقت في صفحة الإنجازات العامة.
-                  </p>
-                </div>
-              </div>
-              <Button
-                onClick={() => saveMutation.mutate()}
-                disabled={saveMutation.isPending}
-                className="min-w-36"
-              >
-                {saveMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Save className="h-4 w-4 ml-2" />}
-                حفظ الأرقام
-              </Button>
-            </div>
-
-            <div className="rounded-lg border border-border/60 bg-muted/10 px-4 py-3 text-sm text-muted-foreground">
-              آخر تحديث: <span className="font-semibold text-foreground">{formatRiyadhDateTime(data?.youtubeViewsUpdatedAt)}</span>
-            </div>
-          </>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 // ── Main Settings page ────────────────────────────────────────────────────────
 export function TelegramSettingsPage() {
   return (
@@ -1842,18 +1711,6 @@ export function TelegramSettingsPage() {
         <p className="text-muted-foreground mt-2 text-lg">إدارة إشعارات Telegram والربط وسجل الإرسال</p>
       </div>
       <TelegramSettingsSection />
-    </div>
-  );
-}
-
-export function PublicStatsSettingsPage() {
-  return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div>
-        <h2 className="text-3xl font-bold text-foreground tracking-tight">إحصائيات عامة</h2>
-        <p className="text-muted-foreground mt-2 text-lg">إدارة أرقام الإنجازات العامة التي تظهر للزوار</p>
-      </div>
-      <PublicStatsSettingsSection />
     </div>
   );
 }
@@ -1898,11 +1755,6 @@ export default function Settings() {
         <p className="text-muted-foreground mt-2 text-lg">إدارة الفريق والمنصات والقراء والصلاحيات</p>
       </div>
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-        {isAdmin && (
-          <div id="public-stats" className="scroll-mt-24">
-            <PublicStatsSettingsSection />
-          </div>
-        )}
         {isAdmin && (
           <div id="telegram" className="scroll-mt-24">
             <TelegramSettingsSection />
