@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { arabicNumberWords } from "@/lib/arabic-number-words";
 
 // صفحة «منصات مشروع تطبيق تلاوات الحرمين» (/achievements) — عامة.
 // الشكل منقول حرفيًا من التصميم المعتمد (manassatna.html): نفس الألوان والخطوط والتخطيط والأقسام وترتيبها،
@@ -25,13 +26,11 @@ type Showcase = {
   feed: Array<{ platform: "youtube" | "instagram" | "facebook" | "telegram" | "designs"; title: string; url: string; publishedAt: string }>;
 };
 
-const ar = (n: number) => Math.round(n).toLocaleString("ar-EG");
-// «٦٨٠ ألف»، «١٫٨ مليون» كما في التصميم.
+// كل الأرقام بالأرقام اللاتينية مع فواصل الآلاف (227,117,540).
+const ar = (n: number) => Math.round(n).toLocaleString("en-US");
+// الرقم كاملًا بفواصل الآلاف (بلا اختصار «ألف/مليون»).
 function compact(n: number | null | undefined): string | null {
-  if (n == null) return null;
-  if (n >= 1_000_000) return `${(Math.round(n / 100_000) / 10).toLocaleString("ar-EG")} مليون`;
-  if (n >= 10_000) return `${Math.round(n / 1000).toLocaleString("ar-EG")} ألف`;
-  return ar(n);
+  return n == null ? null : ar(n);
 }
 function ago(iso: string | null): string {
   if (!iso) return "";
@@ -42,7 +41,7 @@ function ago(iso: string | null): string {
   if (days === 1) return "أمس";
   if (days === 2) return "قبل يومين";
   if (days <= 10) return `قبل ${ar(days)} أيام`;
-  return new Date(iso).toLocaleDateString("ar-SA", { timeZone: "Asia/Riyadh", day: "numeric", month: "long" });
+  return new Date(iso).toLocaleDateString("ar-SA-u-nu-latn", { timeZone: "Asia/Riyadh", day: "numeric", month: "long" });
 }
 const firstLetter = (name: string) => name.replace(/^(تطبيق|تلاوات|الشيخ)\s+/g, "").replace(/^(الشيخ)\s+/, "").trim().charAt(0) || "ت";
 const plural = (n: number, one: string, many: string) => `${ar(n)} ${n === 1 ? one : many}`;
@@ -199,7 +198,7 @@ export default function Achievements() {
           </div>
           <h1>منصات مشروع تطبيق تلاوات الحرمين</h1>
           <div className="hero-stats">
-            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>{ar(hero.youtubeViews)}</b><span>مشاهدة على يوتيوب</span></div>
+            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>{ar(hero.youtubeViews)}</b>{hero.youtubeViews > 0 && <em className="words">{arabicNumberWords(hero.youtubeViews)}</em>}<span>مشاهدة على يوتيوب</span></div>
             <div className="hs"><b className="mono-num count" data-to={hero.youtubeSubscribers} key={`s-${hero.youtubeSubscribers}`}>{ar(hero.youtubeSubscribers)}</b><span>مشترك في قنواتنا</span></div>
             <div className="hs"><b className="mono-num count" data-to={hero.appsCount} key={`a-${hero.appsCount}`}>{ar(hero.appsCount)}</b><span>تطبيقات تلاوات</span></div>
           </div>
@@ -396,6 +395,7 @@ const CSS = `
 .manassat .hs{background:rgba(246,241,231,.08);border:1px solid rgba(246,241,231,.18);padding:14px 18px;border-radius:14px;min-width:118px}
 .manassat .hs b{font-family:var(--display);font-size:clamp(22px,4.4vw,32px);color:#E9D9A9;line-height:1;display:block}
 .manassat .hs span{color:rgba(246,241,231,.82);font-size:13px;margin-top:7px;display:block}
+.manassat .hs .words{display:block;font-style:normal;font-family:var(--body);font-size:12.5px;line-height:1.55;color:rgba(233,217,169,.92);margin-top:8px;max-width:30ch}
 .manassat section{padding-block:40px}
 .manassat .sec-head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
 .manassat .sec-head .ico{width:40px;height:40px;border-radius:12px;background:var(--green-soft);color:var(--green);display:grid;place-items:center;flex:none}
