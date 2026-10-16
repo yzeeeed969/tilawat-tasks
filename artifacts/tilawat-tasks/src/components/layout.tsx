@@ -31,6 +31,10 @@ import {
   CalendarPlus,
   Send,
   Camera,
+  Menu,
+  Globe,
+  ShieldCheck,
+  Radar,
 } from "lucide-react";
 import {
   Dialog,
@@ -52,45 +56,117 @@ import {
   getRoleBadgeClass,
   type UserRole,
 } from "@/lib/roles";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { Switch } from "@/components/ui/switch";
 
 function useDarkMode() {
-  const [dark, setDark] = useState<boolean>(() => {
-    try {
-      return localStorage.getItem("darkMode") === "true";
-    } catch {
-      return false;
-    }
-  });
+  const [dark, setDark] = useState<boolean>(readDarkPreference);
+
+  // مزامنة كل النسخ (القائمة الجانبية، لوحة الإعدادات، الجوال) عبر حدث واحد.
+  useEffect(() => {
+    const sync = () => setDark(readDarkPreference());
+    window.addEventListener(DARK_EVENT, sync);
+    return () => window.removeEventListener(DARK_EVENT, sync);
+  }, []);
 
   useEffect(() => {
-    const root = document.documentElement;
-    if (dark) {
-      root.classList.add("dark");
-    } else {
-      root.classList.remove("dark");
-    }
-    try {
-      localStorage.setItem("darkMode", String(dark));
-    } catch { /* ignore */ }
+    document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
-  return { dark, toggle: () => setDark((d) => !d) };
+  const setDarkMode = (value: boolean) => {
+    setDark(value);
+    try {
+      localStorage.setItem("darkMode", String(value));
+    } catch { /* ignore */ }
+    window.dispatchEvent(new Event(DARK_EVENT));
+  };
+
+  return { dark, setDarkMode };
 }
 
-function UserCard() {
-  const { user, logout, refetch } = useAuth();
+const DARK_EVENT = "tilawat:dark-mode-pref";
+function readDarkPreference() {
+  try {
+    return localStorage.getItem("darkMode") === "true";
+  } catch {
+    return false;
+  }
+}
+
+type NavItem = { href: string; label: string; icon: typeof LayoutDashboard };
+type NavGroup = { key: string; label: string; icon: typeof LayoutDashboard; items: NavItem[] };
+
+function isActivePath(location: string, href: string) {
+  const path = href.split("#")[0];
+  return location === path || (path !== "/" && location.startsWith(path));
+}
+
+// المجموعات القابلة للطيّ: تُفتح تلقائيًا إن كانت الصفحة الحالية داخلها، وتُحفظ حالتها.
+function useGroupOpen(key: string, containsActive: boolean) {
+  const storageKey = `nav-group:${key}`;
+  const [open, setOpen] = useState<boolean>(() => {
+    try {
+      const stored = localStorage.getItem(storageKey);
+      return stored === null ? containsActive : stored === "true";
+    } catch {
+      return containsActive;
+    }
+  });
+  useEffect(() => {
+    if (containsActive) setOpen(true);
+  }, [containsActive]);
+  const toggle = () => setOpen((value) => {
+    try { localStorage.setItem(storageKey, String(!value)); } catch { /* ignore */ }
+    return !value;
+  });
+  return { open, toggle };
+}
+
+function NavLinkRow({ item, location, onNavigate }: { item: NavItem; location: string; onNavigate?: () => void }) {
+  const active = isActivePath(location, item.href);
+  return (
+    <Link href={item.href} onClick={onNavigate}>
+      <div className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors text-sm ${
+        active
+          ? "bg-sidebar-primary text-sidebar-primary-foreground"
+          : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
+      }`}>
+        <item.icon className="h-[18px] w-[18px] shrink-0" />
+        <span className="font-medium truncate">{item.label}</span>
+      </div>
+    </Link>
+  );
+}
+
+function CollapsibleNavGroup({ group, location, onNavigate }: { group: NavGroup; location: string; onNavigate?: () => void }) {
+  const containsActive = group.items.some((item) => isActivePath(location, item.href));
+  const { open, toggle } = useGroupOpen(group.key, containsActive);
+  return (
+    <div className="pt-2">
+      <button
+        type="button"
+        onClick={toggle}
+        aria-expanded={open}
+        className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[12px] font-bold text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/30 transition-colors"
+      >
+        <group.icon className="h-4 w-4 shrink-0" />
+        <span className="flex-1 text-right">{group.label}</span>
+        {!open && containsActive && <span className="h-1.5 w-1.5 rounded-full bg-sidebar-primary" />}
+        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+      {open && (
+        <div className="mt-1 space-y-0.5 pr-2">
+          {group.items.map((item) => <NavLinkRow key={item.href} item={item} location={location} onNavigate={onNavigate} />)}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── الملف الشخصي (كلمة المرور + البريد + إحصاءاتي) — كما كان، داخل حوار ──────────────────────────
+function ProfileDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (open: boolean) => void }) {
+  const { user, refetch } = useAuth();
   const role = useRole();
-  const isAdmin = useIsAdmin();
-  const canManageSettingsLocal = useCanAccessSettings();
-  const { dark, toggle } = useDarkMode();
-  const { showHijri, toggleHijri } = useHijriPreference();
-  const [profileOpen, setProfileOpen] = useState(false);
   const [pwCurrent, setPwCurrent] = useState("");
   const [pwNew, setPwNew] = useState("");
   const [pwConfirm, setPwConfirm] = useState("");
@@ -103,10 +179,9 @@ function UserCard() {
   const [emailError, setEmailError] = useState("");
   const [emailSuccess, setEmailSuccess] = useState(false);
   const [stats, setStats] = useState<{ total: number; completed: number } | null>(null);
-  const [switching, setSwitching] = useState(false);
 
   useEffect(() => {
-    if (!profileOpen || !user?.memberId) return;
+    if (!open || !user?.memberId) return;
     fetch(`/api/tasks?memberId=${user.memberId}`, { credentials: "include" })
       .then((r) => r.json())
       .then((tasks: { status: string }[]) => {
@@ -114,40 +189,10 @@ function UserCard() {
         setStats({ total: tasks.length, completed: tasks.filter((t) => t.status === "completed").length });
       })
       .catch(() => {});
-  }, [profileOpen, user?.memberId]);
+  }, [open, user?.memberId]);
 
   const name = user?.displayName || user?.username || "مستخدم";
-  const initials = name
-    .split(" ")
-    .slice(0, 2)
-    .map((n: string) => n[0])
-    .join("")
-    .toUpperCase();
-
-  const handleLogout = async () => {
-    await logout();
-    window.location.href = "/sign-in";
-  };
-
-  const handleSwitchAccount = async () => {
-    if (switching) return;
-    setSwitching(true);
-    try {
-      const nextUserId = user?.role === "admin" ? 2 : 1;
-      const res = await fetch("/api/auth/switch-account", {
-        method: "POST",
-        credentials: "include",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: nextUserId }),
-      });
-      if (res.ok) {
-        await refetch();
-        window.location.href = "/tasks";
-      }
-    } finally {
-      setSwitching(false);
-    }
-  };
+  const initials = initialsOf(name);
 
   const handleChangePassword = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -173,420 +218,385 @@ function UserCard() {
   };
 
   return (
-    <div className="border-t border-sidebar-border">
-      {/* Dark mode toggle */}
-      <div className="px-3 pt-2 pb-1">
-        <button
-          onClick={toggle}
-          className="w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent/30 transition-colors text-sm"
-          title={dark ? "تفعيل الوضع الفاتح" : "تفعيل الوضع الداكن"}
-        >
-          {dark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4 text-sidebar-foreground/60" />}
-          <span className="text-sidebar-foreground/80">{dark ? "الوضع الفاتح" : "الوضع الداكن"}</span>
-        </button>
-        <button
-          onClick={toggleHijri}
-          className="mt-1 w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sidebar-foreground hover:bg-sidebar-accent/30 transition-colors text-sm"
-          title={showHijri ? "إخفاء التاريخ الهجري" : "إظهار التاريخ الهجري"}
-        >
-          <CalendarDays className="h-4 w-4 text-sidebar-foreground/60" />
-          <span className="text-sidebar-foreground/80">{showHijri ? "إخفاء التاريخ الهجري" : "إظهار التاريخ الهجري"}</span>
-        </button>
-      </div>
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-w-sm" dir="rtl">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 text-base">
+            <User className="h-4 w-4 text-sidebar-primary" />
+            الملف الشخصي
+          </DialogTitle>
+        </DialogHeader>
 
-      <div className="p-3">
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <button className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-sidebar-accent/30 transition-colors text-sidebar-foreground">
-              <div className="w-9 h-9 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-sm shrink-0">
-                {initials}
-              </div>
-              <div className="flex-1 text-right min-w-0">
-                <p className="text-sm font-semibold truncate leading-tight">{name}</p>
-                <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>
-                  {getRoleLabel(role)}
-                </span>
-              </div>
-              <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
-            </button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" side="top" className="w-48 mb-1">
-            <DropdownMenuItem className="cursor-pointer flex items-center gap-2" onClick={() => setProfileOpen(true)}>
-              <User className="h-4 w-4" />
-              حسابي
-            </DropdownMenuItem>
-            <Link href="/account">
-              <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
-                <Bell className="h-4 w-4" />
-                ربط Telegram
-              </DropdownMenuItem>
-            </Link>
-            <DropdownMenuItem className="cursor-pointer flex items-center gap-2" onClick={handleSwitchAccount} disabled={switching}>
-              {switching ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-              {user?.role === "admin" ? "تبديل إلى حساب عضو" : "تبديل إلى حساب المدير"}
-            </DropdownMenuItem>
-            {canManageSettingsLocal && (
-              <Link href="/settings">
-                <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
-                  <Settings className="h-4 w-4" />
-                  الإعدادات
-                </DropdownMenuItem>
-              </Link>
-            )}
-            <Link href="/help">
-              <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
-                <HelpCircle className="h-4 w-4" />
-                دليل الاستخدام
-              </DropdownMenuItem>
-            </Link>
-            <DropdownMenuItem
-              className="cursor-pointer flex items-center gap-2 text-red-600 focus:text-red-700 focus:bg-red-50"
-              onClick={handleLogout}
-            >
-              <LogOut className="h-4 w-4" />
-              تسجيل الخروج
-            </DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+        <div className="flex items-center gap-3 p-3 rounded-lg bg-sidebar-primary/5 border border-sidebar-primary/15">
+          <div className="w-11 h-11 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-base shrink-0">
+            {initials}
+          </div>
+          <div className="min-w-0">
+            <p className="font-semibold text-sm truncate">{name}</p>
+            <p className="text-xs text-muted-foreground truncate">{user?.username}</p>
+            <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>
+              {getRoleLabel(role)}
+            </span>
+          </div>
+        </div>
 
-      {/* Profile dialog */}
-      <Dialog open={profileOpen} onOpenChange={setProfileOpen}>
-        <DialogContent className="max-w-sm" dir="rtl">
-          <DialogHeader>
-            <DialogTitle className="flex items-center gap-2 text-base">
-              <User className="h-4 w-4 text-sidebar-primary" />
-              حسابي
-            </DialogTitle>
-          </DialogHeader>
-
-          {/* User info */}
-          <div className="flex items-center gap-3 p-3 rounded-lg bg-sidebar-primary/5 border border-sidebar-primary/15">
-            <div className="w-11 h-11 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-base shrink-0">
-              {initials}
+        <div className="grid grid-cols-3 gap-2">
+          {user?.createdAt && (
+            <div className="col-span-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/40 text-xs text-muted-foreground">
+              <CalendarDays className="h-3.5 w-3.5 shrink-0 text-sidebar-primary/60" />
+              <span>انضممت في {format(new Date(user.createdAt), "d MMMM yyyy", { locale: ar })}</span>
             </div>
-            <div className="min-w-0">
-              <p className="font-semibold text-sm truncate">{name}</p>
-              <p className="text-xs text-muted-foreground truncate">{user?.username}</p>
-              <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>
-                {getRoleLabel(role)}
-              </span>
-            </div>
-          </div>
-
-          {/* Join date + stats */}
-          <div className="grid grid-cols-3 gap-2">
-            {user?.createdAt && (
-              <div className="col-span-3 flex items-center gap-2 px-3 py-2 rounded-lg bg-muted/40 text-xs text-muted-foreground">
-                <CalendarDays className="h-3.5 w-3.5 shrink-0 text-sidebar-primary/60" />
-                <span>انضممت في {format(new Date(user.createdAt), "d MMMM yyyy", { locale: ar })}</span>
+          )}
+          {stats !== null && (
+            <>
+              <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-muted/40 text-center">
+                <ListTodo className="h-4 w-4 text-sidebar-primary/70" />
+                <span className="text-base font-bold text-foreground">{stats.total}</span>
+                <span className="text-[10px] text-muted-foreground leading-tight">إجمالي المهام</span>
               </div>
-            )}
-            {stats !== null && (
-              <>
-                <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-muted/40 text-center">
-                  <ListTodo className="h-4 w-4 text-sidebar-primary/70" />
-                  <span className="text-base font-bold text-foreground">{stats.total}</span>
-                  <span className="text-[10px] text-muted-foreground leading-tight">إجمالي المهام</span>
-                </div>
-                <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-green-50 text-center">
-                  <CheckCircle2 className="h-4 w-4 text-green-600" />
-                  <span className="text-base font-bold text-green-700">{stats.completed}</span>
-                  <span className="text-[10px] text-green-600 leading-tight">مكتملة</span>
-                </div>
-                <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-amber-50 text-center">
-                  <ListTodo className="h-4 w-4 text-amber-600" />
-                  <span className="text-base font-bold text-amber-700">{stats.total - stats.completed}</span>
-                  <span className="text-[10px] text-amber-600 leading-tight">قيد الانتظار</span>
-                </div>
-              </>
-            )}
-          </div>
+              <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-green-50 text-center">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                <span className="text-base font-bold text-green-700">{stats.completed}</span>
+                <span className="text-[10px] text-green-600 leading-tight">مكتملة</span>
+              </div>
+              <div className="flex flex-col items-center gap-1 px-2 py-2.5 rounded-lg bg-amber-50 text-center">
+                <ListTodo className="h-4 w-4 text-amber-600" />
+                <span className="text-base font-bold text-amber-700">{stats.total - stats.completed}</span>
+                <span className="text-[10px] text-amber-600 leading-tight">قيد الانتظار</span>
+              </div>
+            </>
+          )}
+        </div>
 
-          {/* Change password */}
-          <div className="space-y-2">
-            <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <KeyRound className="h-3.5 w-3.5" />
-              تغيير كلمة المرور
-            </p>
-            <form onSubmit={handleChangePassword} className="space-y-2">
-              <Input type="password" placeholder="كلمة المرور الحالية" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} className="h-8 text-sm" autoComplete="current-password" />
-              <Input type="password" placeholder="كلمة المرور الجديدة" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="h-8 text-sm" autoComplete="new-password" />
-              <Input type="password" placeholder="تأكيد كلمة المرور الجديدة" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} className="h-8 text-sm" autoComplete="new-password" />
-              {pwError && <p className="text-xs text-red-500">{pwError}</p>}
-              {pwSuccess && <p className="text-xs text-green-600">تم تغيير كلمة المرور بنجاح ✓</p>}
-              <Button type="submit" size="sm" className="w-full h-8 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground text-xs" disabled={pwLoading || !pwCurrent || !pwNew || !pwConfirm}>
-                {pwLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "حفظ كلمة المرور"}
-              </Button>
-            </form>
-          </div>
+        <div className="space-y-2">
+          <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+            <KeyRound className="h-3.5 w-3.5" />
+            تغيير كلمة المرور
+          </p>
+          <form onSubmit={handleChangePassword} className="space-y-2">
+            <Input type="password" placeholder="كلمة المرور الحالية" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} className="h-8 text-sm" autoComplete="current-password" />
+            <Input type="password" placeholder="كلمة المرور الجديدة" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="h-8 text-sm" autoComplete="new-password" />
+            <Input type="password" placeholder="تأكيد كلمة المرور الجديدة" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} className="h-8 text-sm" autoComplete="new-password" />
+            {pwError && <p className="text-xs text-red-500">{pwError}</p>}
+            {pwSuccess && <p className="text-xs text-green-600">تم تغيير كلمة المرور بنجاح ✓</p>}
+            <Button type="submit" size="sm" className="w-full h-8 bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground text-xs" disabled={pwLoading || !pwCurrent || !pwNew || !pwConfirm}>
+              {pwLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "حفظ كلمة المرور"}
+            </Button>
+          </form>
+        </div>
 
-          {/* Change email */}
-          <div className="space-y-2 border-t border-border pt-3">
-            <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-              <Mail className="h-3.5 w-3.5" />
-              البريد الإلكتروني
-              {user?.email && <span className="text-sidebar-primary font-normal truncate max-w-[140px]" dir="ltr">{user.email}</span>}
-            </p>
-            <form onSubmit={async (e) => {
-              e.preventDefault();
-              setEmailError(""); setEmailSuccess(false);
-              if (!emailNew.trim() || !emailPw) { setEmailError("أدخل البريد وكلمة المرور"); return; }
-              setEmailLoading(true);
-              try {
-                const res = await fetch("/api/auth/change-email", {
-                  method: "PATCH",
-                  headers: { "Content-Type": "application/json" },
-                  body: JSON.stringify({ newEmail: emailNew.trim(), currentPassword: emailPw }),
-                });
-                const data = await res.json();
-                if (!res.ok) { setEmailError(data.error || "حدث خطأ"); }
-                else { setEmailSuccess(true); setEmailNew(""); setEmailPw(""); await refetch(); }
-              } catch { setEmailError("خطأ في الاتصال"); }
-              finally { setEmailLoading(false); }
-            }} className="space-y-2">
-              <Input type="email" placeholder="البريد الإلكتروني الجديد" value={emailNew} onChange={(e) => setEmailNew(e.target.value)} className="h-8 text-sm" dir="ltr" />
-              <Input type="password" placeholder="كلمة المرور للتحقق" value={emailPw} onChange={(e) => setEmailPw(e.target.value)} className="h-8 text-sm" />
-              {emailError && <p className="text-xs text-red-500">{emailError}</p>}
-              {emailSuccess && <p className="text-xs text-green-600">تم تحديث البريد الإلكتروني ✓</p>}
-              <Button type="submit" size="sm" variant="outline" className="w-full h-8 text-xs" disabled={emailLoading || !emailNew || !emailPw}>
-                {emailLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "حفظ البريد الإلكتروني"}
-              </Button>
-            </form>
-          </div>
-        </DialogContent>
-      </Dialog>
-    </div>
+        <div className="space-y-2 border-t border-border pt-3">
+          <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+            <Mail className="h-3.5 w-3.5" />
+            البريد الإلكتروني
+            {user?.email && <span className="text-sidebar-primary font-normal truncate max-w-[140px]" dir="ltr">{user.email}</span>}
+          </p>
+          <form onSubmit={async (e) => {
+            e.preventDefault();
+            setEmailError(""); setEmailSuccess(false);
+            if (!emailNew.trim() || !emailPw) { setEmailError("أدخل البريد وكلمة المرور"); return; }
+            setEmailLoading(true);
+            try {
+              const res = await fetch("/api/auth/change-email", {
+                method: "PATCH",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ newEmail: emailNew.trim(), currentPassword: emailPw }),
+              });
+              const data = await res.json();
+              if (!res.ok) { setEmailError(data.error || "حدث خطأ"); }
+              else { setEmailSuccess(true); setEmailNew(""); setEmailPw(""); await refetch(); }
+            } catch { setEmailError("خطأ في الاتصال"); }
+            finally { setEmailLoading(false); }
+          }} className="space-y-2">
+            <Input type="email" placeholder="البريد الإلكتروني الجديد" value={emailNew} onChange={(e) => setEmailNew(e.target.value)} className="h-8 text-sm" dir="ltr" />
+            <Input type="password" placeholder="كلمة المرور للتحقق" value={emailPw} onChange={(e) => setEmailPw(e.target.value)} className="h-8 text-sm" />
+            {emailError && <p className="text-xs text-red-500">{emailError}</p>}
+            {emailSuccess && <p className="text-xs text-green-600">تم تحديث البريد الإلكتروني ✓</p>}
+            <Button type="submit" size="sm" variant="outline" className="w-full h-8 text-xs" disabled={emailLoading || !emailNew || !emailPw}>
+              {emailLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "حفظ البريد الإلكتروني"}
+            </Button>
+          </form>
+        </div>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-export function AppLayout({ children }: { children: ReactNode }) {
-  const [location] = useLocation();
+function initialsOf(name: string) {
+  return name.split(" ").slice(0, 2).map((n: string) => n[0]).join("").toUpperCase();
+}
+
+function PanelRow({ icon: Icon, label, hint, onClick, href, danger, external }: {
+  icon: typeof LayoutDashboard; label: string; hint?: string; onClick?: () => void; href?: string; danger?: boolean; external?: boolean;
+}) {
+  const body = (
+    <div className={`flex items-center gap-3 px-3 py-2.5 rounded-lg cursor-pointer transition-colors text-sm ${danger ? "text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30" : "text-foreground hover:bg-muted"}`}>
+      <Icon className="h-4 w-4 shrink-0 opacity-70" />
+      <span className="flex-1 font-medium">{label}</span>
+      {hint && <span className="text-[11px] text-muted-foreground">{hint}</span>}
+    </div>
+  );
+  if (href && external) return <a href={href} target="_blank" rel="noopener noreferrer" onClick={onClick}>{body}</a>;
+  if (href) return <Link href={href} onClick={onClick}>{body}</Link>;
+  return <button type="button" className="w-full text-right" onClick={onClick}>{body}</button>;
+}
+
+// لوحة «الإعدادات»: التفضيلات (ليست تنقّلًا) + الحساب. على الجوال تضم القائمة كلها أيضًا.
+function SettingsPanel({ open, onOpenChange, navMain, navGroups, location }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  navMain?: NavItem[];
+  navGroups?: NavGroup[];
+  location: string;
+}) {
   const { user, logout, refetch } = useAuth();
-  const isAdmin = useIsAdmin();
   const role = useRole();
-  const canViewMembers = useCanViewMembers();
-  const canViewReports = useCanViewReports();
   const canManageSettings = useCanAccessSettings();
-  const { dark, toggle } = useDarkMode();
-
-  const primaryNavItems = [
-    { href: "/", label: "الرئيسية", icon: LayoutDashboard, show: true },
-    { href: "/tasks", label: "المهام", icon: CheckSquare, show: true },
-    { href: "/members", label: "الأعضاء", icon: Users, show: canViewMembers },
-    { href: "/reports", label: "التقارير", icon: BarChart3, show: canViewReports },
-    { href: "/reminders", label: "التذكيرات", icon: AlarmClock, show: true },
-    { href: "/account", label: "حسابي", icon: User, show: true },
-  ].filter((item) => item.show);
-
-  const adminNavItems = [
-    { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
-    { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
-    { href: "/weekly-schedule", label: "إنشاء الجدول الأسبوعي", icon: CalendarPlus, show: isAdmin },
-    { href: "/publishing-template", label: "قالب النشر", icon: ClipboardList, show: isAdmin },
-    { href: "/settings/telegram", label: "Telegram", icon: Bell, show: canManageSettings },
-    { href: "/settings/general", label: "الإعدادات العامة", icon: Settings, show: canManageSettings },
-    { href: "/youtube-monitor", label: "مراقبة يوتيوب", icon: RefreshCw, show: canManageSettings },
-    { href: "/telegram-monitor", label: "مراقبة تلقرام", icon: Send, show: isAdmin },
-    { href: "/instagram-monitor", label: "مراقبة إنستقرام", icon: Camera, show: isAdmin },
-  ].filter((item) => item.show);
-
-  const renderNavItem = (item: { href: string; label: string; icon: typeof LayoutDashboard }) => {
-    const itemPath = item.href.split("#")[0];
-    const isActive =
-      location === itemPath ||
-      (itemPath !== "/" && location.startsWith(itemPath));
-    return (
-      <Link key={item.href} href={item.href}>
-        <div className={`flex items-center gap-3 px-3 py-2.5 rounded-md cursor-pointer transition-colors ${
-          isActive
-            ? "bg-sidebar-primary text-sidebar-primary-foreground"
-            : "text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-        }`}>
-          <item.icon className="h-5 w-5 shrink-0" />
-          <span className="font-medium">{item.label}</span>
-        </div>
-      </Link>
-    );
-  };
-
+  const isAdmin = useIsAdmin();
+  const { dark, setDarkMode } = useDarkMode();
+  const { showHijri, toggleHijri } = useHijriPreference();
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [switching, setSwitching] = useState(false);
+  const close = () => onOpenChange(false);
   const name = user?.displayName || user?.username || "مستخدم";
-  const initials = name.split(" ").slice(0, 2).map((n: string) => n[0]).join("").toUpperCase();
 
   const handleLogout = async () => {
     await logout();
     window.location.href = "/sign-in";
   };
-
   const handleSwitchAccount = async () => {
-    const nextUserId = user?.role === "admin" ? 2 : 1;
-    const res = await fetch("/api/auth/switch-account", {
-      method: "POST",
-      credentials: "include",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ userId: nextUserId }),
-    });
-    if (res.ok) {
-      await refetch();
-      window.location.href = "/tasks";
+    if (switching) return;
+    setSwitching(true);
+    try {
+      const nextUserId = user?.role === "admin" ? 2 : 1;
+      const res = await fetch("/api/auth/switch-account", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: nextUserId }),
+      });
+      if (res.ok) {
+        await refetch();
+        window.location.href = "/tasks";
+      }
+    } finally {
+      setSwitching(false);
     }
   };
 
   return (
+    <>
+      <Sheet open={open} onOpenChange={onOpenChange}>
+        <SheetContent side="right" className="w-[88vw] max-w-sm p-0 flex flex-col" dir="rtl">
+          <SheetHeader className="pl-5 pr-12 pt-5 pb-3 border-b border-border text-right">
+            <SheetTitle className="flex items-center gap-2 text-base">
+              <Settings className="h-4 w-4 text-sidebar-primary" />
+              الإعدادات
+            </SheetTitle>
+            <div className="flex items-center gap-3 pt-2">
+              <div className="w-10 h-10 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-sm shrink-0">
+                {initialsOf(name)}
+              </div>
+              <div className="min-w-0 text-right">
+                <p className="text-sm font-semibold truncate">{name}</p>
+                <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>{getRoleLabel(role)}</span>
+              </div>
+            </div>
+          </SheetHeader>
+
+          <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
+            {(navMain?.length || navGroups?.length) ? (
+              <section className="space-y-0.5 md:hidden">
+                <p className="px-3 pb-1 text-[11px] font-bold text-muted-foreground">القائمة</p>
+                {navMain?.map((item) => <NavLinkRow key={item.href} item={item} location={location} onNavigate={close} />)}
+                {navGroups?.map((group) => <CollapsibleNavGroup key={group.key} group={group} location={location} onNavigate={close} />)}
+              </section>
+            ) : null}
+
+            <section>
+              <p className="px-3 pb-1 text-[11px] font-bold text-muted-foreground">التفضيلات</p>
+              <label className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-muted cursor-pointer text-sm">
+                {dark ? <Sun className="h-4 w-4 shrink-0 text-amber-500" /> : <Moon className="h-4 w-4 shrink-0 opacity-70" />}
+                <span className="flex-1 font-medium">الوضع الداكن</span>
+                <span dir="ltr" className="flex"><Switch checked={dark} onCheckedChange={setDarkMode} /></span>
+              </label>
+              <label className="flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-muted cursor-pointer text-sm">
+                <CalendarDays className="h-4 w-4 shrink-0 opacity-70" />
+                <span className="flex-1 font-medium">إظهار التاريخ الهجري</span>
+                <span dir="ltr" className="flex"><Switch checked={showHijri} onCheckedChange={() => toggleHijri()} /></span>
+              </label>
+            </section>
+
+            <section>
+              <p className="px-3 pb-1 text-[11px] font-bold text-muted-foreground">الحساب</p>
+              <PanelRow icon={User} label="الملف الشخصي" hint="كلمة المرور والبريد" onClick={() => setProfileOpen(true)} />
+              <PanelRow icon={Bell} label="حسابي وربط Telegram" href="/account" onClick={close} />
+              <PanelRow icon={switching ? Loader2 : RefreshCw} label={user?.role === "admin" ? "تبديل إلى حساب عضو" : "تبديل إلى حساب المدير"} onClick={handleSwitchAccount} />
+            </section>
+
+            <section>
+              <p className="px-3 pb-1 text-[11px] font-bold text-muted-foreground">عام</p>
+              <PanelRow icon={HelpCircle} label="دليل الاستخدام" href="/help" onClick={close} />
+              {canManageSettings && <PanelRow icon={Settings} label="كل إعدادات النظام" hint="صفحة واحدة" href="/settings" onClick={close} />}
+              {isAdmin && <PanelRow icon={Globe} label="صفحة المنصات العامة" hint="↗" href="/achievements" external onClick={close} />}
+            </section>
+          </div>
+
+          <div className="border-t border-border px-3 py-2">
+            <PanelRow icon={LogOut} label="تسجيل الخروج" onClick={handleLogout} danger />
+            <p className="px-3 pt-1 text-[10px] text-muted-foreground">تحديث رقم {APP_VERSION} · {APP_VERSION_DATE}</p>
+          </div>
+        </SheetContent>
+      </Sheet>
+      <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
+    </>
+  );
+}
+
+export function AppLayout({ children }: { children: ReactNode }) {
+  const [location] = useLocation();
+  const { user } = useAuth();
+  const isAdmin = useIsAdmin();
+  const role = useRole();
+  const canViewMembers = useCanViewMembers();
+  const canViewReports = useCanViewReports();
+  const canManageSettings = useCanAccessSettings();
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  // الأساسية: ظاهرة دائمًا. («الرئيسية» كانت تحوّل إلى «المهام» نفسها، فدُمجت فيها.)
+  const mainItems: NavItem[] = [
+    { href: "/tasks", label: "المهام", icon: CheckSquare, show: true },
+    { href: "/members", label: "الأعضاء", icon: Users, show: canViewMembers },
+    { href: "/reports", label: "التقارير", icon: BarChart3, show: canViewReports },
+    { href: "/reminders", label: "التذكيرات", icon: AlarmClock, show: true },
+  ].filter((item) => item.show);
+
+  const groups: NavGroup[] = [
+    {
+      key: "system",
+      label: "إدارة النظام",
+      icon: Settings,
+      items: [
+        { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
+        { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
+        { href: "/weekly-schedule", label: "إنشاء الجدول الأسبوعي", icon: CalendarPlus, show: isAdmin },
+        { href: "/publishing-template", label: "قالب النشر", icon: ClipboardList, show: isAdmin },
+        { href: "/settings/telegram", label: "إشعارات Telegram", icon: Bell, show: canManageSettings },
+        { href: "/settings/general", label: "المستخدمون والصلاحيات", icon: ShieldCheck, show: canManageSettings },
+      ].filter((item) => item.show),
+    },
+    {
+      key: "monitoring",
+      label: "المراقبة والتوثيق التلقائي",
+      icon: Radar,
+      items: [
+        { href: "/youtube-monitor", label: "مراقبة يوتيوب", icon: RefreshCw, show: canManageSettings },
+        { href: "/telegram-monitor", label: "مراقبة تلقرام", icon: Send, show: isAdmin },
+        { href: "/instagram-monitor", label: "مراقبة إنستقرام", icon: Camera, show: isAdmin },
+      ].filter((item) => item.show),
+    },
+  ].filter((group) => group.items.length > 0);
+
+  const name = user?.displayName || user?.username || "مستخدم";
+  const initials = initialsOf(name);
+
+  return (
     <div className="flex h-screen w-full bg-background overflow-hidden text-foreground" dir="rtl">
 
-      {/* ── Desktop Sidebar ─────────────────────────────────── */}
+      {/* ── القائمة الجانبية (سطح المكتب) ───────────────────── */}
       <aside className="w-64 border-l border-border bg-sidebar shrink-0 flex-col hidden md:flex">
-        <div className="h-16 flex items-center justify-between border-b border-sidebar-border px-4">
-          <div className="flex items-center gap-2">
-            <img
-              src={`${import.meta.env.BASE_URL}logo.svg`}
-              alt="تلاوة الحرمين"
-              className="w-8 h-8 rounded-lg"
-            />
-            <h1 className="text-sidebar-primary-foreground font-bold text-base tracking-tight">
-              تلاوة الحرمين
-            </h1>
+        <div className="h-16 flex items-center justify-between border-b border-sidebar-border px-4 shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <img src={`${import.meta.env.BASE_URL}logo.svg`} alt="تلاوة الحرمين" className="w-8 h-8 rounded-lg" />
+            <h1 className="text-sidebar-primary-foreground font-bold text-base tracking-tight truncate">تلاوة الحرمين</h1>
           </div>
           <NotificationsPanel />
         </div>
 
-        <nav className="flex-1 overflow-y-auto py-4 px-3 space-y-1">
-          {primaryNavItems.map(renderNavItem)}
-          {adminNavItems.length > 0 && (
-            <div className="pt-3 mt-3 border-t border-sidebar-border/70">
-              <p className="px-3 pb-2 text-[11px] font-bold text-sidebar-foreground/50">إدارة النظام</p>
-              <div className="space-y-1">
-                {adminNavItems.map(renderNavItem)}
-              </div>
-            </div>
-          )}
+        <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">
+          {mainItems.map((item) => <NavLinkRow key={item.href} item={item} location={location} />)}
+          {groups.length > 0 && <div className="pt-1 mt-2 border-t border-sidebar-border/70" />}
+          {groups.map((group) => <CollapsibleNavGroup key={group.key} group={group} location={location} />)}
         </nav>
 
-        <UserCard />
-
-        <div className="px-4 py-2 border-t border-sidebar-border/70 text-center">
-          <span className="text-[10px] font-medium text-sidebar-foreground/45">
+        {/* أسفل ثابت: الإعدادات + الملف الشخصي — لا يحتاج تمريرًا أبدًا. */}
+        <div className="border-t border-sidebar-border shrink-0 p-3 space-y-1">
+          <button
+            type="button"
+            onClick={() => setPanelOpen(true)}
+            className="w-full flex items-center gap-3 px-3 py-2 rounded-md text-sm text-sidebar-foreground hover:bg-sidebar-accent hover:text-sidebar-accent-foreground transition-colors"
+          >
+            <Settings className="h-[18px] w-[18px] shrink-0" />
+            <span className="font-medium">الإعدادات</span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPanelOpen(true)}
+            className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-sidebar-accent/30 transition-colors text-sidebar-foreground"
+            title="الحساب والتفضيلات"
+          >
+            <div className="w-9 h-9 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-sm shrink-0">
+              {initials}
+            </div>
+            <div className="flex-1 text-right min-w-0">
+              <p className="text-sm font-semibold truncate leading-tight">{name}</p>
+              <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>{getRoleLabel(role)}</span>
+            </div>
+          </button>
+          <p className="text-center text-[10px] font-medium text-sidebar-foreground/45 pt-1">
             تحديث رقم {APP_VERSION} · {APP_VERSION_DATE}
-          </span>
+          </p>
         </div>
       </aside>
 
-      {/* ── Main Content ────────────────────────────────────── */}
+      {/* ── المحتوى ─────────────────────────────────────────── */}
       <main className="flex-1 flex flex-col h-full overflow-hidden min-w-0">
 
-        {/* Mobile top header */}
+        {/* رأس الجوال */}
         <header className="h-14 border-b border-border bg-sidebar shrink-0 flex items-center justify-between px-4 md:hidden">
-          <div className="flex items-center gap-2">
-            <img
-              src={`${import.meta.env.BASE_URL}logo.svg`}
-              alt="تلاوة الحرمين"
-              className="w-7 h-7 rounded-lg"
-            />
-            <h1 className="text-sidebar-foreground font-bold text-base">تلاوة الحرمين</h1>
+          <div className="flex items-center gap-2 min-w-0">
+            <img src={`${import.meta.env.BASE_URL}logo.svg`} alt="تلاوة الحرمين" className="w-7 h-7 rounded-lg" />
+            <h1 className="text-sidebar-foreground font-bold text-base truncate">تلاوة الحرمين</h1>
           </div>
           <div className="flex items-center gap-2">
             <NotificationsPanel />
             <button
-              onClick={toggle}
-              className="w-8 h-8 flex items-center justify-center rounded-md text-sidebar-foreground hover:bg-sidebar-accent/30 transition-colors"
+              type="button"
+              onClick={() => setPanelOpen(true)}
+              className="w-8 h-8 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-xs"
+              aria-label="الإعدادات والحساب"
             >
-              {dark ? <Sun className="h-4 w-4 text-amber-400" /> : <Moon className="h-4 w-4" />}
+              {initials}
             </button>
-            {/* User avatar + logout dropdown */}
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <button className="w-8 h-8 rounded-full bg-sidebar-primary/20 border border-sidebar-primary/30 flex items-center justify-center text-sidebar-primary font-bold text-xs">
-                  {initials}
-                </button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" side="bottom" className="w-56 mt-1">
-                <div className="px-3 py-2 border-b border-border">
-                  <p className="text-sm font-semibold truncate">{name}</p>
-                  <span className={`inline-block text-[10px] font-bold px-1.5 py-0.5 rounded-full mt-0.5 ${getRoleBadgeClass(role)}`}>
-                    {getRoleLabel(role)}
-                  </span>
-                </div>
-                <Link href="/help">
-                  <DropdownMenuItem className="cursor-pointer flex items-center gap-2 mt-1">
-                    <HelpCircle className="h-4 w-4" />
-                    دليل الاستخدام
-                  </DropdownMenuItem>
-                </Link>
-                <Link href="/account">
-                  <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
-                    <Bell className="h-4 w-4" />
-                    ربط Telegram
-                  </DropdownMenuItem>
-                </Link>
-                {adminNavItems.length > 0 && (
-                  <>
-                    <div className="my-1 border-t border-border" />
-                    <div className="px-3 py-1 text-[11px] font-bold text-muted-foreground">
-                      إدارة النظام
-                    </div>
-                    {adminNavItems.map((item) => {
-                      const Icon = item.icon;
-                      return (
-                        <Link key={`mobile-admin-${item.href}`} href={item.href}>
-                          <DropdownMenuItem className="cursor-pointer flex items-center gap-2">
-                            <Icon className="h-4 w-4" />
-                            {item.label}
-                          </DropdownMenuItem>
-                        </Link>
-                      );
-                    })}
-                  </>
-                )}
-                <DropdownMenuItem className="cursor-pointer flex items-center gap-2" onClick={handleSwitchAccount}>
-                  <RefreshCw className="h-4 w-4" />
-                  {user?.role === "admin" ? "تبديل إلى عضو" : "تبديل إلى المدير"}
-                </DropdownMenuItem>
-                <DropdownMenuItem
-                  className="cursor-pointer flex items-center gap-2 text-red-600 focus:text-red-700 focus:bg-red-50"
-                  onClick={handleLogout}
-                >
-                  <LogOut className="h-4 w-4" />
-                  تسجيل الخروج
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>
           </div>
         </header>
 
-        {/* Page content */}
         <div className="flex-1 overflow-y-auto p-4 md:p-8 pb-20 md:pb-8">
           <div className="max-w-6xl mx-auto">{children}</div>
         </div>
 
-        {/* ── Mobile Bottom Navigation ─────────────────────── */}
+        {/* شريط الجوال السفلي: الأساسية + «المزيد» (القائمة كلها والإعدادات) */}
         <nav className="md:hidden fixed bottom-0 right-0 left-0 bg-sidebar border-t border-sidebar-border z-50 safe-area-bottom">
           <div className="flex items-stretch justify-around">
-            {primaryNavItems.slice(0, 5).map((item) => {
-              const isActive =
-                location === item.href ||
-                (item.href !== "/" && location.startsWith(item.href));
-              return (
-                <Link key={item.href} href={item.href} className="flex-1">
-                  <div className={`flex flex-col items-center justify-center gap-1 py-2 px-1 transition-colors ${
-                    isActive
-                      ? "text-sidebar-primary"
-                      : "text-sidebar-foreground/60 hover:text-sidebar-foreground"
-                  }`}>
-                    <div className={`p-1.5 rounded-lg transition-colors ${isActive ? "bg-sidebar-primary/15" : ""}`}>
-                      <item.icon className="h-5 w-5" />
-                    </div>
-                    <span className={`text-[10px] font-semibold leading-none ${isActive ? "text-sidebar-primary" : ""}`}>
-                      {item.label}
-                    </span>
+            {[...mainItems.slice(0, 4).map((item) => ({ ...item, onClick: undefined as undefined | (() => void) })), { href: "#more", label: "المزيد", icon: Menu, onClick: () => setPanelOpen(true) }].map((item) => {
+              const active = item.onClick ? panelOpen : isActivePath(location, item.href);
+              const inner = (
+                <div className={`flex flex-col items-center justify-center gap-1 py-2 px-1 transition-colors ${active ? "text-sidebar-primary" : "text-sidebar-foreground/60 hover:text-sidebar-foreground"}`}>
+                  <div className={`p-1.5 rounded-lg transition-colors ${active ? "bg-sidebar-primary/15" : ""}`}>
+                    <item.icon className="h-5 w-5" />
                   </div>
-                </Link>
+                  <span className={`text-[10px] font-semibold leading-none ${active ? "text-sidebar-primary" : ""}`}>{item.label}</span>
+                </div>
               );
+              return item.onClick
+                ? <button key={item.href} type="button" className="flex-1" onClick={item.onClick}>{inner}</button>
+                : <Link key={item.href} href={item.href} className="flex-1">{inner}</Link>;
             })}
           </div>
         </nav>
-
       </main>
+
+      <SettingsPanel open={panelOpen} onOpenChange={setPanelOpen} navMain={mainItems} navGroups={groups} location={location} />
     </div>
   );
 }

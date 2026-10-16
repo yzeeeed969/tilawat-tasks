@@ -244,5 +244,5 @@ app.use((req, res, next) => {
 
 app.use("/api", router);
 
-// Keep Railway rebuilding the API service when bundled frontend assets change.
+// Keep Railway rebuilding the API service when bundled frontend assets change. (v34: sidebar)
 export default app;
