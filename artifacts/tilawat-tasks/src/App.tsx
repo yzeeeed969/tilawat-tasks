@@ -6,7 +6,6 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
 
-import Dashboard from "@/pages/dashboard";
 import Tasks from "@/pages/tasks";
 import Members from "@/pages/members";
 import Reports from "@/pages/reports";

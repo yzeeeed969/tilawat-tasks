@@ -7,7 +7,6 @@ import {
   getGetPlatformStatsQueryKey,
 } from "@workspace/api-client-react";
 import type { TaskWithDetails } from "@workspace/api-client-react";
-import { useQuery } from "@tanstack/react-query";
 import {
   startOfWeek,
   endOfWeek,
@@ -23,12 +22,10 @@ import {
   addMonths,
   isSameWeek,
   isSameMonth,
-  isSameDay,
 } from "date-fns";
 import { ar } from "date-fns/locale";
 import { useState, useMemo, useCallback } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Progress } from "@/components/ui/progress";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -44,18 +41,13 @@ import {
   ChevronLeft,
   CheckCircle2,
   AlertCircle,
-  ListTodo,
   BarChart3,
-  Share2,
   Copy,
   Check,
-  ChevronDown,
-  ChevronUp,
   CalendarDays,
   TrendingUp,
   Users,
   Printer,
-  Mic2,
   Eye,
   EyeOff,
   Filter,
@@ -63,8 +55,9 @@ import {
   FileSpreadsheet,
   FileText,
   ExternalLink,
-  History,
   Link2Off,
+  Layers,
+  Package,
 } from "lucide-react";
 import { PlatformIcon, getPlatformEmoji } from "@/lib/platform-icon";
 import { cn } from "@/lib/utils";
@@ -85,50 +78,6 @@ type Period = "today" | "week" | "month" | "all";
 type ProofPeriod = "today" | "week" | "month" | "custom";
 type ProofCoverage = "with_proof" | "missing_proof" | "all_tasks";
 type ProofTaskStatus = "all" | "completed" | "incomplete";
-
-type ActivityLogEntry = {
-  id: number;
-  userName: string | null;
-  action: string;
-  entityType: string | null;
-  entityId: number | null;
-  entityName: string | null;
-  meta?: Record<string, unknown> | null;
-  createdAt: string;
-};
-
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  color,
-  subtitle,
-}: {
-  label: string;
-  value: number | string;
-  icon: React.ElementType;
-  color: string;
-  subtitle?: string;
-}) {
-  return (
-    <Card className="border-border/60 shadow-sm">
-      <CardContent className="pt-6">
-        <div className="flex items-start justify-between">
-          <div>
-            <p className="text-sm text-muted-foreground font-medium">{label}</p>
-            <p className={cn("text-3xl font-bold mt-1", color)}>{value}</p>
-            {subtitle && (
-              <p className="text-xs text-muted-foreground mt-1">{subtitle}</p>
-            )}
-          </div>
-          <div className="p-2 rounded-lg bg-muted/50">
-            <Icon className={cn("h-5 w-5", color)} />
-          </div>
-        </div>
-      </CardContent>
-    </Card>
-  );
-}
 
 function taskAssignees(task: TaskWithDetails) {
   return task.members && task.members.length > 0 ? task.members : [task.member];
@@ -218,33 +167,6 @@ function formatDateForExport(date: string, hijriDate: string, showHijri: boolean
   return `${date}\n(${hijriDate})`;
 }
 
-async function fetchActivityLogs(): Promise<ActivityLogEntry[]> {
-  const response = await fetch("/api/activity-log?limit=500", { credentials: "include" });
-  if (!response.ok) return [];
-  return response.json();
-}
-
-function activityActionLabel(action: string) {
-  if (action === "task_quick_reciter_changed") return "تغيير قارئ/مسؤول";
-  if (action === "task_reciter_substituted") return "نيابة (تغيير القارئ)";
-  if (action === "task_substitution_deleted") return "حذف بسبب النيابة";
-  if (action === "task_substitution_created") return "إنشاء بسبب النيابة";
-  if (action === "task_updated") return "تعديل مهمة";
-  if (action === "task_proof_created") return "إضافة شاهد";
-  if (action === "task_proof_updated") return "تعديل شاهد";
-  return action;
-}
-
-function metaText(meta: Record<string, unknown> | null | undefined, key: string) {
-  const value = meta?.[key];
-  return typeof value === "string" && value.trim() ? value : null;
-}
-
-function metaNumber(meta: Record<string, unknown> | null | undefined, key: string) {
-  const value = meta?.[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
 function CompletionTimingBadge({ task }: { task: TaskWithDetails }) {
   if (isCompletedLate(task)) {
     return <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50">مكتملة متأخرة</Badge>;
@@ -272,16 +194,26 @@ function DateWithHijri({
   );
 }
 
+function CountCell({ value, tone }: { value: number; tone: "green" | "emerald" | "orange" | "red" | "primary" }) {
+  if (value === 0 && (tone === "orange" || tone === "red")) return <span className="text-muted-foreground text-sm">—</span>;
+  const color = {
+    green: "text-green-600",
+    emerald: "text-emerald-600",
+    orange: "text-orange-600",
+    red: "text-red-600",
+    primary: "text-sidebar-primary",
+  }[tone];
+  return <span className={cn("font-bold", color)}>{value}</span>;
+}
+
 export default function Reports() {
-  const [period, setPeriod] = useState<Period>("week");
+  const [period, setPeriod] = useState<Period>("month");
   const [weekOffset, setWeekOffset] = useState(0);
   const [monthOffset, setMonthOffset] = useState(0);
-  const [expandedMember, setExpandedMember] = useState<number | null>(null);
   const [copied, setCopied] = useState(false);
-  const [copiedExecutive, setCopiedExecutive] = useState(false);
   const [hideMemberNames, setHideMemberNames] = useState(false);
   const [selectedReportMemberIds, setSelectedReportMemberIds] = useState<number[]>([]);
-  const [proofPeriod, setProofPeriod] = useState<ProofPeriod>("week");
+  const [proofPeriod, setProofPeriod] = useState<ProofPeriod>("month");
   const [proofStartDate, setProofStartDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [proofEndDate, setProofEndDate] = useState(format(new Date(), "yyyy-MM-dd"));
   const [showProofMemberNames, setShowProofMemberNames] = useState(false);
@@ -303,11 +235,6 @@ export default function Reports() {
   const { data: platformStats } = useGetPlatformStats({
     query: { queryKey: getGetPlatformStatsQueryKey() },
   });
-  const { data: activityLogs } = useQuery({
-    queryKey: ["activity-log", "reports"],
-    queryFn: fetchActivityLogs,
-    staleTime: 60_000,
-  });
   const now = new Date();
   const today = useMemo(() => startOfDay(now), []);
   const reportMemberOptions = useMemo(() => memberStats?.map((stat) => stat.member) ?? [], [memberStats]);
@@ -328,6 +255,23 @@ export default function Reports() {
     );
   }, []);
 
+  // ── إخفاء الأسماء: تسمية ثابتة لكل عضو («عضو 1، عضو 2…») تُستخدم في كل أقسام الصفحة والتصدير والنسخ ──
+  const anonymousMemberLabels = useMemo(() => {
+    const labels = new Map<number, string>();
+    reportMemberOptions.forEach((member, index) => labels.set(member.id, `عضو ${index + 1}`));
+    (allTasks ?? []).forEach((task) => {
+      taskAssignees(task).forEach((member) => {
+        if (member && !labels.has(member.id)) labels.set(member.id, `عضو ${labels.size + 1}`);
+      });
+    });
+    return labels;
+  }, [reportMemberOptions, allTasks]);
+
+  const getDisplayMemberName = useCallback((member: { id: number; name: string }) => {
+    return hideMemberNames ? anonymousMemberLabels.get(member.id) ?? "عضو" : member.name;
+  }, [anonymousMemberLabels, hideMemberNames]);
+
+  // ── الفترة العامة (أعلى الصفحة) ────────────────────────────────────────────
   const referenceWeek = useMemo(() => {
     if (weekOffset === 0) return now;
     if (weekOffset > 0) return addWeeks(now, weekOffset);
@@ -357,214 +301,89 @@ export default function Reports() {
     return null;
   }, [period, dayStart, dayEnd, weekStart, weekEnd, monthStart, monthEnd]);
 
-  const periodStats = useMemo(() => {
-    if (!allTasks) return null;
-    const inPeriod = (date: string | null | undefined) =>
-      date
-        ? periodInterval
-          ? isWithinInterval(new Date(date), periodInterval)
-          : true
-        : false;
+  const inPeriod = useCallback((date: string | null | undefined) =>
+    date ? (periodInterval ? isWithinInterval(new Date(date), periodInterval) : true) : false,
+  [periodInterval]);
 
-    const completed = reportTasks.filter(
-      (t) => t.status === "completed" && (period === "all" ? true : inPeriod(t.completedAt))
-    );
-    const created = reportTasks.filter(
-      (t) => period === "all" ? true : isWithinInterval(new Date(t.createdAt), periodInterval!)
-    );
-    const overdue = reportTasks.filter(
-      (t) => isIncompleteOverdue(t, today) && (period === "all" ? true : inPeriod(t.dueDate))
-    );
-    const completedOnTime = completed.filter(isCompletedOnTime);
-    const completedLate = completed.filter(isCompletedLate);
-
-    return { completed, completedOnTime, completedLate, created, overdue };
-  }, [allTasks, reportTasks, period, periodInterval, today]);
-
-  const memberRows = useMemo(() => {
-    if (!memberStats || !allTasks) return [];
-    return memberStats
-      .filter((stat) => selectedReportMemberIdSet.size === 0 || selectedReportMemberIdSet.has(stat.member.id))
-      .map((stat) => {
-        const inPeriod = (date: string | null | undefined) =>
-          date
-            ? periodInterval
-              ? isWithinInterval(new Date(date), periodInterval)
-              : true
-            : false;
-
-        const completedTasks = reportTasks.filter(
-          (t) => isAssignedToMember(t, stat.member.id) &&
-            t.status === "completed" &&
-            (period === "all" ? true : inPeriod(t.completedAt))
-        );
-        const completedOnTimeTasks = completedTasks.filter(isCompletedOnTime);
-        const completedLateTasks = completedTasks.filter(isCompletedLate);
-        const overdueTasks = reportTasks.filter(
-          (t) => isAssignedToMember(t, stat.member.id) &&
-            isIncompleteOverdue(t, today) &&
-            (period === "all" ? true : inPeriod(t.dueDate))
-        );
-        const createdTasks = reportTasks.filter(
-          (t) => isAssignedToMember(t, stat.member.id) &&
-            (period === "all"
-              ? true
-              : isWithinInterval(new Date(t.createdAt), periodInterval!))
-        );
-
-        return {
-          ...stat,
-          periodCompleted: completedTasks.length,
-          periodCompletedOnTime: completedOnTimeTasks.length,
-          periodCompletedLate: completedLateTasks.length,
-          periodOverdue: overdueTasks.length,
-          periodCreated: createdTasks.length,
-          completionRate: createdTasks.length > 0 ? (completedTasks.length / createdTasks.length) * 100 : 0,
-          completedTasksList: completedTasks,
-        };
-      })
-      .sort((a, b) => b.periodCompleted - a.periodCompleted);
-  }, [memberStats, allTasks, reportTasks, selectedReportMemberIdSet, period, periodInterval, today]);
-
-  const anonymousMemberLabels = useMemo(() => {
-    const labels = new Map<number, string>();
-    memberRows.forEach((row, index) => labels.set(row.member.id, `عضو ${index + 1}`));
-    return labels;
-  }, [memberRows]);
-
-  const getDisplayMemberName = useCallback((member: { id: number; name: string }) => {
-    return hideMemberNames ? anonymousMemberLabels.get(member.id) ?? "عضو" : member.name;
-  }, [anonymousMemberLabels, hideMemberNames]);
-
-  const platformRows = useMemo(() => {
-    if (!platformStats || !allTasks) return [];
-    return platformStats.map((stat) => {
-      const inPeriod = (date: string | null | undefined) =>
-        date
-          ? periodInterval
-            ? isWithinInterval(new Date(date), periodInterval)
-            : true
-          : false;
-
-      const completed = reportTasks.filter(
-        (t) => t.platform.id === stat.platform.id &&
-          t.status === "completed" &&
-          (period === "all" ? true : inPeriod(t.completedAt))
-      );
-      const overdue = reportTasks.filter(
-        (t) => t.platform.id === stat.platform.id &&
-          isIncompleteOverdue(t, today) &&
-          (period === "all" ? true : inPeriod(t.dueDate))
-      ).length;
-      const created = reportTasks.filter(
-        (t) => t.platform.id === stat.platform.id &&
-          (period === "all"
-            ? true
-            : isWithinInterval(new Date(t.createdAt), periodInterval!))
-      ).length;
-
-      return {
-        ...stat,
-        periodCompleted: completed.length,
-        periodCompletedOnTime: completed.filter(isCompletedOnTime).length,
-        periodCompletedLate: completed.filter(isCompletedLate).length,
-        periodOverdue: overdue,
-        periodCreated: created,
-        completionRate: created > 0 ? (completed.length / created) * 100 : 0,
-      };
-    });
-  }, [platformStats, allTasks, reportTasks, period, periodInterval, today]);
-
-  const executivePeriodLabel = useMemo(() => {
+  const periodLabel = useMemo(() => {
     if (period === "today") return format(now, "EEEE، d MMMM yyyy", { locale: ar });
     if (period === "week") return `${format(weekStart, "d MMM", { locale: ar })} — ${format(weekEnd, "d MMM yyyy", { locale: ar })}`;
     if (period === "month") return format(referenceMonth, "MMMM yyyy", { locale: ar });
     return "إجمالي كل الوقت";
-  }, [period, now, weekStart, weekEnd, referenceMonth]);
+  }, [period, weekStart, weekEnd, referenceMonth]);
 
-  const executiveHijriLabel = useMemo(() => {
+  const periodHijriLabel = useMemo(() => {
     if (!showHijri) return "";
     if (period === "today") return formatHijriDate(now);
     if (period === "week") return formatHijriRange(weekStart, weekEnd, showHijri);
     if (period === "month") return formatHijriDate(referenceMonth, { month: "long", year: "numeric" });
     return "";
-  }, [period, now, weekStart, weekEnd, referenceMonth, showHijri]);
+  }, [period, weekStart, weekEnd, referenceMonth, showHijri]);
 
-  const executiveSummary = useMemo(() => {
-    const completed = periodStats?.completed ?? [];
-    const platformMap = new Map<number, {
-      platform: TaskWithDetails["platform"];
-      publications: number;
-      completedTasks: number;
-    }>();
+  // ── ملخّص الإنجاز ──────────────────────────────────────────────────────────
+  const periodStats = useMemo(() => {
+    const completed = reportTasks
+      .filter((t) => t.status === "completed" && (period === "all" ? true : inPeriod(t.completedAt)))
+      .sort((a, b) => new Date(b.completedAt ?? 0).getTime() - new Date(a.completedAt ?? 0).getTime());
+    const overdue = reportTasks.filter(
+      (t) => isIncompleteOverdue(t, today) && (period === "all" ? true : inPeriod(t.dueDate))
+    );
+    const totalPublications = completed.reduce((sum, task) => sum + taskPublicationCount(task), 0);
+    const activePlatformIds = new Set(completed.map((task) => task.platform.id));
+    return { completed, overdue, totalPublications, activePlatforms: activePlatformIds.size };
+  }, [reportTasks, period, inPeriod, today]);
 
-    for (const task of completed) {
-      const current = platformMap.get(task.platform.id) ?? {
-        platform: task.platform,
-        publications: 0,
-        completedTasks: 0,
-      };
-      current.publications += taskPublicationCount(task);
-      current.completedTasks += 1;
-      platformMap.set(task.platform.id, current);
-    }
-
-    const platformSummaries = [...platformMap.values()]
-      .sort((a, b) => b.publications - a.publications);
-
-    return {
-      totalPublications: completed.reduce((sum, task) => sum + taskPublicationCount(task), 0),
-      completedTasks: completed.length,
-      platformSummaries,
-    };
-  }, [periodStats]);
-
-  const reciterRows = useMemo(() => {
-    if (!allTasks) return [];
-    const inPeriod = (date: string | null | undefined) =>
-      date
-        ? periodInterval
-          ? isWithinInterval(new Date(date), periodInterval)
-          : true
-        : false;
-
-    const reciterMap = new Map<number, { reciter: NonNullable<TaskWithDetails["reciter"]>; tasks: TaskWithDetails[] }>();
-    for (const task of reportTasks) {
-      if (!task.reciter) continue;
-      if (!reciterMap.has(task.reciter.id)) {
-        reciterMap.set(task.reciter.id, { reciter: task.reciter, tasks: [] });
-      }
-      reciterMap.get(task.reciter.id)!.tasks.push(task);
-    }
-
-    return [...reciterMap.values()]
-      .map(({ reciter, tasks }) => {
-        const periodTasks = tasks.filter((task) =>
-          period === "all" ? true : task.dueDate ? inPeriod(task.dueDate) : inPeriod(task.createdAt)
-        );
-        const completed = tasks.filter(
-          (task) => task.status === "completed" && (period === "all" ? true : inPeriod(task.completedAt))
-        );
-        const overdue = tasks.filter(
-          (task) => isIncompleteOverdue(task, today) && (period === "all" ? true : inPeriod(task.dueDate))
-        );
-        const totalTasks = period === "all" ? tasks.length : periodTasks.length;
-        const completionRate = totalTasks > 0 ? (completed.length / totalTasks) * 100 : 0;
-
+  // ── إنجاز المنصّات (أعداد فقط، وتُخفى المنصة إن كانت كل أرقامها صفرًا) ──────────────
+  const platformRows = useMemo(() => {
+    if (!platformStats) return [];
+    return platformStats
+      .map((stat) => {
+        const mine = reportTasks.filter((t) => t.platform.id === stat.platform.id);
+        const completed = mine.filter((t) => t.status === "completed" && (period === "all" ? true : inPeriod(t.completedAt)));
         return {
-          reciter,
-          totalTasks,
-          completedTasks: completed.length,
-          completedOnTimeTasks: completed.filter(isCompletedOnTime).length,
-          completedLateTasks: completed.filter(isCompletedLate).length,
-          pendingTasks: periodTasks.filter((task) => task.status === "pending").length,
-          overdueTasksCount: overdue.length,
-          completionRate,
+          platform: stat.platform,
+          completed: completed.length,
+          publications: completed.reduce((sum, task) => sum + taskPublicationCount(task), 0),
+          onTime: completed.filter(isCompletedOnTime).length,
+          late: completed.filter(isCompletedLate).length,
+          overdue: mine.filter((t) => isIncompleteOverdue(t, today) && (period === "all" ? true : inPeriod(t.dueDate))).length,
         };
       })
-      .filter((row) => row.totalTasks > 0 || row.completedTasks > 0 || row.overdueTasksCount > 0)
-      .sort((a, b) => b.completedTasks - a.completedTasks);
-  }, [allTasks, reportTasks, period, periodInterval, today]);
+      .filter((row) => row.completed > 0 || row.overdue > 0)
+      .sort((a, b) => b.publications - a.publications || b.completed - a.completed);
+  }, [platformStats, reportTasks, period, inPeriod, today]);
+
+  // ── أداء الأعضاء (أعداد فقط) ─────────────────────────────────────────────────
+  const memberRows = useMemo(() => {
+    if (!memberStats) return [];
+    return memberStats
+      .filter((stat) => selectedReportMemberIdSet.size === 0 || selectedReportMemberIdSet.has(stat.member.id))
+      .map((stat) => {
+        const mine = reportTasks.filter((t) => isAssignedToMember(t, stat.member.id));
+        const completed = mine.filter((t) => t.status === "completed" && (period === "all" ? true : inPeriod(t.completedAt)));
+        return {
+          member: stat.member,
+          completed: completed.length,
+          onTime: completed.filter(isCompletedOnTime).length,
+          late: completed.filter(isCompletedLate).length,
+          created: mine.filter((t) => (period === "all" ? true : inPeriod(t.createdAt))).length,
+          overdue: mine.filter((t) => isIncompleteOverdue(t, today) && (period === "all" ? true : inPeriod(t.dueDate))).length,
+        };
+      })
+      .sort((a, b) => b.completed - a.completed);
+  }, [memberStats, reportTasks, selectedReportMemberIdSet, period, inPeriod, today]);
+
+  // ── تصدير الشواهد: فترة مستقلة تمامًا عن أسهم التنقّل العلوية (تُحسب دائمًا من تاريخ اليوم) ──
+  const proofInterval = useMemo(() => {
+    const current = new Date();
+    if (proofPeriod === "today") return { start: startOfDay(current), end: endOfDay(current) };
+    if (proofPeriod === "week") return { start: startOfWeek(current, WEEK_OPTS), end: endOfWeek(current, WEEK_OPTS) };
+    if (proofPeriod === "month") return { start: startOfMonth(current), end: endOfMonth(current) };
+    const start = parseDateInput(proofStartDate, "start");
+    const end = parseDateInput(proofEndDate, "end");
+    if (!start || !end || start.getTime() > end.getTime()) return null;
+    return { start, end };
+  }, [proofPeriod, proofStartDate, proofEndDate]);
 
   const proofPlatformOptions = useMemo(() => {
     const map = new Map<number, string>();
@@ -583,22 +402,14 @@ export default function Reports() {
   }, [reportTasks]);
 
   const proofMemberOptions = useMemo(() => {
-    const map = new Map<number, string>();
+    const map = new Map<number, { id: number; name: string }>();
     reportTasks.forEach((task) => {
-      taskAssignees(task).forEach((member) => map.set(member.id, member.name));
+      taskAssignees(task).forEach((member) => map.set(member.id, member));
     });
-    return [...map.entries()].map(([id, name]) => ({ id, name })).sort((a, b) => a.name.localeCompare(b.name, "ar"));
-  }, [reportTasks]);
-
-  const proofInterval = useMemo(() => {
-    if (proofPeriod === "today") return { start: dayStart, end: dayEnd };
-    if (proofPeriod === "week") return { start: weekStart, end: weekEnd };
-    if (proofPeriod === "month") return { start: monthStart, end: monthEnd };
-    const start = parseDateInput(proofStartDate, "start");
-    const end = parseDateInput(proofEndDate, "end");
-    if (!start || !end || start.getTime() > end.getTime()) return null;
-    return { start, end };
-  }, [proofPeriod, dayStart, dayEnd, weekStart, weekEnd, monthStart, monthEnd, proofStartDate, proofEndDate]);
+    return [...map.values()]
+      .map((member) => ({ id: member.id, name: getDisplayMemberName(member) }))
+      .sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  }, [reportTasks, getDisplayMemberName]);
 
   const proofRows = useMemo(() => {
     if (!proofInterval) return [];
@@ -629,7 +440,7 @@ export default function Reports() {
           reciter: task.reciter?.name ?? "—",
           status: statusLabel(task.status),
           hasProof: Boolean(proofUrl),
-          members: taskAssignees(task).map((member) => member.name).join("، "),
+          members: taskAssignees(task).map(getDisplayMemberName).join("، "),
         }));
       })
       .sort((a, b) => a.taskDate.localeCompare(b.taskDate));
@@ -641,6 +452,7 @@ export default function Reports() {
     proofReciterFilter,
     proofMemberFilter,
     proofStatusFilter,
+    getDisplayMemberName,
   ]);
 
   const proofExportRows = useMemo(() => {
@@ -666,7 +478,7 @@ export default function Reports() {
       proofExportRows.headers.map(escapeCsvCell).join(","),
       ...proofExportRows.rows.map((row) => row.map(escapeCsvCell).join(",")),
     ].join("\n");
-    downloadTextFile(`\ufeff${csv}`, `tilawat-proofs-${format(new Date(), "yyyy-MM-dd")}.csv`, "text/csv;charset=utf-8");
+    downloadTextFile(`﻿${csv}`, `tilawat-proofs-${format(new Date(), "yyyy-MM-dd")}.csv`, "text/csv;charset=utf-8");
   }, [proofExportRows]);
 
   const handleProofExcelExport = useCallback(() => {
@@ -678,131 +490,44 @@ export default function Reports() {
     downloadTextFile(html, `tilawat-proofs-${format(new Date(), "yyyy-MM-dd")}.xls`, "application/vnd.ms-excel;charset=utf-8");
   }, [proofExportRows]);
 
-  const taskMap = useMemo(() => {
-    const map = new Map<number, TaskWithDetails>();
-    (allTasks ?? []).forEach((task) => map.set(task.id, task));
-    return map;
-  }, [allTasks]);
-
-  const taskChangeRows = useMemo(() => {
-    const taskActions = new Set([
-      "task_quick_reciter_changed",
-      "task_reciter_substituted",
-      "task_substitution_deleted",
-      "task_substitution_created",
-      "task_updated",
-      "task_proof_created",
-      "task_proof_updated",
-    ]);
-    return (activityLogs ?? [])
-      .filter((log) => log.entityType === "task" && taskActions.has(log.action) && log.entityId)
-      .filter((log) => period === "all" ? true : periodInterval ? isWithinInterval(new Date(log.createdAt), periodInterval) : true)
-      .filter((log) => {
-        if (selectedReportMemberIdSet.size === 0) return true;
-        const meta = log.meta ?? {};
-        const toMemberId = metaNumber(meta, "toMemberId");
-        const fromMemberIds = Array.isArray(meta.fromMemberIds) ? meta.fromMemberIds.filter((id): id is number => typeof id === "number") : [];
-        const task = log.entityId ? taskMap.get(log.entityId) : null;
-        return (
-          (toMemberId !== null && selectedReportMemberIdSet.has(toMemberId)) ||
-          fromMemberIds.some((id) => selectedReportMemberIdSet.has(id)) ||
-          Boolean(task && taskAssignees(task).some((member) => selectedReportMemberIdSet.has(member.id)))
-        );
-      })
-      .slice(0, 40)
-      .map((log) => {
-        const task = log.entityId ? taskMap.get(log.entityId) : null;
-        const logDate = new Date(log.createdAt);
-        let result = "غير معروف";
-        if (task?.status === "completed") {
-          result = task.completedAt && new Date(task.completedAt).getTime() >= logDate.getTime()
-            ? "أُنجزت بعد التعديل"
-            : "كانت مكتملة قبل التعديل";
-        } else if (task && isIncompleteOverdue(task, today)) {
-          result = "غير مكتملة ومتأخرة";
-        } else if (task) {
-          result = "بانتظار الإنجاز";
-        }
-
-        return {
-          ...log,
-          task,
-          result,
-          fromReciterName: metaText(log.meta, "fromReciterName"),
-          toReciterName: metaText(log.meta, "toReciterName"),
-          fromMemberNames: Array.isArray(log.meta?.fromMemberNames) ? log.meta.fromMemberNames.filter((name): name is string => typeof name === "string") : [],
-          toMemberName: metaText(log.meta, "toMemberName"),
-        };
-      });
-  }, [activityLogs, period, periodInterval, selectedReportMemberIdSet, taskMap, today]);
-
-  // WhatsApp export (weekly mode)
-  const buildWhatsAppText = useCallback(() => {
-    if (!periodStats || !memberRows || !platformRows) return "";
-
-    const periodLabel =
-      period === "today"
-        ? format(now, "EEEE، d MMMM yyyy", { locale: ar })
-        : period === "week"
-        ? `${format(weekStart, "d MMM", { locale: ar })} — ${format(weekEnd, "d MMM yyyy", { locale: ar })}`
-        : period === "month"
-        ? format(referenceMonth, "MMMM yyyy", { locale: ar })
-        : "إجمالي كل الوقت";
-
-    const hijriPeriodLabel =
-      !showHijri
-        ? ""
-        : period === "today"
-        ? formatHijriDate(now)
-        : period === "week"
-        ? formatHijriRange(weekStart, weekEnd, showHijri)
-        : period === "month"
-        ? formatHijriDate(referenceMonth, { month: "long", year: "numeric" })
-        : "";
-
+  // ── زر النسخ الوحيد: يجمع ما كانت تنسخه الأزرار الثلاثة، ويحترم «إخفاء الأسماء» ──────────
+  const buildReportText = useCallback(() => {
     const periodTitle =
       period === "today" ? "اليومي" :
       period === "week" ? "الأسبوعي" :
       period === "month" ? "الشهري" : "الإجمالي";
 
-    const completionRate =
-      periodStats.created.length > 0
-        ? Math.round((periodStats.completed.length / periodStats.created.length) * 100)
-        : 0;
-
     const lines: string[] = [];
-    lines.push(`📊 *التقرير ${periodTitle} — تلاوة الحرمين*`);
+    lines.push(`📊 *تقرير الإنجاز ${periodTitle} — تلاوات الحرمين*`);
     lines.push(`🗓️ الفترة: ${periodLabel}`);
-    if (hijriPeriodLabel) lines.push(`(${hijriPeriodLabel})`);
+    if (periodHijriLabel) lines.push(`(${periodHijriLabel})`);
     lines.push("");
     lines.push("━━━━━━━━━━━━━━━━━━");
-    lines.push(`📈 *ملخص الفترة*`);
-    lines.push(`✅ مهام مكتملة: ${periodStats.completed.length}`);
-    lines.push(`🟢 مكتملة في الوقت: ${periodStats.completedOnTime.length}`);
-    lines.push(`🟠 مكتملة متأخرة: ${periodStats.completedLate.length}`);
-    lines.push(`📝 مهام منشأة: ${periodStats.created.length}`);
+    lines.push("📈 *ملخّص الإنجاز*");
+    lines.push(`✅ المهام المكتملة: ${periodStats.completed.length}`);
+    lines.push(`📦 إجمالي المنشورات: ${periodStats.totalPublications}`);
+    lines.push(`📱 المنصات النشطة: ${periodStats.activePlatforms}`);
     lines.push(`⚠️ متأخرة غير مكتملة: ${periodStats.overdue.length}`);
-    lines.push(`📊 نسبة الإنجاز: ${completionRate}%`);
-    lines.push("");
-    lines.push("━━━━━━━━━━━━━━━━━━");
-    lines.push("👥 *أداء الأعضاء*");
-    for (const row of memberRows) {
-      const lateStr = row.periodCompletedLate > 0 ? ` | 🟠 مكتملة متأخرة: ${row.periodCompletedLate}` : "";
-      const overdueStr = row.periodOverdue > 0 ? ` | ⚠️ غير مكتملة متأخرة: ${row.periodOverdue}` : "";
-      const memberPrefix = `*${getDisplayMemberName(row.member)}*: `;
-      lines.push(`• ${memberPrefix}✅ ${row.periodCompleted} مكتملة | 🟢 في الوقت: ${row.periodCompletedOnTime}${lateStr}${overdueStr}`);
-    }
 
-    const activePlatforms = platformRows.filter(
-      (r) => r.periodCompleted > 0 || r.periodCreated > 0 || r.periodOverdue > 0
-    );
-    if (activePlatforms.length > 0) {
+    if (platformRows.length > 0) {
       lines.push("");
       lines.push("━━━━━━━━━━━━━━━━━━");
-      lines.push("📱 *أداء المنصات*");
-      for (const row of activePlatforms) {
+      lines.push("📱 *إنجاز المنصّات*");
+      for (const row of platformRows) {
         const emoji = getPlatformEmoji(row.platform.name, row.platform.icon ?? "");
-        lines.push(`${emoji} *${row.platform.name}*: ✅ ${row.periodCompleted} مكتملة | 🟢 ${row.periodCompletedOnTime} في الوقت | 🟠 ${row.periodCompletedLate} متأخرة | ⚠️ ${row.periodOverdue} غير مكتملة`);
+        const overdueStr = row.overdue > 0 ? ` | ⚠️ ${row.overdue} متأخرة غير مكتملة` : "";
+        lines.push(`${emoji} *${row.platform.name}*: ✅ ${row.completed} مكتملة | 📦 ${row.publications} منشور${overdueStr}`);
+      }
+    }
+
+    if (memberRows.length > 0) {
+      lines.push("");
+      lines.push("━━━━━━━━━━━━━━━━━━");
+      lines.push("👥 *أداء الأعضاء*");
+      for (const row of memberRows) {
+        const lateStr = row.late > 0 ? ` | 🟠 متأخرة: ${row.late}` : "";
+        const overdueStr = row.overdue > 0 ? ` | ⚠️ غير مكتملة متأخرة: ${row.overdue}` : "";
+        lines.push(`• *${getDisplayMemberName(row.member)}*: ✅ ${row.completed} مكتملة | 🟢 في الوقت: ${row.onTime}${lateStr}${overdueStr}`);
       }
     }
 
@@ -825,350 +550,407 @@ export default function Reports() {
     lines.push("");
     lines.push("━━━━━━━━━━━━━━━━━━");
     lines.push("_تم إنشاء هذا التقرير تلقائياً من نظام إدارة مهام تلاوة الحرمين_ 🕌");
-
     return lines.join("\n");
-  }, [periodStats, memberRows, platformRows, period, weekStart, weekEnd, referenceMonth, getDisplayMemberName, showHijri]);
+  }, [period, periodLabel, periodHijriLabel, periodStats, platformRows, memberRows, getDisplayMemberName, showHijri]);
 
   const handleCopy = useCallback(async () => {
-    const text = buildWhatsAppText();
+    const text = buildReportText();
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
       setCopied(true);
-      toast({ title: "تم النسخ!", description: "الملخص جاهز للإرسال على واتساب" });
+      toast({ title: "تم نسخ التقرير", description: "جاهز للصق في واتساب أو أي مكان" });
       setTimeout(() => setCopied(false), 2500);
     } catch {
       toast({ title: "تعذّر النسخ", description: "حاول مجدداً", variant: "destructive" });
     }
-  }, [buildWhatsAppText, toast]);
-
-  const handleWhatsApp = useCallback(() => {
-    const text = buildWhatsAppText();
-    if (!text) return;
-    window.open(`https://wa.me/?text=${encodeURIComponent(text)}`, "_blank");
-  }, [buildWhatsAppText]);
-
-  const handleCopyExecutiveSummary = useCallback(async () => {
-    const lines = [
-      "📌 *تقرير إنجازات مختصر — تلاوات الحرمين*",
-      `🗓️ الفترة: ${executivePeriodLabel}`,
-      executiveHijriLabel ? `(${executiveHijriLabel})` : "",
-      "",
-      `📦 إجمالي المنشورات: ${executiveSummary.totalPublications}`,
-      `✅ المهام المكتملة: ${executiveSummary.completedTasks}`,
-      `📱 المنصات النشطة: ${executiveSummary.platformSummaries.length}`,
-    ];
-
-    if (executiveSummary.platformSummaries.length > 0) {
-      lines.push("", "📊 *الإنجازات حسب المنصات*");
-      for (const row of executiveSummary.platformSummaries) {
-        const emoji = getPlatformEmoji(row.platform.name, row.platform.icon ?? "");
-        lines.push(`${emoji} ${row.platform.name}: ${row.publications} منشور`);
-      }
-    }
-
-    try {
-      await navigator.clipboard.writeText(lines.filter(Boolean).join("\n"));
-      setCopiedExecutive(true);
-      toast({ title: "تم نسخ تقرير الإنجازات", description: "النص المختصر جاهز للمشاركة" });
-      setTimeout(() => setCopiedExecutive(false), 2500);
-    } catch {
-      toast({ title: "تعذّر النسخ", description: "حاول مجدداً", variant: "destructive" });
-    }
-  }, [executiveHijriLabel, executivePeriodLabel, executiveSummary, toast]);
+  }, [buildReportText, toast]);
 
   const dayNames = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
 
-  const completionRate =
-    periodStats && periodStats.created.length > 0
-      ? Math.round((periodStats.completed.length / periodStats.created.length) * 100)
-      : null;
-
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-        <div>
-          <h2 className="text-3xl font-bold text-foreground tracking-tight">الإحصائيات</h2>
-          <p className="text-muted-foreground mt-1">تقارير أداء الفريق بحسب الفترة الزمنية</p>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap justify-end">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => window.print()}
-            className="flex items-center gap-2 font-medium print:hidden"
-          >
-            <Printer className="h-4 w-4" />
-            طباعة / PDF
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={handleCopy}
-            className="flex items-center gap-2 font-medium print:hidden"
-          >
-            {copied ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
-            {copied ? "تم النسخ!" : "نسخ الملخص"}
-          </Button>
-          <Button
-            size="sm"
-            onClick={handleWhatsApp}
-            className="flex items-center gap-2 font-medium bg-[#25D366] hover:bg-[#1ebe5d] text-white border-0 print:hidden"
-          >
-            <Share2 className="h-4 w-4" />
-            إرسال واتساب
-          </Button>
-        </div>
+    <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
+      {/* العنوان */}
+      <div>
+        <h2 className="text-3xl font-bold text-foreground tracking-tight">التقارير</h2>
+        <p className="text-muted-foreground mt-1">حجم الإنجاز والمتأخرات بحسب الفترة الزمنية</p>
       </div>
 
-      {/* Period tabs */}
-      <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4">
-        <div className="flex rounded-xl border border-border bg-card p-1 gap-1 shadow-sm">
-          {(
-            [
-              { key: "today", label: "اليوم", icon: CalendarDays },
-              { key: "week", label: "الأسبوع", icon: TrendingUp },
-              { key: "month", label: "الشهر", icon: BarChart3 },
-              { key: "all", label: "الإجمالي", icon: Users },
-            ] as const
-          ).map(({ key, label, icon: Icon }) => (
-            <button
-              key={key}
-              onClick={() => setPeriod(key)}
+      {/* ── 1) الأدوات العلوية ───────────────────────────────────────── */}
+      <div className="space-y-3 print:hidden">
+        <div className="flex flex-col lg:flex-row lg:items-center gap-3">
+          <div className="flex rounded-xl border border-border bg-card p-1 gap-1 shadow-sm w-fit">
+            {(
+              [
+                { key: "today", label: "اليوم", icon: CalendarDays },
+                { key: "week", label: "الأسبوع", icon: TrendingUp },
+                { key: "month", label: "الشهر", icon: BarChart3 },
+                { key: "all", label: "الإجمالي", icon: Users },
+              ] as const
+            ).map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                onClick={() => setPeriod(key)}
+                className={cn(
+                  "flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-all",
+                  period === key
+                    ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                )}
+              >
+                <Icon className="h-3.5 w-3.5" />
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {period === "week" && (
+            <div className="flex items-center gap-1 bg-card border border-border rounded-xl px-3 py-2 shadow-sm w-fit">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset((o) => o + 1)} aria-label="الأسبوع التالي">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <div className="text-center min-w-[180px]">
+                <p className="text-sm font-bold text-foreground">
+                  {format(weekStart, "d MMM", { locale: ar })} — {format(weekEnd, "d MMM yyyy", { locale: ar })}
+                </p>
+                {showHijri && (
+                  <p className="text-[11px] font-medium text-sidebar-primary/80">{formatHijriRange(weekStart, weekEnd, showHijri)}</p>
+                )}
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {dayNames[weekStart.getDay()]} — {dayNames[weekEnd.getDay()]}
+                </p>
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset((o) => o - 1)} aria-label="الأسبوع السابق">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              {!isCurrentWeek && (
+                <Button variant="outline" size="sm" className="text-xs mr-1" onClick={() => setWeekOffset(0)}>
+                  الحالي
+                </Button>
+              )}
+            </div>
+          )}
+
+          {period === "month" && (
+            <div className="flex items-center gap-1 bg-card border border-border rounded-xl px-3 py-2 shadow-sm w-fit">
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMonthOffset((o) => o + 1)} aria-label="الشهر التالي">
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+              <div className="text-center min-w-[140px]">
+                <p className="text-sm font-bold text-foreground">{format(referenceMonth, "MMMM yyyy", { locale: ar })}</p>
+                {showHijri && (
+                  <p className="text-[11px] font-medium text-sidebar-primary/80">
+                    {formatHijriDate(referenceMonth, { month: "long", year: "numeric" })}
+                  </p>
+                )}
+              </div>
+              <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMonthOffset((o) => o - 1)} aria-label="الشهر السابق">
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              {!isCurrentMonth && (
+                <Button variant="outline" size="sm" className="text-xs mr-1" onClick={() => setMonthOffset(0)}>
+                  الحالي
+                </Button>
+              )}
+            </div>
+          )}
+
+          {period === "today" && (
+            <div className="flex items-center gap-2 bg-card border border-border rounded-xl px-4 py-2 shadow-sm w-fit">
+              <CalendarDays className="h-4 w-4 text-sidebar-primary" />
+              <span className="text-sm font-bold text-foreground">{format(now, "EEEE، d MMMM yyyy", { locale: ar })}</span>
+              {showHijri && <span className="text-xs font-medium text-sidebar-primary/80">{formatHijriDate(now)}</span>}
+            </div>
+          )}
+
+          <div className="flex items-center gap-2 flex-wrap lg:mr-auto">
+            <Button
+              type="button"
+              variant={hideMemberNames ? "default" : "outline"}
+              size="sm"
+              onClick={() => setHideMemberNames((value) => !value)}
               className={cn(
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
-                period === key
-                  ? "bg-sidebar-primary text-sidebar-primary-foreground shadow-sm"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
+                "gap-2 font-medium",
+                hideMemberNames && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
               )}
             >
-              <Icon className="h-3.5 w-3.5" />
-              {label}
-            </button>
-          ))}
+              {hideMemberNames ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              {hideMemberNames ? "الأسماء مخفية" : "إخفاء الأسماء"}
+            </Button>
+            <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2 font-medium">
+              <Printer className="h-4 w-4" />
+              طباعة / PDF
+            </Button>
+            <Button size="sm" onClick={handleCopy} className="gap-2 font-medium bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground">
+              {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              {copied ? "تم النسخ" : "نسخ التقرير"}
+            </Button>
+          </div>
         </div>
 
-        {/* Date navigator */}
-        {period === "week" && (
-          <div className="flex items-center gap-1 bg-card border border-border rounded-xl px-3 py-2 shadow-sm">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset((o) => o + 1)}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-            <div className="text-center min-w-[180px]">
-              <p className="text-sm font-bold text-foreground">
-                {format(weekStart, "d MMM", { locale: ar })} — {format(weekEnd, "d MMM yyyy", { locale: ar })}
-              </p>
-              {showHijri && (
-                <p className="text-[11px] font-medium text-sidebar-primary/80">
-                  {formatHijriDate(weekStart, { day: "numeric", month: "long" })} — {formatHijriDate(weekEnd, { day: "numeric", month: "long", year: "numeric" })}
-                </p>
-              )}
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {dayNames[weekStart.getDay()]} — {dayNames[weekEnd.getDay()]}
-              </p>
-            </div>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setWeekOffset((o) => o - 1)}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            {!isCurrentWeek && (
-              <Button variant="outline" size="sm" className="text-xs mr-1" onClick={() => setWeekOffset(0)}>
-                الحالي
-              </Button>
-            )}
-          </div>
-        )}
-
-        {period === "month" && (
-          <div className="flex items-center gap-1 bg-card border border-border rounded-xl px-3 py-2 shadow-sm">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMonthOffset((o) => o + 1)}>
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-            <div className="text-center min-w-[140px]">
-              <p className="text-sm font-bold text-foreground">
-                {format(referenceMonth, "MMMM yyyy", { locale: ar })}
-              </p>
-              {showHijri && (
-                <p className="text-[11px] font-medium text-sidebar-primary/80">
-                  {formatHijriDate(referenceMonth, { month: "long", year: "numeric" })}
-                </p>
-              )}
-            </div>
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => setMonthOffset((o) => o - 1)}>
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            {!isCurrentMonth && (
-              <Button variant="outline" size="sm" className="text-xs mr-1" onClick={() => setMonthOffset(0)}>
-                الحالي
-              </Button>
-            )}
-          </div>
-        )}
-
-        {period === "today" && (
-          <div className="flex items-center gap-2 bg-card border border-border rounded-xl px-4 py-2 shadow-sm">
-            <CalendarDays className="h-4 w-4 text-sidebar-primary" />
-            <span className="text-sm font-bold text-foreground">
-              {format(now, "EEEE، d MMMM yyyy", { locale: ar })}
-            </span>
-            {showHijri && (
-              <span className="text-xs font-medium text-sidebar-primary/80">
-                {formatHijriDate(now)}
-              </span>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Display controls */}
-      <div className="flex flex-col xl:flex-row gap-3 print:hidden">
-        <Button
-          type="button"
-          variant={hideMemberNames ? "default" : "outline"}
-          onClick={() => setHideMemberNames((value) => !value)}
-          className={cn(
-            "w-fit gap-2 font-medium",
-            hideMemberNames && "bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground"
-          )}
-        >
-          {hideMemberNames ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-          إخفاء أسماء الأعضاء
-        </Button>
-
-        <div className="flex-1 rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
+        <div className="rounded-xl border border-border bg-card px-4 py-3 shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2 font-semibold text-sm text-foreground">
               <Filter className="h-4 w-4 text-sidebar-primary" />
-              فلترة التقارير حسب الأعضاء
+              فلترة حسب الأعضاء
               <Badge variant="outline" className="font-medium">
                 {selectedReportMemberIds.length > 0 ? `${selectedReportMemberIds.length} محدد` : "الكل"}
               </Badge>
             </div>
             {selectedReportMemberIds.length > 0 && (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() => setSelectedReportMemberIds([])}
-                className="h-7 text-xs"
-              >
+              <Button type="button" variant="ghost" size="sm" onClick={() => setSelectedReportMemberIds([])} className="h-7 text-xs">
                 مسح الاختيار
               </Button>
             )}
           </div>
-
-          {hideMemberNames ? (
-            <p className="mt-2 text-xs text-muted-foreground">
-              أسماء الأعضاء مخفية مؤقتًا. ألغِ الإخفاء إذا أردت تعديل اختيار الأعضاء.
-            </p>
-          ) : (
-            <div className="mt-3 flex flex-wrap gap-2">
-              {reportMemberOptions.map((member) => {
-                const selected = selectedReportMemberIdSet.has(member.id);
-                return (
-                  <button
-                    key={member.id}
-                    type="button"
-                    onClick={() => toggleReportMember(member.id)}
-                    className={cn(
-                      "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                      selected
-                        ? "border-sidebar-primary bg-sidebar-primary text-sidebar-primary-foreground"
-                        : "border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted/50"
-                    )}
-                  >
-                    {member.name}
-                  </button>
-                );
-              })}
-            </div>
-          )}
+          <div className="mt-3 flex flex-wrap gap-2">
+            {reportMemberOptions.map((member) => {
+              const selected = selectedReportMemberIdSet.has(member.id);
+              return (
+                <button
+                  key={member.id}
+                  type="button"
+                  onClick={() => toggleReportMember(member.id)}
+                  className={cn(
+                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+                    selected
+                      ? "border-sidebar-primary bg-sidebar-primary text-sidebar-primary-foreground"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground hover:bg-muted/50"
+                  )}
+                >
+                  {getDisplayMemberName(member)}
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
 
-      {/* Summary cards */}
+      {/* ── 2) ملخّص الإنجاز (بلا أسماء) ─────────────────────────────── */}
       <Card className="border-sidebar-primary/20 bg-sidebar-primary/5 shadow-sm">
-        <CardHeader className="pb-4">
-          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-            <div>
-              <CardTitle className="text-lg font-bold flex items-center gap-2">
-                <FileText className="h-5 w-5 text-sidebar-primary" />
-                تقرير إنجازات مختصر
-              </CardTitle>
-              <p className="mt-1 text-sm text-muted-foreground">
-                مناسب للنشر والإدارة العليا، ويعرض الإنجاز المجمل فقط بدون أسماء أو تفاصيل تشغيلية.
-              </p>
-            </div>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={handleCopyExecutiveSummary}
-              className="w-fit gap-2 bg-background print:hidden"
-            >
-              {copiedExecutive ? <Check className="h-4 w-4 text-green-600" /> : <Copy className="h-4 w-4" />}
-              {copiedExecutive ? "تم النسخ" : "نسخ تقرير الإنجازات"}
-            </Button>
-          </div>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <FileText className="h-5 w-5 text-sidebar-primary" />
+            ملخّص الإنجاز
+          </CardTitle>
+          <p className="text-sm text-muted-foreground">
+            الفترة: <span className="font-semibold text-foreground">{periodLabel}</span>
+            {periodHijriLabel && <span className="text-sidebar-primary/80"> ({periodHijriLabel})</span>}
+          </p>
         </CardHeader>
-        <CardContent className="space-y-5">
-          <div className="rounded-xl border border-border bg-background/80 px-4 py-3">
-            <p className="text-sm font-semibold text-foreground">الفترة: {executivePeriodLabel}</p>
-            {executiveHijriLabel && (
-              <p className="mt-1 text-xs font-medium text-sidebar-primary/80">({executiveHijriLabel})</p>
-            )}
-          </div>
-
-          <div className="grid gap-3 md:grid-cols-3">
-            <div className="rounded-xl border border-border bg-background/80 p-4">
-              <p className="text-xs font-medium text-muted-foreground">إجمالي المنشورات</p>
-              <p className="mt-2 text-2xl font-bold text-sidebar-primary">{executiveSummary.totalPublications}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background/80 p-4">
-              <p className="text-xs font-medium text-muted-foreground">المهام المكتملة</p>
-              <p className="mt-2 text-2xl font-bold text-green-700">{executiveSummary.completedTasks}</p>
-            </div>
-            <div className="rounded-xl border border-border bg-background/80 p-4">
-              <p className="text-xs font-medium text-muted-foreground">المنصات النشطة</p>
-              <p className="mt-2 text-2xl font-bold text-amber-700">{executiveSummary.platformSummaries.length}</p>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-border bg-background/80">
-            <div className="border-b border-border px-4 py-3">
-              <p className="text-sm font-bold text-foreground">الإنجازات حسب المنصات</p>
-            </div>
-            {executiveSummary.platformSummaries.length === 0 ? (
-              <p className="px-4 py-6 text-center text-sm text-muted-foreground">
-                لا توجد مهام مكتملة ضمن الفترة الحالية.
+        <CardContent>
+          <div className="grid gap-3 md:grid-cols-[1.4fr_1fr_1fr]">
+            <div className="rounded-xl border border-green-200 bg-background/90 p-5 md:row-span-2 flex flex-col justify-center">
+              <p className="text-sm font-semibold text-muted-foreground flex items-center gap-1.5">
+                <CheckCircle2 className="h-4 w-4 text-green-600" />
+                إجمالي المهام المكتملة
               </p>
-            ) : (
-              <div className="divide-y divide-border">
-                {executiveSummary.platformSummaries.map((row) => (
-                  <div key={row.platform.id} className="flex items-center justify-between gap-4 px-4 py-3">
-                    <div className="flex items-center gap-2 font-semibold text-foreground">
-                      <PlatformIcon name={row.platform.name} icon={row.platform.icon ?? ""} className="h-5 w-5" />
-                      <span>{row.platform.name}</span>
-                    </div>
-                    <div className="text-left text-sm">
-                      <p className="font-bold text-sidebar-primary">{row.publications} منشور</p>
-                      <p className="text-xs text-muted-foreground">{row.completedTasks} مهمة مكتملة</p>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            )}
+              <p className="mt-2 text-5xl md:text-6xl font-extrabold text-green-700 leading-none">{periodStats.completed.length}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-background/90 p-4">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <Package className="h-3.5 w-3.5 text-sidebar-primary" />
+                إجمالي المنشورات
+              </p>
+              <p className="mt-1.5 text-3xl font-bold text-sidebar-primary">{periodStats.totalPublications}</p>
+            </div>
+            <div className="rounded-xl border border-border bg-background/90 p-4">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <Layers className="h-3.5 w-3.5 text-amber-700" />
+                المنصات النشطة
+              </p>
+              <p className="mt-1.5 text-3xl font-bold text-amber-700">{periodStats.activePlatforms}</p>
+            </div>
+            <div className="md:col-span-2 rounded-xl border border-red-100 bg-background/70 px-4 py-2.5 flex items-center justify-between gap-3">
+              <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+                <AlertCircle className="h-3.5 w-3.5 text-red-500" />
+                متأخرات غير مكتملة
+              </p>
+              <p className={cn("text-lg font-bold", periodStats.overdue.length > 0 ? "text-red-600" : "text-muted-foreground")}>
+                {periodStats.overdue.length}
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>
 
+      {/* ── 3) إنجاز المنصّات (أعداد فقط) ─────────────────────────────── */}
+      <Card className="border-border/60 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <Layers className="h-5 w-5 text-sidebar-primary" />
+            إنجاز المنصّات
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {platformRows.length === 0 ? (
+            <p className="py-6 text-center text-sm text-muted-foreground">لا يوجد إنجاز أو متأخرات على أي منصة في هذه الفترة.</p>
+          ) : (
+            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
+              {platformRows.map((row) => (
+                <div key={row.platform.id} className="rounded-xl border border-border bg-muted/20 p-4 space-y-3">
+                  <div className="flex items-center gap-2">
+                    <PlatformIcon name={row.platform.name} icon={row.platform.icon ?? undefined} className="h-5 w-5" />
+                    <span className="font-semibold text-sm leading-tight">{row.platform.name}</span>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-center">
+                    <div className="bg-green-50 dark:bg-green-950/30 rounded-lg py-2 border border-green-100 dark:border-green-900">
+                      <p className="text-2xl font-bold text-green-600">{row.completed}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">مكتملة</p>
+                    </div>
+                    <div className="bg-sidebar-primary/5 rounded-lg py-2 border border-sidebar-primary/10">
+                      <p className="text-2xl font-bold text-sidebar-primary">{row.publications}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5">منشور</p>
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <span>في الوقت: <b className="text-emerald-600">{row.onTime}</b></span>
+                    <span>مكتملة متأخرة: <b className="text-orange-600">{row.late}</b></span>
+                    <span>متأخرة غير مكتملة: <b className={row.overdue > 0 ? "text-red-600" : ""}>{row.overdue}</b></span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── 4) أداء الأعضاء (أعداد فقط) ───────────────────────────────── */}
+      <Card className="border-border/60 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <Users className="h-5 w-5 text-sidebar-primary" />
+            أداء الأعضاء
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow>
+                <TableHead className="text-right font-bold">العضو</TableHead>
+                <TableHead className="text-right font-bold">الدور</TableHead>
+                <TableHead className="text-right font-bold text-green-600">مكتملة</TableHead>
+                <TableHead className="text-right font-bold text-emerald-600">في الوقت</TableHead>
+                <TableHead className="text-right font-bold text-orange-600">مكتملة متأخرة</TableHead>
+                <TableHead className="text-right font-bold text-sidebar-primary">منشأة</TableHead>
+                <TableHead className="text-right font-bold text-red-500">متأخرة غير مكتملة</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {memberRows.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">لا توجد بيانات لهذه الفترة</TableCell>
+                </TableRow>
+              ) : (
+                memberRows.map((row) => (
+                  <TableRow key={row.member.id}>
+                    <TableCell className="font-semibold">{getDisplayMemberName(row.member)}</TableCell>
+                    <TableCell className="text-sm text-muted-foreground">{hideMemberNames ? "—" : row.member.role}</TableCell>
+                    <TableCell><CountCell value={row.completed} tone="green" /></TableCell>
+                    <TableCell><CountCell value={row.onTime} tone="emerald" /></TableCell>
+                    <TableCell><CountCell value={row.late} tone="orange" /></TableCell>
+                    <TableCell><CountCell value={row.created} tone="primary" /></TableCell>
+                    <TableCell><CountCell value={row.overdue} tone="red" /></TableCell>
+                  </TableRow>
+                ))
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* ── 5) قائمة المهام المنجزة (مرة واحدة فقط) ───────────────────── */}
+      <Card className="border-border/60 shadow-sm">
+        <CardHeader className="pb-3">
+          <CardTitle className="text-lg font-bold flex items-center gap-2">
+            <CheckCircle2 className="h-5 w-5 text-green-600" />
+            قائمة المهام المنجزة ({periodStats.completed.length})
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="p-0 overflow-x-auto">
+          <Table>
+            <TableHeader className="bg-muted/40">
+              <TableRow>
+                <TableHead className="text-right font-bold">المهمة</TableHead>
+                <TableHead className="text-right font-bold">المنصة</TableHead>
+                <TableHead className="text-right font-bold">المسؤول</TableHead>
+                <TableHead className="text-right font-bold">تاريخ الاستحقاق</TableHead>
+                <TableHead className="text-right font-bold">تاريخ الإنجاز</TableHead>
+                <TableHead className="text-right font-bold">توقيت الإنجاز</TableHead>
+                <TableHead className="text-right font-bold">الشاهد</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {periodStats.completed.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center text-muted-foreground py-10">لا توجد مهام مكتملة في هذه الفترة</TableCell>
+                </TableRow>
+              ) : (
+                periodStats.completed.map((task) => {
+                  const proofs = taskProofLinks(task);
+                  return (
+                    <TableRow key={task.id} className="hover:bg-green-50/30 transition-colors">
+                      <TableCell className="font-medium">{task.title}</TableCell>
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <PlatformIcon name={task.platform.name} />
+                          <span className="text-sm">{task.platform.name}</span>
+                        </div>
+                      </TableCell>
+                      <TableCell className="text-sm">{taskAssignees(task).map(getDisplayMemberName).join("، ")}</TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        <DateWithHijri date={task.dueDate} formatPattern="EEEE، d MMM" showHijri={showHijri} />
+                      </TableCell>
+                      <TableCell className="text-sm text-muted-foreground">
+                        <DateWithHijri date={task.completedAt} formatPattern="EEEE، d MMM" showHijri={showHijri} />
+                      </TableCell>
+                      <TableCell><CompletionTimingBadge task={task} /></TableCell>
+                      <TableCell>
+                        {proofs.length === 0 ? (
+                          <span className="text-muted-foreground text-sm">—</span>
+                        ) : (
+                          <div className="flex flex-wrap gap-1">
+                            {proofs.map((proofUrl, proofIndex) => (
+                              <a
+                                key={`${task.id}-proof-${proofIndex}`}
+                                href={proofUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center gap-1 text-xs font-medium text-green-700 bg-green-50 border border-green-200 rounded-full px-2 py-0.5 hover:bg-green-100"
+                              >
+                                <ExternalLink className="h-3 w-3" />
+                                {proofs.length > 1 ? `شاهد ${proofIndex + 1}` : "رابط"}
+                              </a>
+                            ))}
+                          </div>
+                        )}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })
+              )}
+            </TableBody>
+          </Table>
+        </CardContent>
+      </Card>
+
+      {/* ── 6) تصدير الشواهد (فترته مستقلة عن أعلى الصفحة) ─────────────── */}
       <Card className="border-border/60 shadow-sm print:hidden">
-        <CardHeader className="pb-4">
+        <CardHeader className="pb-3">
           <CardTitle className="text-lg font-bold flex items-center gap-2">
             <Download className="h-5 w-5 text-sidebar-primary" />
             تصدير الشواهد
           </CardTitle>
+          <p className="text-xs text-muted-foreground">
+            لهذا القسم فترته الخاصة (لا تتأثر باختيار الفترة أعلى الصفحة):{" "}
+            {proofInterval ? (
+              <span className="font-semibold text-foreground">
+                {format(proofInterval.start, "d MMM yyyy", { locale: ar })} — {format(proofInterval.end, "d MMM yyyy", { locale: ar })}
+              </span>
+            ) : (
+              <span className="font-semibold text-red-600">النطاق المخصص غير صحيح</span>
+            )}
+          </p>
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
@@ -1178,15 +960,15 @@ export default function Reports() {
               </SelectTrigger>
               <SelectContent dir="rtl">
                 <SelectItem value="today">اليوم</SelectItem>
-                <SelectItem value="week">هذا الأسبوع</SelectItem>
-                <SelectItem value="month">هذا الشهر</SelectItem>
+                <SelectItem value="week">الأسبوع الحالي</SelectItem>
+                <SelectItem value="month">الشهر الحالي</SelectItem>
                 <SelectItem value="custom">نطاق مخصص</SelectItem>
               </SelectContent>
             </Select>
             {proofPeriod === "custom" && (
               <>
-                <Input type="date" value={proofStartDate} onChange={(event) => setProofStartDate(event.target.value)} />
-                <Input type="date" value={proofEndDate} onChange={(event) => setProofEndDate(event.target.value)} />
+                <Input type="date" value={proofStartDate} onChange={(event) => setProofStartDate(event.target.value)} aria-label="من تاريخ" />
+                <Input type="date" value={proofEndDate} onChange={(event) => setProofEndDate(event.target.value)} aria-label="إلى تاريخ" />
               </>
             )}
             <Select value={proofCoverage} onValueChange={(value) => setProofCoverage(value as ProofCoverage)}>
@@ -1252,7 +1034,7 @@ export default function Reports() {
               )}
             >
               {showProofMemberNames ? <Eye className="h-4 w-4" /> : <EyeOff className="h-4 w-4" />}
-              إظهار اسم العضو
+              إظهار عمود العضو
             </Button>
             <Button
               type="button"
@@ -1270,7 +1052,7 @@ export default function Reports() {
             </Button>
           </div>
 
-          <div className="rounded-lg border border-border overflow-hidden">
+          <div className="rounded-lg border border-border overflow-x-auto">
             <Table>
               <TableHeader className="bg-muted/40">
                 <TableRow>
@@ -1336,442 +1118,6 @@ export default function Reports() {
           </div>
         </CardContent>
       </Card>
-
-      <Card className="border-border/60 shadow-sm print:hidden">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg font-bold flex items-center gap-2">
-            <History className="h-5 w-5 text-sidebar-primary" />
-            سجل تغييرات المهام والإنجاز بعد التعديل
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="rounded-lg border border-border overflow-hidden">
-            <Table>
-              <TableHeader className="bg-muted/40">
-                <TableRow>
-                  <TableHead className="text-right font-bold">وقت التعديل</TableHead>
-                  <TableHead className="text-right font-bold">نوع التغيير</TableHead>
-                  <TableHead className="text-right font-bold">المهمة</TableHead>
-                  <TableHead className="text-right font-bold">التفاصيل</TableHead>
-                  <TableHead className="text-right font-bold">النتيجة الحالية</TableHead>
-                  <TableHead className="text-right font-bold">بواسطة</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {taskChangeRows.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={6} className="text-center text-muted-foreground py-8">
-                      لا توجد تغييرات على المهام ضمن الفترة المحددة
-                    </TableCell>
-                  </TableRow>
-                ) : (
-                  taskChangeRows.map((row) => {
-                    const memberChange = row.toMemberName
-                      ? `المسؤول: ${hideMemberNames ? "عضو" : row.toMemberName}`
-                      : null;
-                    const reciterChange = row.toReciterName
-                      ? `القارئ: ${row.fromReciterName ?? "—"} ← ${row.toReciterName}`
-                      : null;
-                    const proofChange = row.action.includes("proof") ? "تغيير في الشواهد" : null;
-                    return (
-                      <TableRow key={row.id}>
-                        <TableCell className="text-sm text-muted-foreground">
-                          <DateWithHijri date={row.createdAt} formatPattern="d MMM yyyy، h:mm a" showHijri={showHijri} />
-                        </TableCell>
-                        <TableCell>
-                          <Badge variant="outline" className="font-medium">{activityActionLabel(row.action)}</Badge>
-                        </TableCell>
-                        <TableCell className="font-medium max-w-[260px] whitespace-normal">
-                          {row.task?.title ?? row.entityName ?? "مهمة غير موجودة"}
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground whitespace-normal">
-                          {[reciterChange, memberChange, proofChange].filter(Boolean).join(" — ") || "تعديل عام"}
-                        </TableCell>
-                        <TableCell>
-                          <Badge
-                            className={cn(
-                              "font-medium",
-                              row.result.includes("بعد") ? "bg-green-50 text-green-700 border-green-200 hover:bg-green-50" :
-                              row.result.includes("متأخرة") ? "bg-red-50 text-red-700 border-red-200 hover:bg-red-50" :
-                              "bg-muted text-muted-foreground hover:bg-muted"
-                            )}
-                          >
-                            {row.result}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">{row.userName ?? "النظام"}</TableCell>
-                      </TableRow>
-                    );
-                  })
-                )}
-              </TableBody>
-            </Table>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Summary cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-6 gap-4">
-        <StatCard
-          label="مكتملة"
-          value={periodStats?.completed.length ?? 0}
-          icon={CheckCircle2}
-          color="text-green-600"
-          subtitle={period === "today" ? "اليوم" : period === "week" ? "هذا الأسبوع" : period === "month" ? "هذا الشهر" : "إجمالي"}
-        />
-        <StatCard
-          label="في الوقت"
-          value={periodStats?.completedOnTime.length ?? 0}
-          icon={CheckCircle2}
-          color="text-emerald-600"
-          subtitle="مكتملة قبل أو في موعدها"
-        />
-        <StatCard
-          label="مكتملة متأخرة"
-          value={periodStats?.completedLate.length ?? 0}
-          icon={AlertCircle}
-          color="text-orange-600"
-          subtitle="أُكملت بعد موعدها"
-        />
-        <StatCard
-          label="منشأة"
-          value={periodStats?.created.length ?? 0}
-          icon={ListTodo}
-          color="text-sidebar-primary"
-          subtitle="مهام جديدة"
-        />
-        <StatCard
-          label="متأخرة غير مكتملة"
-          value={periodStats?.overdue.length ?? 0}
-          icon={AlertCircle}
-          color="text-red-500"
-          subtitle="تجاوزت الموعد ولم تكتمل"
-        />
-        <StatCard
-          label="نسبة الإنجاز"
-          value={completionRate !== null ? `${completionRate}%` : "—"}
-          icon={BarChart3}
-          color="text-amber-600"
-          subtitle="من المهام المنشأة"
-        />
-      </div>
-
-      {/* Member breakdown */}
-      <Card className="border-border/60 shadow-sm">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg font-bold flex items-center gap-2">
-            <Users className="h-5 w-5 text-sidebar-primary" />
-            أداء الأعضاء
-          </CardTitle>
-        </CardHeader>
-        <CardContent className="p-0">
-          <Table>
-            <TableHeader className="bg-muted/40">
-              <TableRow>
-                <TableHead className="text-right font-bold w-8"></TableHead>
-                <TableHead className="text-right font-bold">العضو</TableHead>
-                <TableHead className="text-right font-bold">الدور</TableHead>
-                <TableHead className="text-right font-bold text-green-600">مكتملة</TableHead>
-                <TableHead className="text-right font-bold text-emerald-600">في الوقت</TableHead>
-                <TableHead className="text-right font-bold text-orange-600">مكتملة متأخرة</TableHead>
-                <TableHead className="text-right font-bold text-sidebar-primary">منشأة</TableHead>
-                <TableHead className="text-right font-bold text-red-500">متأخرة غير مكتملة</TableHead>
-                <TableHead className="text-right font-bold w-[180px]">الإنجاز الكلي</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {memberRows.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={9} className="text-center text-muted-foreground py-10">
-                    لا توجد بيانات لهذه الفترة
-                  </TableCell>
-                </TableRow>
-              ) : (
-                memberRows.map((row) => (
-                  <>
-                    <TableRow
-                      key={row.member.id}
-                      className={cn(
-                        "hover:bg-muted/20 transition-colors cursor-pointer",
-                        expandedMember === row.member.id && "bg-muted/10"
-                      )}
-                      onClick={() =>
-                        setExpandedMember(expandedMember === row.member.id ? null : row.member.id)
-                      }
-                    >
-                      <TableCell>
-                        <button className="text-muted-foreground hover:text-foreground transition-colors">
-                          {expandedMember === row.member.id ? (
-                            <ChevronUp className="h-4 w-4" />
-                          ) : (
-                            <ChevronDown className="h-4 w-4" />
-                          )}
-                        </button>
-                      </TableCell>
-                      <TableCell className="font-semibold">{getDisplayMemberName(row.member)}</TableCell>
-                      <TableCell className="text-sm text-muted-foreground">{row.member.role}</TableCell>
-                      <TableCell>
-                        <span className="font-bold text-green-600">{row.periodCompleted}</span>
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-bold text-emerald-600">{row.periodCompletedOnTime}</span>
-                      </TableCell>
-                      <TableCell>
-                        {row.periodCompletedLate > 0 ? (
-                          <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50 text-xs font-bold">{row.periodCompletedLate}</Badge>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span className="font-bold text-sidebar-primary">{row.periodCreated}</span>
-                      </TableCell>
-                      <TableCell>
-                        {row.periodOverdue > 0 ? (
-                          <Badge variant="destructive" className="text-xs font-bold">{row.periodOverdue}</Badge>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <Progress value={row.completionRate} className="h-2 flex-1" />
-                          <span className="text-xs font-bold text-sidebar-primary w-10 text-left">
-                            {Math.round(row.completionRate)}%
-                          </span>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-
-                    {expandedMember === row.member.id && (
-                      <TableRow key={`${row.member.id}-expanded`} className="bg-muted/5">
-                        <TableCell colSpan={9} className="p-0">
-                          <div className="px-6 py-4 space-y-2">
-                            {row.completedTasksList.length === 0 ? (
-                              <p className="text-sm text-muted-foreground text-center py-3">
-                                لا توجد مهام مكتملة في هذه الفترة
-                              </p>
-                            ) : (
-                              <>
-                                <p className="text-xs font-bold text-muted-foreground mb-3 uppercase tracking-wide">
-                                  المهام المنجزة ({row.completedTasksList.length})
-                                </p>
-                                <div className="grid gap-2">
-                                  {row.completedTasksList.map((task) => (
-                                    <div
-                                      key={task.id}
-                                      className="flex items-center gap-3 rounded-lg bg-green-50 border border-green-100 px-4 py-2.5"
-                                    >
-                                      <CheckCircle2 className="h-4 w-4 text-green-500 shrink-0" />
-                                      <div className="flex-1 min-w-0">
-                                        <p className="text-sm font-medium text-foreground truncate">{task.title}</p>
-                                        <div className="flex items-center gap-2 mt-0.5">
-                                          <PlatformIcon name={task.platform.name} className="h-3 w-3" />
-                                          <span className="text-xs text-muted-foreground">{task.platform.name}</span>
-                                          {task.completedAt && (
-                                            <>
-                                              <span className="text-muted-foreground/40">·</span>
-                                              <span className="text-xs text-muted-foreground">
-                                                {format(new Date(task.completedAt), "d MMM", { locale: ar })}
-                                              </span>
-                                            </>
-                                          )}
-                                        </div>
-                                      </div>
-                                      <CompletionTimingBadge task={task} />
-                                      {taskProofLinks(task).length > 0 && (
-                                        <div className="flex flex-wrap gap-1 shrink-0">
-                                          {taskProofLinks(task).map((proofUrl, proofIndex) => (
-                                            <a
-                                              key={`${task.id}-proof-${proofIndex}`}
-                                              href={proofUrl}
-                                              target="_blank"
-                                              rel="noopener noreferrer"
-                                              onClick={(e) => e.stopPropagation()}
-                                              className="text-xs text-sidebar-primary hover:underline"
-                                            >
-                                              {taskProofLinks(task).length > 1 ? `شاهد ${proofIndex + 1}` : "رابط الشاهد"}
-                                            </a>
-                                          ))}
-                                        </div>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </>
-                ))
-              )}
-            </TableBody>
-          </Table>
-        </CardContent>
-      </Card>
-
-      {/* Reciter breakdown */}
-      {reciterRows.length > 0 && (
-        <Card className="border-border/60 shadow-sm">
-          <CardHeader className="pb-4">
-            <CardTitle className="text-lg font-bold flex items-center gap-2">
-              <Mic2 className="h-5 w-5 text-sidebar-primary" />
-              أداء القراء
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader className="bg-muted/40">
-                <TableRow>
-                  <TableHead className="text-right font-bold">القارئ</TableHead>
-                  <TableHead className="text-right font-bold text-green-600">مكتملة</TableHead>
-                  <TableHead className="text-right font-bold text-emerald-600">في الوقت</TableHead>
-                  <TableHead className="text-right font-bold text-orange-600">مكتملة متأخرة</TableHead>
-                  <TableHead className="text-right font-bold text-muted-foreground">قيد الانتظار</TableHead>
-                  <TableHead className="text-right font-bold text-red-500">متأخرة غير مكتملة</TableHead>
-                  <TableHead className="text-right font-bold w-[180px]">الإنجاز</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {reciterRows.map((row) => (
-                  <TableRow key={row.reciter.id} className="hover:bg-muted/20 transition-colors">
-                    <TableCell className="font-semibold">{row.reciter.name}</TableCell>
-                    <TableCell><span className="font-bold text-green-600">{row.completedTasks}</span></TableCell>
-                    <TableCell><span className="font-bold text-emerald-600">{row.completedOnTimeTasks}</span></TableCell>
-                    <TableCell>
-                      {row.completedLateTasks > 0 ? (
-                        <Badge className="bg-orange-50 text-orange-700 border-orange-200 hover:bg-orange-50 text-xs font-bold">{row.completedLateTasks}</Badge>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell><span className="text-muted-foreground">{row.pendingTasks}</span></TableCell>
-                    <TableCell>
-                      {row.overdueTasksCount > 0 ? (
-                        <Badge variant="destructive" className="text-xs font-bold">{row.overdueTasksCount}</Badge>
-                      ) : (
-                        <span className="text-muted-foreground text-sm">—</span>
-                      )}
-                    </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <Progress value={row.completionRate} className="h-2 flex-1" />
-                        <span className="text-xs font-bold text-sidebar-primary w-10 text-left">
-                          {Math.round(row.completionRate)}%
-                        </span>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Platform breakdown */}
-      <Card className="border-border/60 shadow-sm">
-        <CardHeader className="pb-4">
-          <CardTitle className="text-lg font-bold">أداء المنصات</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-4 gap-3">
-            {platformRows.map((row) => (
-              <div
-                key={row.platform.id}
-                className="rounded-xl border border-border bg-muted/20 p-4 space-y-3"
-              >
-                <div className="flex items-center gap-2">
-                  <PlatformIcon name={row.platform.name} icon={row.platform.icon ?? undefined} className="h-4 w-4" />
-                  <span className="font-semibold text-sm leading-tight">{row.platform.name}</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 text-center">
-                  <div className="bg-green-50 rounded-lg py-2 border border-green-100">
-                    <p className="text-xl font-bold text-green-600">{row.periodCompleted}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">مكتملة</p>
-                  </div>
-                  <div className="bg-emerald-50 rounded-lg py-2 border border-emerald-100">
-                    <p className="text-xl font-bold text-emerald-600">{row.periodCompletedOnTime}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">في الوقت</p>
-                  </div>
-                  <div className="bg-orange-50 rounded-lg py-2 border border-orange-100">
-                    <p className="text-xl font-bold text-orange-600">{row.periodCompletedLate}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">مكتملة متأخرة</p>
-                  </div>
-                  <div className="bg-red-50 rounded-lg py-2 border border-red-100">
-                    <p className="text-xl font-bold text-red-600">{row.periodOverdue}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">غير مكتملة متأخرة</p>
-                  </div>
-                  <div className="bg-sidebar-primary/5 rounded-lg py-2 border border-sidebar-primary/10">
-                    <p className="text-xl font-bold text-sidebar-primary">{row.periodCreated}</p>
-                    <p className="text-[10px] text-muted-foreground mt-0.5">منشأة</p>
-                  </div>
-                </div>
-                <div className="space-y-1">
-                  <div className="flex justify-between text-xs text-muted-foreground">
-                    <span>الإنجاز</span>
-                    <span className="font-bold">{Math.round(row.completionRate)}%</span>
-                  </div>
-                  <Progress value={row.completionRate} className="h-1.5" />
-                </div>
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Completed tasks list */}
-      {periodStats && periodStats.completed.length > 0 && (
-        <Card className="border-border/60 shadow-sm">
-          <CardHeader className="pb-4">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-green-600" />
-              <CardTitle className="text-lg font-bold">
-                المهام المنجزة ({periodStats.completed.length})
-              </CardTitle>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            <Table>
-              <TableHeader className="bg-muted/40">
-                <TableRow>
-                  <TableHead className="text-right font-bold">المهمة</TableHead>
-                  <TableHead className="text-right font-bold">المنصة</TableHead>
-                  <TableHead className="text-right font-bold">المسؤول</TableHead>
-                  <TableHead className="text-right font-bold">تاريخ الاستحقاق</TableHead>
-                  <TableHead className="text-right font-bold">تاريخ الإنجاز</TableHead>
-                  <TableHead className="text-right font-bold">توقيت الإنجاز</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {periodStats.completed.map((task) => (
-                  <TableRow key={task.id} className="hover:bg-green-50/30 transition-colors">
-                    <TableCell className="font-medium">{task.title}</TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <PlatformIcon name={task.platform.name} />
-                        <span className="text-sm">{task.platform.name}</span>
-                      </div>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {taskAssignees(task).map(getDisplayMemberName).join("، ")}
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      <DateWithHijri date={task.dueDate} formatPattern="EEEE، d MMM" showHijri={showHijri} />
-                    </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
-                      <DateWithHijri date={task.completedAt} formatPattern="EEEE، d MMM" showHijri={showHijri} />
-                    </TableCell>
-                    <TableCell><CompletionTimingBadge task={task} /></TableCell>
-                  </TableRow>
-                ))}
-              </TableBody>
-            </Table>
-          </CardContent>
-        </Card>
-      )}
     </div>
   );
 }
