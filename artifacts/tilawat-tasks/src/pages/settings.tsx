@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   useListPlatforms, getListPlatformsQueryKey,
   useListReciters, getListRecitersQueryKey,
@@ -927,16 +927,35 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
   const [savingPage, setSavingPage] = useState(false);
   const [manageMembersPageId, setManageMembersPageId] = useState<number | null>(null);
   const [pageAssignedMembers, setPageAssignedMembers] = useState<number[]>([]);
+  const [loadingMembers, setLoadingMembers] = useState(false);
   const [savingMembers, setSavingMembers] = useState(false);
+  const membersRequestRef = useRef(0);
 
   const { data: pages } = useListPlatformPages(p.id, { query: { queryKey: getListPlatformPagesQueryKey(p.id), enabled: pagesOpen } });
   const { data: allMembers } = useListMembers({ query: { queryKey: getListMembersQueryKey(), enabled: pagesOpen } });
 
   const openManageMembers = async (pageId: number) => {
+    if (manageMembersPageId === pageId) {
+      setManageMembersPageId(null);
+      return;
+    }
+    const requestId = ++membersRequestRef.current;
     setManageMembersPageId(pageId);
-    const r = await fetch(`/api/platforms/${p.id}/pages/${pageId}/members`, { credentials: "include" });
-    const ids: number[] = await r.json();
-    setPageAssignedMembers(ids);
+    setPageAssignedMembers([]);
+    setLoadingMembers(true);
+    try {
+      const r = await fetch(`/api/platforms/${p.id}/pages/${pageId}/members`, { credentials: "include" });
+      if (!r.ok) throw new Error(String(r.status));
+      const ids: number[] = await r.json();
+      if (requestId === membersRequestRef.current) setPageAssignedMembers(Array.isArray(ids) ? ids : []);
+    } catch {
+      if (requestId === membersRequestRef.current) {
+        toast({ title: "تعذّر تحميل الأعضاء المسندين", variant: "destructive" });
+        setManageMembersPageId(null);
+      }
+    } finally {
+      if (requestId === membersRequestRef.current) setLoadingMembers(false);
+    }
   };
 
   const togglePageMember = (memberId: number) => {
@@ -949,15 +968,18 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
     if (!manageMembersPageId) return;
     setSavingMembers(true);
     try {
-      await fetch(`/api/platforms/${p.id}/pages/${manageMembersPageId}/members`, {
+      const r = await fetch(`/api/platforms/${p.id}/pages/${manageMembersPageId}/members`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         credentials: "include",
         body: JSON.stringify({ memberIds: pageAssignedMembers }),
       });
+      if (!r.ok) throw new Error(String(r.status));
+      const saved: number[] = await r.json();
       queryClient.invalidateQueries({ queryKey: ["page-members", manageMembersPageId] });
       setManageMembersPageId(null);
-      toast({ title: "تم حفظ الأعضاء المسندين" });
+      const names = (allMembers ?? []).filter((m) => saved.includes(m.id)).map((m) => m.name);
+      toast({ title: "تم حفظ الأعضاء المسندين", description: names.length > 0 ? names.join("، ") : "لا يوجد أعضاء مسندون لهذه الصفحة" });
     } catch {
       toast({ title: "حدث خطأ", variant: "destructive" });
     } finally {
@@ -1170,33 +1192,8 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
                           </Select>
                         )}
                       </div>
-                    ) : manageMembersPageId === pg.id ? (
-                      <div className="p-2 space-y-2 bg-green-50/50 border-t border-green-100">
-                        <p className="text-xs font-semibold text-green-800 flex items-center gap-1">
-                          <Users className="h-3 w-3" /> اختر الأعضاء المسؤولين عن هذه الصفحة
-                        </p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {allMembers?.map((m) => {
-                            const isSelected = pageAssignedMembers.includes(m.id);
-                            return (
-                              <button key={m.id} type="button" onClick={() => togglePageMember(m.id)}
-                                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all ${isSelected ? "bg-sidebar-primary text-sidebar-primary-foreground border-sidebar-primary" : "bg-muted text-muted-foreground border-border hover:border-sidebar-primary/50"}`}>
-                                {m.name}
-                              </button>
-                            );
-                          })}
-                        </div>
-                        <div className="flex gap-1">
-                          <Button size="sm" className="h-7 px-2 bg-sidebar-primary text-sidebar-primary-foreground text-xs" onClick={savePageMembers} disabled={savingMembers}>
-                            {savingMembers ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-                            <span className="mr-1">حفظ</span>
-                          </Button>
-                          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => setManageMembersPageId(null)}>
-                            <X className="h-3 w-3" />
-                          </Button>
-                        </div>
-                      </div>
                     ) : (
+                      <>
                       <div className="flex items-center justify-between px-3 py-1.5">
                         <div className="flex flex-col min-w-0">
                           <span className="text-sm font-medium">{pg.name || reciter?.name || "صفحة عامة"}</span>
@@ -1210,8 +1207,9 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
                           )}
                         </div>
                         <div className="flex gap-0.5 shrink-0">
-                          <Button variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-green-600 hover:bg-green-50"
+                          <Button variant="ghost" size="icon" className={`h-6 w-6 hover:text-green-600 hover:bg-green-50 ${manageMembersPageId === pg.id ? "text-green-600 bg-green-50" : "text-muted-foreground"}`}
                             title="إسناد أعضاء للصفحة"
+                            aria-expanded={manageMembersPageId === pg.id}
                             onClick={() => openManageMembers(pg.id)}>
                             <Users className="h-3 w-3" />
                           </Button>
@@ -1225,6 +1223,38 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
                           </Button>
                         </div>
                       </div>
+                      {manageMembersPageId === pg.id && (
+                      <div className="p-2 space-y-2 bg-green-50/50 border-t border-green-100">
+                        <p className="text-xs font-semibold text-green-800 flex items-center gap-1">
+                          <Users className="h-3 w-3" /> اختر الأعضاء المسؤولين عن صفحة «{pg.name || reciter?.name || "صفحة عامة"}»
+                        </p>
+                        {loadingMembers ? (
+                          <p className="text-xs text-muted-foreground flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> جارٍ تحميل الأعضاء المسندين…</p>
+                        ) : (
+                        <div className="flex flex-wrap gap-1.5">
+                          {allMembers?.map((m) => {
+                            const isSelected = pageAssignedMembers.includes(m.id);
+                            return (
+                              <button key={m.id} type="button" onClick={() => togglePageMember(m.id)}
+                                className={`px-2.5 py-1 rounded-md text-xs font-medium border transition-all ${isSelected ? "bg-sidebar-primary text-sidebar-primary-foreground border-sidebar-primary" : "bg-muted text-muted-foreground border-border hover:border-sidebar-primary/50"}`}>
+                                {m.name}
+                              </button>
+                            );
+                          })}
+                        </div>
+                        )}
+                        <div className="flex gap-1">
+                          <Button size="sm" className="h-7 px-2 bg-sidebar-primary text-sidebar-primary-foreground text-xs" onClick={savePageMembers} disabled={savingMembers || loadingMembers}>
+                            {savingMembers ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                            <span className="mr-1">حفظ</span>
+                          </Button>
+                          <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => setManageMembersPageId(null)}>
+                            <X className="h-3 w-3" />
+                          </Button>
+                        </div>
+                      </div>
+                      )}
+                      </>
                     )}
                   </li>
                 );

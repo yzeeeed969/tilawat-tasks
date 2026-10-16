@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { db, platformsTable, platformPagesTable, recitersTable, pageMembersTable } from "@workspace/db";
+import { db, membersTable, platformsTable, platformPagesTable, recitersTable, pageMembersTable } from "@workspace/db";
 import { eq, inArray, sql } from "drizzle-orm";
 import { ensureReciterSubstitutionSchema } from "../services/reciter-substitution-schema";
 import { CreatePlatformBody, DeletePlatformParams, UpdatePlatformParams, UpdatePlatformBody, CreatePlatformPageBody, CreatePlatformPageParams } from "@workspace/api-zod";
@@ -173,15 +173,24 @@ router.get("/platforms/:platformId/pages/:id/members", async (req, res) => {
 // PUT /platforms/:platformId/pages/:id/members
 router.put("/platforms/:platformId/pages/:id/members", async (req, res) => {
   const id = Number(req.params.id);
-  const { memberIds } = req.body as { memberIds: number[] };
-  if (!Array.isArray(memberIds)) {
+  const { memberIds: rawMemberIds } = req.body as { memberIds: unknown };
+  if (!Number.isInteger(id) || id <= 0 || !Array.isArray(rawMemberIds)) {
     res.status(400).json({ error: "memberIds must be an array" });
     return;
   }
-  await db.delete(pageMembersTable).where(eq(pageMembersTable.pageId, id));
-  if (memberIds.length > 0) {
-    await db.insert(pageMembersTable).values(memberIds.map((memberId) => ({ pageId: id, memberId })));
-  }
+  // بلا تكرار، وأعضاء موجودون فعلًا فقط؛ والاستبدال في معاملة واحدة كي لا تُفقد القائمة القديمة إن فشل الإدراج.
+  const requested = [...new Set(rawMemberIds.map(Number).filter((value) => Number.isInteger(value) && value > 0))];
+  const existing = requested.length === 0 ? [] : await db
+    .select({ id: membersTable.id })
+    .from(membersTable)
+    .where(inArray(membersTable.id, requested));
+  const memberIds = existing.map((row) => row.id);
+  await db.transaction(async (tx) => {
+    await tx.delete(pageMembersTable).where(eq(pageMembersTable.pageId, id));
+    if (memberIds.length > 0) {
+      await tx.insert(pageMembersTable).values(memberIds.map((memberId) => ({ pageId: id, memberId })));
+    }
+  });
   res.json(memberIds);
 });
 
