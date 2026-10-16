@@ -475,6 +475,8 @@ const CSS = `
 .manassat .fmeta strong{color:var(--green)}
 .manassat .feed{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
 @media(max-width:640px){.manassat .feed{grid-template-columns:1fr}}
+/* عناصر الشبكات لا تتّسع بنصّها الطويل (العنوان يُقصّ بـ…) — بلا هذا يتجاوز الصفحة عرض الشاشة. */
+.manassat .clips>*,.manassat .apps>*,.manassat .accs>*,.manassat .feed>*,.manassat .designs>*{min-width:0}
 .manassat .fitem{display:flex;align-items:center;gap:12px;background:var(--surface);border:1px solid var(--line);border-radius:14px;padding:12px 14px;box-shadow:0 4px 14px rgba(42,38,32,.05)}
 .manassat .fi-ico{width:38px;height:38px;border-radius:10px;flex:none;display:grid;place-items:center;color:#fff}
 .manassat .fi-main{min-width:0;flex:1}
