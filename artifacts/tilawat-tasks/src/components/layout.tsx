@@ -101,25 +101,27 @@ function isActivePath(location: string, href: string) {
   return location === path || (path !== "/" && location.startsWith(path));
 }
 
-// المجموعات القابلة للطيّ: تُفتح تلقائيًا إن كانت الصفحة الحالية داخلها، وتُحفظ حالتها.
-function useGroupOpen(key: string, containsActive: boolean) {
-  const storageKey = `nav-group:${key}`;
-  const [open, setOpen] = useState<boolean>(() => {
+// المجموعات القابلة للطيّ (أكورديون): مجموعة واحدة مفتوحة في كل مرة حتى تبقى القائمة كلها ظاهرة بلا تمرير
+// حتى على الشاشات القصيرة. تُفتح تلقائيًا المجموعة التي فيها الصفحة الحالية، ويُحفظ الاختيار.
+const NAV_GROUP_KEY = "nav-open-group";
+function useOpenGroup(groups: NavGroup[], location: string) {
+  const activeKey = groups.find((group) => group.items.some((item) => isActivePath(location, item.href)))?.key ?? null;
+  const [openKey, setOpenKey] = useState<string | null>(() => {
     try {
-      const stored = localStorage.getItem(storageKey);
-      return stored === null ? containsActive : stored === "true";
+      return activeKey ?? localStorage.getItem(NAV_GROUP_KEY);
     } catch {
-      return containsActive;
+      return activeKey;
     }
   });
   useEffect(() => {
-    if (containsActive) setOpen(true);
-  }, [containsActive]);
-  const toggle = () => setOpen((value) => {
-    try { localStorage.setItem(storageKey, String(!value)); } catch { /* ignore */ }
-    return !value;
+    if (activeKey) setOpenKey(activeKey);
+  }, [activeKey]);
+  const toggle = (key: string) => setOpenKey((current) => {
+    const next = current === key ? null : key;
+    try { localStorage.setItem(NAV_GROUP_KEY, next ?? ""); } catch { /* ignore */ }
+    return next;
   });
-  return { open, toggle };
+  return { openKey, toggle };
 }
 
 function NavLinkRow({ item, location, onNavigate }: { item: NavItem; location: string; onNavigate?: () => void }) {
@@ -138,14 +140,15 @@ function NavLinkRow({ item, location, onNavigate }: { item: NavItem; location: s
   );
 }
 
-function CollapsibleNavGroup({ group, location, onNavigate }: { group: NavGroup; location: string; onNavigate?: () => void }) {
+function CollapsibleNavGroup({ group, location, open, onToggle, onNavigate }: {
+  group: NavGroup; location: string; open: boolean; onToggle: () => void; onNavigate?: () => void;
+}) {
   const containsActive = group.items.some((item) => isActivePath(location, item.href));
-  const { open, toggle } = useGroupOpen(group.key, containsActive);
   return (
     <div className="pt-2">
       <button
         type="button"
-        onClick={toggle}
+        onClick={onToggle}
         aria-expanded={open}
         className="w-full flex items-center gap-2 px-3 py-1.5 rounded-md text-[12px] font-bold text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent/30 transition-colors"
       >
@@ -357,6 +360,7 @@ function SettingsPanel({ open, onOpenChange, navMain, navGroups, location }: {
   const { showHijri, toggleHijri } = useHijriPreference();
   const [profileOpen, setProfileOpen] = useState(false);
   const [switching, setSwitching] = useState(false);
+  const { openKey, toggle: toggleGroup } = useOpenGroup(navGroups ?? [], location);
   const close = () => onOpenChange(false);
   const name = user?.displayName || user?.username || "مستخدم";
 
@@ -406,10 +410,10 @@ function SettingsPanel({ open, onOpenChange, navMain, navGroups, location }: {
 
           <div className="flex-1 overflow-y-auto px-3 py-3 space-y-4">
             {(navMain?.length || navGroups?.length) ? (
-              <section className="space-y-0.5 md:hidden">
-                <p className="px-3 pb-1 text-[11px] font-bold text-muted-foreground">القائمة</p>
+              <section className="space-y-0.5 md:hidden bg-sidebar rounded-xl p-2">
+                <p className="px-3 pb-1 text-[11px] font-bold text-sidebar-foreground/60">القائمة</p>
                 {navMain?.map((item) => <NavLinkRow key={item.href} item={item} location={location} onNavigate={close} />)}
-                {navGroups?.map((group) => <CollapsibleNavGroup key={group.key} group={group} location={location} onNavigate={close} />)}
+                {navGroups?.map((group) => <CollapsibleNavGroup key={group.key} group={group} location={location} open={openKey === group.key} onToggle={() => toggleGroup(group.key)} onNavigate={close} />)}
               </section>
             ) : null}
 
@@ -497,6 +501,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     },
   ].filter((group) => group.items.length > 0);
 
+  const { openKey, toggle: toggleGroup } = useOpenGroup(groups, location);
   const name = user?.displayName || user?.username || "مستخدم";
   const initials = initialsOf(name);
 
@@ -516,7 +521,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">
           {mainItems.map((item) => <NavLinkRow key={item.href} item={item} location={location} />)}
           {groups.length > 0 && <div className="pt-1 mt-2 border-t border-sidebar-border/70" />}
-          {groups.map((group) => <CollapsibleNavGroup key={group.key} group={group} location={location} />)}
+          {groups.map((group) => <CollapsibleNavGroup key={group.key} group={group} location={location} open={openKey === group.key} onToggle={() => toggleGroup(group.key)} />)}
         </nav>
 
         {/* أسفل ثابت: الإعدادات + الملف الشخصي — لا يحتاج تمريرًا أبدًا. */}
