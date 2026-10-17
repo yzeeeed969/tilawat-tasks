@@ -175,8 +175,8 @@
     "feed.newRecitation": "نئی تلاوت",
     "feed.newDesign": "نیا ڈیزائن",
     "summary.title": "پروجیکٹ کا خلاصہ",
-    "summary.youtubeVideos": "یوٹیوب پر ویڈیوز",
-    "summary.totalPosts": "یوٹیوب اور انسٹاگرام پر پوسٹس",
+    "summary.youtubeVideos": "YouTube پر ویڈیوز",
+    "summary.totalPosts": "YouTube اور Instagram پر پوسٹس",
     "summary.accounts": "اکاؤنٹس اور چینلز جو ہم چلاتے ہیں",
     "summary.teamClips": "ٹیم کی تیار کردہ ویڈیوز",
     "unit.videos": "{n} ویڈیوز"
@@ -352,8 +352,8 @@
     "feed.newRecitation": "নতুন তিলাওয়াত",
     "feed.newDesign": "নতুন ডিজাইন",
     "summary.title": "প্রকল্পের সারসংক্ষেপ",
-    "summary.youtubeVideos": "ইউটিউবে ভিডিও",
-    "summary.totalPosts": "ইউটিউব ও ইনস্টাগ্রামে পোস্ট",
+    "summary.youtubeVideos": "YouTube-এ ভিডিও",
+    "summary.totalPosts": "YouTube ও Instagram-এ পোস্ট",
     "summary.accounts": "আমাদের পরিচালিত অ্যাকাউন্ট ও চ্যানেল",
     "summary.teamClips": "টিমের তৈরি ক্লিপ",
     "unit.videos": "{n} ভিডিও"
@@ -411,8 +411,8 @@
     "feed.newRecitation": "تلاوت جدید",
     "feed.newDesign": "طرح جدید",
     "summary.title": "خلاصهٔ پروژه",
-    "summary.youtubeVideos": "ویدیوها در یوتیوب",
-    "summary.totalPosts": "پست‌ها در یوتیوب و اینستاگرام",
+    "summary.youtubeVideos": "ویدیوها در YouTube",
+    "summary.totalPosts": "پست‌ها در YouTube و Instagram",
     "summary.accounts": "حساب‌ها و کانال‌هایی که مدیریت می‌کنیم",
     "summary.teamClips": "ویدیوهای تولید تیم",
     "unit.videos": "{n} ویدیو"
@@ -470,8 +470,8 @@
     "feed.newRecitation": "नई तिलावत",
     "feed.newDesign": "नया डिज़ाइन",
     "summary.title": "परियोजना सारांश",
-    "summary.youtubeVideos": "यूट्यूब पर वीडियो",
-    "summary.totalPosts": "यूट्यूब और इंस्टाग्राम पर पोस्ट",
+    "summary.youtubeVideos": "YouTube पर वीडियो",
+    "summary.totalPosts": "YouTube और Instagram पर पोस्ट",
     "summary.accounts": "हमारे द्वारा संचालित अकाउंट और चैनल",
     "summary.teamClips": "टीम द्वारा निर्मित क्लिप",
     "unit.videos": "{n} वीडियो"
