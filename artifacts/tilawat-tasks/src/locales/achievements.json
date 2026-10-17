@@ -82,7 +82,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "en": {
     "page.title": "Platforms of the Haramain Recitations App",
@@ -162,7 +164,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "ur": {
     "page.title": "حرمین تلاوات ایپ کے پلیٹ فارمز",
@@ -242,7 +246,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "id": {
     "page.title": "Platform Proyek Aplikasi Tilawah Haramain",
@@ -322,7 +328,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "tr": {
     "page.title": "Haremeyn Tilavet Uygulaması Platformları",
@@ -402,7 +410,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "bn": {
     "page.title": "হারামাইন তিলাওয়াত অ্যাপ প্রকল্পের প্ল্যাটফর্মসমূহ",
@@ -482,7 +492,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "fa": {
     "page.title": "پلتفرم‌های پروژهٔ اپلیکیشن تلاوت حرمین",
@@ -562,7 +574,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "hi": {
     "page.title": "हरमैन तिलावत ऐप परियोजना के प्लेटफ़ॉर्म",
@@ -642,7 +656,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "ms": {
     "page.title": "Platform Projek Aplikasi Tilawah Haramain",
@@ -722,7 +738,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "ha": {
     "page.title": "Dandamalin Aikin App na Tilawar Haramain",
@@ -802,7 +820,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "ru": {
     "page.title": "Платформы проекта приложения «Тиляуат Харамейн»",
@@ -882,7 +902,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "sw": {
     "page.title": "Majukwaa ya Mradi wa Programu ya Tilawa za Haramain",
@@ -962,7 +984,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "de": {
     "page.title": "Plattformen des Haramain-Rezitations-App-Projekts",
@@ -1042,7 +1066,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "zh": {
     "page.title": "哈拉曼诵读应用项目平台",
@@ -1122,7 +1148,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "am": {
     "page.title": "የሐረማይን ቅዳሴ መተግበሪያ ፕሮጀክት መድረኮች",
@@ -1202,7 +1230,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "fil": {
     "page.title": "Mga Platform ng Proyektong Haramain Recitations App",
@@ -1282,7 +1312,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "ne": {
     "page.title": "हरमैन तिलावत एप परियोजनाका प्लेटफर्महरू",
@@ -1362,7 +1394,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "es": {
     "page.title": "Plataformas del proyecto de la app de recitaciones de los Haramain",
@@ -1442,7 +1476,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "fr": {
     "page.title": "Plateformes du projet d'application de récitations des Haramain",
@@ -1522,7 +1558,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "ko": {
     "page.title": "하라마인 낭송 앱 프로젝트 플랫폼",
@@ -1602,7 +1640,9 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   },
   "so": {
     "page.title": "Hirarka Mashruuca Abka Tilaawadda Haramayn",
@@ -1682,6 +1722,8 @@
     "row.openPage": "فتح الصفحة ↗",
     "row.openChannel": "فتح القناة ↗",
     "app.downloadAppStore": "تحميل على App Store",
-    "app.downloadGooglePlay": "تحميل على Google Play"
+    "app.downloadGooglePlay": "تحميل على Google Play",
+    "theme.dark": "الوضع الليلي",
+    "theme.light": "الوضع النهاري"
   }
 }

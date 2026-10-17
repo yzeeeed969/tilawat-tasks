@@ -31,6 +31,27 @@ type Showcase = {
 
 type T = (key: AchKey, vars?: Record<string, string | number>) => string;
 
+// النمط الليلي: اختيار الزائر المحفوظ، وإلا نظام الجهاز (prefers-color-scheme).
+type Theme = "light" | "dark";
+const THEME_KEY = "achievements-theme";
+function savedTheme(): Theme | null {
+  try {
+    const value = localStorage.getItem(THEME_KEY);
+    return value === "dark" || value === "light" ? value : null;
+  } catch {
+    return null;
+  }
+}
+function initialTheme(): Theme {
+  const saved = savedTheme();
+  if (saved) return saved;
+  try {
+    return typeof window !== "undefined" && window.matchMedia?.("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  } catch {
+    return "light";
+  }
+}
+
 // كل الأرقام بالأرقام اللاتينية مع فواصل الآلاف (227,117,540).
 const ar = (n: number) => Math.round(n).toLocaleString("en-US");
 // الرقم كاملًا بفواصل الآلاف (بلا اختصار «ألف/مليون»).
@@ -126,6 +147,22 @@ export default function Achievements() {
   const rootRef = useRef<HTMLDivElement>(null);
   const [copied, setCopied] = useState(false);
   const [lang, setLang] = useState<AchLang>(initialLang);
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [themeChosen, setThemeChosen] = useState<boolean>(() => savedTheme() !== null);
+  // بلا اختيار يدوي: يتبع نظام الجهاز حتى لو تغيّر أثناء التصفّح.
+  useEffect(() => {
+    if (themeChosen || typeof window === "undefined" || !window.matchMedia) return;
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = () => setTheme(media.matches ? "dark" : "light");
+    media.addEventListener?.("change", onChange);
+    return () => media.removeEventListener?.("change", onChange);
+  }, [themeChosen]);
+  const toggleTheme = () => {
+    const next: Theme = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    setThemeChosen(true);
+    try { localStorage.setItem(THEME_KEY, next); } catch { /* ignore */ }
+  };
   const t: T = (key, vars) => translate(lang, key, vars);
   const rtl = isRtl(lang);
   const fonts = fontPlan(lang);
@@ -255,6 +292,7 @@ export default function Achievements() {
       ref={rootRef}
       dir={rtl ? "rtl" : "ltr"}
       lang={lang}
+      data-theme={theme}
       style={{ "--display": fonts.display, "--body": fonts.body } as React.CSSProperties}
     >
       <style>{CSS}</style>
@@ -271,6 +309,13 @@ export default function Achievements() {
                   {ACH_LANGS.map((option) => <option key={option.code} value={option.code}>{option.label}</option>)}
                 </select>
               </label>
+              <button className="share-btn theme-btn" type="button" onClick={toggleTheme} aria-label={t(theme === "dark" ? "theme.light" : "theme.dark")} title={t(theme === "dark" ? "theme.light" : "theme.dark")}>
+                {theme === "dark" ? (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4.5" /><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4" /></svg>
+                ) : (
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M21 12.8A9 9 0 1111.2 3a7 7 0 009.8 9.8z" /></svg>
+                )}
+              </button>
               <button className="share-btn" id="shareBtn" type="button" onClick={share}>
                 {copied ? (
                   <><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#F6F1E7" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M20 6L9 17l-5-5" /></svg> {t("share.copied")}</>
@@ -386,8 +431,8 @@ export default function Achievements() {
           )))}
         </div>
 
-        {/* «أحدث ما نشرنا»: قائمة منسدلة مطوية افتراضيًا — ريلز انستقرام وفيسبوك بمشاهداتها، ثم آخر المنشورات والتصاميم. */}
-        {data && (p?.instagram.reels.length || p?.facebook.reels.length || data.feed.length || data.designs.items.length) ? (
+        {/* «أحدث ما نشرنا»: قائمة منسدلة مطوية افتراضيًا — ريلز انستقرام وفيسبوك بمشاهداتها، ثم آخر المنشورات. */}
+        {data && (p?.instagram.reels.length || p?.facebook.reels.length || data.feed.length) ? (
           <details className="latest">
             <summary>
               <span className="gico g-feed">{ICONS.feed}</span>
@@ -410,16 +455,6 @@ export default function Achievements() {
                     );
                   })}
                 </div>
-              )}
-              {data.designs.items.length > 0 && (
-                <>
-                  <div className="reels-label">{t("platform.designs")} — {t("designs.latest")}</div>
-                  <div className="designs">
-                    {data.designs.items.map((item) => (
-                      <Ext key={item.url} href={item.url} className="dcard">{ICONS.image}</Ext>
-                    ))}
-                  </div>
-                </>
               )}
             </div>
           </details>
@@ -643,6 +678,7 @@ const CSS = `
 .manassat .reel .rinfo b{font-size:12px;font-weight:600;display:block;line-height:1.3}
 .manassat .reel .rinfo span{font-size:11px;opacity:.92}
 .manassat footer{margin-top:20px;border-top:1px solid var(--line);background:var(--surface-2)}
+.manassat .theme-btn{padding:9px 11px}
 .manassat .foot{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding-block:22px;color:var(--muted);font-size:13.5px}
 .manassat .foot .jname{font-family:var(--display);color:var(--green)}
 .manassat .note{max-width:var(--maxw);margin:16px auto 34px;font-size:12px;color:var(--muted);background:var(--gold-soft);border:1px solid #E7D7AC;border-radius:12px;padding:12px 15px}
@@ -675,4 +711,22 @@ const CSS = `
 .manassat .dcard{aspect-ratio:1/1;border-radius:12px;overflow:hidden;background:linear-gradient(135deg,#C9A74A,#9a7320);display:grid;place-items:center;color:rgba(255,255,255,.72)}
 .manassat .reel.fb{background:linear-gradient(160deg,#1877F2,#0d5bbf)}
 .manassat .reel.fb .rplay i svg{fill:#1877F2}
+/* ── النمط الليلي: خلفية خضراء داكنة دافئة، بطاقات أفتح قليلًا، نص عاجي، واللمسات الذهبية والخضراء واضحة ── */
+.manassat[data-theme="dark"]{
+  color-scheme: dark;
+  --bg:#0E1D18; --surface:#16302A; --surface-2:#1B3832; --ink:#F3EBDC; --muted:#BDB4A1;
+  --green:#5DBE9A; --green-soft:#21453B; --gold:#D6AE57; --gold-soft:#3A3121; --line:#2B4A41;
+  --shadow:0 10px 30px rgba(0,0,0,.35);
+}
+.manassat[data-theme="dark"] .hero{background:linear-gradient(180deg, rgba(8,32,26,.72) 0%, rgba(7,26,21,.86) 62%, rgba(6,22,18,.94) 100%),url('/haram-achievements-bg.jpg') center 26%/cover no-repeat}
+.manassat[data-theme="dark"] .btn-green{background:#1E7A5E}
+.manassat[data-theme="dark"] .btn-gold{background:#B88A2E}
+.manassat[data-theme="dark"] .ftag{color:#E9D9A9;border-color:#5C4B25}
+.manassat[data-theme="dark"] .note{border-color:#5C4B25;color:var(--ink)}
+.manassat[data-theme="dark"] .store a{border-color:#3C5F55;background:#21423A;color:var(--ink)}
+.manassat[data-theme="dark"] .prow,.manassat[data-theme="dark"] .fitem{box-shadow:0 4px 14px rgba(0,0,0,.25)}
+.manassat[data-theme="dark"] .gcount{background:#21423A;border-color:#3C5F55}
+.manassat[data-theme="dark"] .c-tw,.manassat[data-theme="dark"] .gico.c-tw{background:#2A2A2A}
+.manassat[data-theme="dark"] .qr-zoom{background:rgba(3,12,9,.85)}
+.manassat[data-theme="dark"] .lang-pick select option{color:#F3EBDC;background:#16302A}
 `;

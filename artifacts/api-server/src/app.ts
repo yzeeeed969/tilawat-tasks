@@ -244,5 +244,5 @@ app.use((req, res, next) => {
 
 app.use("/api", router);
 
-// Keep Railway rebuilding the API service when bundled frontend assets change. (v48: achievements redesign)
+// Keep Railway rebuilding the API service when bundled frontend assets change. (v50: achievements dark mode)
 export default app;
