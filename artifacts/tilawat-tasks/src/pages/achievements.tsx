@@ -10,7 +10,7 @@ import { ACH_LANGS, dateLocale, fontPlan, initialLang, isRtl, saveLang, translat
 
 type Clip = { title: string; views: number | null; url: string; thumbnail: string | null; publishedAt: string | null };
 type Account = { name: string; url: string | null; followers: number | null; posts: number | null };
-type Reel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null };
+type Reel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null; views?: number | null };
 type Showcase = {
   generatedAt: string;
   hero: { youtubeViews: number; youtubeSubscribers: number; appsCount: number };
@@ -107,7 +107,7 @@ function ReelsRow({ reels, fb, t, lang }: { reels: Reel[]; fb?: boolean; t: T; l
         <Ext key={reel.url} href={reel.url} className={`reel${fb ? " fb" : ""}`}>
           {reel.thumbnail && <img className="rimg" src={reel.thumbnail} alt="" loading="lazy" referrerPolicy="no-referrer" />}
           <div className="rplay"><i><PlayIcon size={17} fill={fb ? "#1877F2" : "#8134AF"} /></i></div>
-          <div className="rinfo"><b><bdi>{reel.account}</bdi></b><span className="mono-num">{ago(reel.publishedAt, t, lang)}</span></div>
+          <div className="rinfo"><b><bdi>{reel.account}</bdi></b><span className="mono-num">{reel.views != null ? `${t("unit.views", { n: compact(reel.views)! })} · ${ago(reel.publishedAt, t, lang)}` : ago(reel.publishedAt, t, lang)}</span></div>
         </Ext>
       ))}
     </div>

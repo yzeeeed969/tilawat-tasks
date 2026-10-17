@@ -35,7 +35,19 @@ const YOUTUBE_PLATFORM_NAME = /يوتيوب|youtube/i;
 export type ShowcaseClip = { title: string; views: number | null; url: string; thumbnail: string | null; publishedAt: string | null };
 // posts = العدد الحقيقي الكلي من المنصة نفسها (إنستقرام: media_count)، وnull حيث يتعذّر (فلا يُعرض).
 export type ShowcaseAccount = { name: string; url: string | null; followers: number | null; posts: number | null };
-export type ShowcaseReel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null };
+// views: مشاهدات الريل من ميتا (للريلز الظاهرة فقط)؛ null ⇐ تُعرض الأقدمية بدلها (قبل إعادة التفويض أو عند التعذّر).
+export type ShowcaseReel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null; views?: number | null };
+// داخلي (لا يصل للرد): ما يلزم لجلب مشاهدات الريل بعد اختياره.
+type InstagramReelSource = ShowcaseReel & { pageId: number; mediaId: string };
+type FacebookReelSource = ShowcaseReel & { videoId: string; token: string };
+
+// قيمة مقياس من رد insights (media: values[0].value، وأحيانًا total_value.value).
+function metricValue(body: any): number | null {
+  const metric = Array.isArray(body?.data) ? body.data[0] : null;
+  const raw = metric?.total_value?.value ?? metric?.values?.[0]?.value;
+  const value = typeof raw === "number" ? raw : raw != null ? Number(raw) : NaN;
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
 export type ShowcaseData = {
   generatedAt: string;
   dataVersion?: number;
@@ -261,13 +273,14 @@ async function igGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; mediaCountByPage: Map<number, number>; reels: Array<ShowcaseReel & { pageId: number }>; problems: Map<number, string>; configured: boolean }> {
+async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; mediaCountByPage: Map<number, number>; reels: InstagramReelSource[]; tokensByPage: Map<number, string>; problems: Map<number, string>; configured: boolean }> {
   const followersByPage = new Map<number, number>();
   const mediaCountByPage = new Map<number, number>();
   const problems = new Map<number, string>();
-  const reels: Array<ShowcaseReel & { pageId: number }> = [];
+  const reels: InstagramReelSource[] = [];
+  const tokensByPage = new Map<number, string>();
   const config = getInstagramConfig();
-  if (!config) return { followersByPage, mediaCountByPage, reels, problems, configured: false };
+  if (!config) return { followersByPage, mediaCountByPage, reels, tokensByPage, problems, configured: false };
   await ensureInstagramSchema();
   const accounts = rowsOf(await db.execute(sql`
     SELECT a.id, a.page_id, a.access_token_encrypted, a.username, r.name AS reciter_name
@@ -277,6 +290,7 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
     const token = decryptToken(account.access_token_encrypted, config.appSecret);
     if (!token) { problems.set(Number(account.page_id), "تعذّر قراءة مفتاح الحساب — أعد ربطه من «مراقبة إنستقرام»"); return; }
     const name = String(account.reciter_name);
+    tokensByPage.set(Number(account.page_id), token);
     try {
       const me = await igGet("me", { fields: "followers_count,media_count", access_token: token });
       if (me?.followers_count != null) followersByPage.set(Number(account.page_id), Number(me.followers_count));
@@ -289,16 +303,16 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
       for (const item of Array.isArray(media?.data) ? media.data : []) {
         if (!item?.permalink || String(item.media_product_type ?? "").toUpperCase() === "STORY") continue;
         if (String(item.media_type) !== "VIDEO" && String(item.media_product_type ?? "").toUpperCase() !== "REELS") continue;
-        reels.push({ pageId: Number(account.page_id), account: name, url: String(item.permalink), thumbnail: item.thumbnail_url ?? null, publishedAt: item.timestamp ? new Date(item.timestamp).toISOString() : null });
+        reels.push({ pageId: Number(account.page_id), mediaId: String(item.id), account: name, url: String(item.permalink), thumbnail: item.thumbnail_url ?? null, publishedAt: item.timestamp ? new Date(item.timestamp).toISOString() : null });
       }
     } catch { /* بلا مقاطع لهذا الحساب */ }
   }));
-  return { followersByPage, mediaCountByPage, reels, problems, configured: true };
+  return { followersByPage, mediaCountByPage, reels, tokensByPage, problems, configured: true };
 }
 
 // صف إنستقرام: 3 مقاطع حديثة من حسابات مختلفة (حساب واحد لكل مقطع)، باختيار عشوائي بين الحسابات.
-function pickInstagramRow(reels: Array<ShowcaseReel & { pageId: number }>, random = Math.random): ShowcaseReel[] {
-  const latestByAccount = new Map<number, ShowcaseReel & { pageId: number }>();
+function pickInstagramRow<T extends ShowcaseReel & { pageId: number }>(reels: T[], random = Math.random): T[] {
+  const latestByAccount = new Map<number, T>();
   for (const reel of [...reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt)))) {
     if (!latestByAccount.has(reel.pageId)) latestByAccount.set(reel.pageId, reel);
   }
@@ -307,7 +321,18 @@ function pickInstagramRow(reels: Array<ShowcaseReel & { pageId: number }>, rando
     const j = Math.floor(random() * (i + 1));
     [pool[i], pool[j]] = [pool[j], pool[i]];
   }
-  return pool.slice(0, 3).map(({ pageId: _p, ...reel }) => reel);
+  return pool.slice(0, 3);
+}
+
+// مشاهدات ريل إنستقرام (instagram_business_manage_insights). أي تعذّر ⇐ null بلا خطأ.
+async function instagramReelViews(mediaId: string, token: string | undefined): Promise<number | null> {
+  if (!token) return null;
+  try { return metricValue(await igGet(`${mediaId}/insights`, { metric: "views", access_token: token })); } catch { return null; }
+}
+
+// مشاهدات ريل فيسبوك (read_insights). أي تعذّر ⇐ null بلا خطأ.
+async function facebookReelViews(videoId: string, token: string): Promise<number | null> {
+  try { return metricValue(await fbGet(`${videoId}/video_insights`, { metric: "blue_reels_play_count", access_token: token })); } catch { return null; }
 }
 
 // ── فيسبوك ─────────────────────────────────────────────────────────────────────────────────────
@@ -318,10 +343,10 @@ async function fbGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; reels: ShowcaseReel[]; problems: Map<number, string>; configured: boolean }> {
+async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; reels: FacebookReelSource[]; problems: Map<number, string>; configured: boolean }> {
   const followersByReciter = new Map<number, number>();
   const problems = new Map<number, string>();
-  const reels: ShowcaseReel[] = [];
+  const reels: FacebookReelSource[] = [];
   const config = getFacebookConfig();
   if (!config) return { followersByReciter, reels, problems, configured: false };
   await ensureInstagramSchema();
@@ -351,7 +376,7 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
       const data = await fbGet(`${page.fb_page_id}/video_reels`, { fields: "id,created_time,picture", limit: "5", access_token: token });
       for (const row of Array.isArray(data?.data) ? data.data : []) {
         if (!row?.id) continue;
-        reels.push({ account: name, url: `https://www.facebook.com/reel/${row.id}/`, thumbnail: row.picture ?? null, publishedAt: row.created_time ? new Date(row.created_time).toISOString() : null });
+        reels.push({ videoId: String(row.id), token, account: name, url: `https://www.facebook.com/reel/${row.id}/`, thumbnail: row.picture ?? null, publishedAt: row.created_time ? new Date(row.created_time).toISOString() : null });
       }
     } catch { /* بلا مقاطع */ }
   }));
@@ -437,8 +462,8 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const [youtubeAll, apps, instagram, facebook, teamClips] = await Promise.all([
     loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
     loadApps(),
-    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), mediaCountByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }>, problems: new Map<number, string>(), configured: true })),
-    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[], problems: new Map<number, string>(), configured: true })),
+    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), mediaCountByPage: new Map<number, number>(), reels: [] as InstagramReelSource[], tokensByPage: new Map<number, string>(), problems: new Map<number, string>(), configured: true })),
+    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as FacebookReelSource[], problems: new Map<number, string>(), configured: true })),
     loadTeamClips().catch(() => 0),
   ]);
   const youtube = youtubeAll.filter((channel) => {
@@ -559,6 +584,11 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     twitter: withNumber(twitterAccounts, "تويتر / X"),
   };
   const youtubeVideos = youtube.reduce((sum, channel) => sum + (channel.videos ?? 0), 0);
+  const [instagramRow, facebookRow] = await Promise.all([
+    Promise.all(pickInstagramRow(instagram.reels).map(async ({ pageId, mediaId, ...reel }) => ({ ...reel, views: await instagramReelViews(mediaId, instagram.tokensByPage.get(pageId)) }))),
+    Promise.all([...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3)
+      .map(async ({ videoId, token, ...reel }) => ({ ...reel, views: await facebookReelViews(videoId, token) }))),
+  ]);
 
   return {
     generatedAt: now.toISOString(),
@@ -578,8 +608,8 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     youtube: youtube.map(({ reciterName: _r, recent: _recent, ...channel }) => channel),
     apps: apps.map((app) => ({ name: app.name, iosUrl: app.iosUrl, androidUrl: app.androidUrl, avatar: avatarFor(app.name) })),
     platforms: {
-      instagram: { accounts: shown.instagram, reels: pickInstagramRow(instagram.reels) },
-      facebook: { accounts: shown.facebook, reels: [...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3) },
+      instagram: { accounts: shown.instagram, reels: instagramRow },
+      facebook: { accounts: shown.facebook, reels: facebookRow },
       telegram: { accounts: shown.telegram },
       twitter: { accounts: shown.twitter },
     },

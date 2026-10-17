@@ -1,7 +1,8 @@
 // اتصال بواجهة إنستقرام الرسمية (Instagram API with Instagram Login) — من الخادم فقط.
-// المراجع: Business Login for Instagram + IG User Media. صلاحية واحدة: instagram_business_basic.
+// المراجع: Business Login for Instagram + IG User Media + IG Media Insights.
+// الصلاحيات: instagram_business_basic + instagram_business_manage_insights (مشاهدات الريلز الظاهرة في صفحة المنصات).
 
-export const INSTAGRAM_SCOPES = ["instagram_business_basic"] as const;
+export const INSTAGRAM_SCOPES = ["instagram_business_basic", "instagram_business_manage_insights"] as const;
 const GRAPH_VERSION = "v25.0";
 const AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize";
 const SHORT_TOKEN_URL = "https://api.instagram.com/oauth/access_token";

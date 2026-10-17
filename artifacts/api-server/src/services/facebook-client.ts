@@ -1,7 +1,8 @@
 // اتصال بواجهة فيسبوك (Graph API) — من الخادم فقط. تفويض Facebook Login بصلاحيتين للقراءة:
-// pages_show_list (قائمة الصفحات) + pages_read_engagement (قراءة منشورات/ريلز الصفحة). لا نشر.
+// pages_show_list (قائمة الصفحات) + pages_read_engagement (قراءة منشورات/ريلز الصفحة) + read_insights
+// (مشاهدات الريلز الظاهرة في صفحة المنصات). لا نشر.
 
-export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement"] as const;
+export const FACEBOOK_SCOPES = ["pages_show_list", "pages_read_engagement", "read_insights"] as const;
 const GRAPH_VERSION = "v25.0";
 const GRAPH = `https://graph.facebook.com/${GRAPH_VERSION}`;
 const DIALOG = `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`;
