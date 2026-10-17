@@ -115,12 +115,12 @@
     "feed.newClip": "New clip — {name}",
     "feed.newRecitation": "New recitation",
     "feed.newDesign": "New design",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Project tally",
+    "summary.youtubeVideos": "videos on YouTube",
+    "summary.totalPosts": "posts on YouTube & Instagram",
+    "summary.accounts": "accounts & channels we manage",
+    "summary.teamClips": "clips produced by the team",
+    "unit.videos": "{n} videos"
   },
   "ur": {
     "page.title": "حرمین تلاوات ایپ کے پلیٹ فارمز",
@@ -174,12 +174,12 @@
     "feed.newClip": "نئی ویڈیو — {name}",
     "feed.newRecitation": "نئی تلاوت",
     "feed.newDesign": "نیا ڈیزائن",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "پروجیکٹ کا خلاصہ",
+    "summary.youtubeVideos": "یوٹیوب پر ویڈیوز",
+    "summary.totalPosts": "یوٹیوب اور انسٹاگرام پر پوسٹس",
+    "summary.accounts": "اکاؤنٹس اور چینلز جو ہم چلاتے ہیں",
+    "summary.teamClips": "ٹیم کی تیار کردہ ویڈیوز",
+    "unit.videos": "{n} ویڈیوز"
   },
   "id": {
     "page.title": "Platform Proyek Aplikasi Tilawah Haramain",
@@ -233,12 +233,12 @@
     "feed.newClip": "Klip baru — {name}",
     "feed.newRecitation": "Tilawah baru",
     "feed.newDesign": "Desain baru",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Rangkuman proyek",
+    "summary.youtubeVideos": "video di YouTube",
+    "summary.totalPosts": "unggahan di YouTube & Instagram",
+    "summary.accounts": "akun & kanal yang kami kelola",
+    "summary.teamClips": "klip produksi tim",
+    "unit.videos": "{n} video"
   },
   "tr": {
     "page.title": "Haremeyn Tilavet Uygulaması Platformları",
@@ -292,12 +292,12 @@
     "feed.newClip": "Yeni klip — {name}",
     "feed.newRecitation": "Yeni tilavet",
     "feed.newDesign": "Yeni tasarım",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Proje özeti",
+    "summary.youtubeVideos": "YouTube'daki videolar",
+    "summary.totalPosts": "YouTube ve Instagram gönderileri",
+    "summary.accounts": "yönettiğimiz hesap ve kanallar",
+    "summary.teamClips": "ekip yapımı klipler",
+    "unit.videos": "{n} video"
   },
   "bn": {
     "page.title": "হারামাইন তিলাওয়াত অ্যাপ প্রকল্পের প্ল্যাটফর্মসমূহ",
@@ -351,12 +351,12 @@
     "feed.newClip": "নতুন ক্লিপ — {name}",
     "feed.newRecitation": "নতুন তিলাওয়াত",
     "feed.newDesign": "নতুন ডিজাইন",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "প্রকল্পের সারসংক্ষেপ",
+    "summary.youtubeVideos": "ইউটিউবে ভিডিও",
+    "summary.totalPosts": "ইউটিউব ও ইনস্টাগ্রামে পোস্ট",
+    "summary.accounts": "আমাদের পরিচালিত অ্যাকাউন্ট ও চ্যানেল",
+    "summary.teamClips": "টিমের তৈরি ক্লিপ",
+    "unit.videos": "{n} ভিডিও"
   },
   "fa": {
     "page.title": "پلتفرم‌های پروژهٔ اپلیکیشن تلاوت حرمین",
@@ -410,12 +410,12 @@
     "feed.newClip": "ویدیوی جدید — {name}",
     "feed.newRecitation": "تلاوت جدید",
     "feed.newDesign": "طرح جدید",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "خلاصهٔ پروژه",
+    "summary.youtubeVideos": "ویدیوها در یوتیوب",
+    "summary.totalPosts": "پست‌ها در یوتیوب و اینستاگرام",
+    "summary.accounts": "حساب‌ها و کانال‌هایی که مدیریت می‌کنیم",
+    "summary.teamClips": "ویدیوهای تولید تیم",
+    "unit.videos": "{n} ویدیو"
   },
   "hi": {
     "page.title": "हरमैन तिलावत ऐप परियोजना के प्लेटफ़ॉर्म",
@@ -469,12 +469,12 @@
     "feed.newClip": "नई क्लिप — {name}",
     "feed.newRecitation": "नई तिलावत",
     "feed.newDesign": "नया डिज़ाइन",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "परियोजना सारांश",
+    "summary.youtubeVideos": "यूट्यूब पर वीडियो",
+    "summary.totalPosts": "यूट्यूब और इंस्टाग्राम पर पोस्ट",
+    "summary.accounts": "हमारे द्वारा संचालित अकाउंट और चैनल",
+    "summary.teamClips": "टीम द्वारा निर्मित क्लिप",
+    "unit.videos": "{n} वीडियो"
   },
   "ms": {
     "page.title": "Platform Projek Aplikasi Tilawah Haramain",
@@ -528,12 +528,12 @@
     "feed.newClip": "Klip baharu — {name}",
     "feed.newRecitation": "Tilawah baharu",
     "feed.newDesign": "Reka bentuk baharu",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Ringkasan projek",
+    "summary.youtubeVideos": "video di YouTube",
+    "summary.totalPosts": "siaran di YouTube & Instagram",
+    "summary.accounts": "akaun & saluran yang kami urus",
+    "summary.teamClips": "klip hasil pasukan",
+    "unit.videos": "{n} video"
   },
   "ha": {
     "page.title": "Dandamalin Aikin App na Tilawar Haramain",
@@ -587,12 +587,12 @@
     "feed.newClip": "Sabon bidiyo — {name}",
     "feed.newRecitation": "Sabuwar tilawa",
     "feed.newDesign": "Sabon zane",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Takaitawar aikin",
+    "summary.youtubeVideos": "bidiyo a YouTube",
+    "summary.totalPosts": "posts a YouTube da Instagram",
+    "summary.accounts": "asusu da tashoshin da muke sarrafawa",
+    "summary.teamClips": "bidiyon da ƙungiyar ta shirya",
+    "unit.videos": "{n} bidiyo"
   },
   "ru": {
     "page.title": "Платформы проекта приложения «Тиляуат Харамейн»",
@@ -646,12 +646,12 @@
     "feed.newClip": "Новый ролик — {name}",
     "feed.newRecitation": "Новое чтение",
     "feed.newDesign": "Новый дизайн",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Итоги проекта",
+    "summary.youtubeVideos": "видео на YouTube",
+    "summary.totalPosts": "публикации в YouTube и Instagram",
+    "summary.accounts": "аккаунты и каналы под нашим управлением",
+    "summary.teamClips": "ролики, созданные командой",
+    "unit.videos": "{n} видео"
   },
   "sw": {
     "page.title": "Majukwaa ya Mradi wa Programu ya Tilawa za Haramain",
@@ -705,12 +705,12 @@
     "feed.newClip": "Klipu mpya — {name}",
     "feed.newRecitation": "Tilawa mpya",
     "feed.newDesign": "Mchoro mpya",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Muhtasari wa mradi",
+    "summary.youtubeVideos": "video kwenye YouTube",
+    "summary.totalPosts": "machapisho kwenye YouTube na Instagram",
+    "summary.accounts": "akaunti na chaneli tunazozisimamia",
+    "summary.teamClips": "klipu zilizotengenezwa na timu",
+    "unit.videos": "{n} video"
   },
   "de": {
     "page.title": "Plattformen des Haramain-Rezitations-App-Projekts",
@@ -764,12 +764,12 @@
     "feed.newClip": "Neuer Clip — {name}",
     "feed.newRecitation": "Neue Rezitation",
     "feed.newDesign": "Neues Design",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Projektbilanz",
+    "summary.youtubeVideos": "Videos auf YouTube",
+    "summary.totalPosts": "Beiträge auf YouTube & Instagram",
+    "summary.accounts": "von uns verwaltete Konten & Kanäle",
+    "summary.teamClips": "vom Team produzierte Clips",
+    "unit.videos": "{n} Videos"
   },
   "zh": {
     "page.title": "哈拉曼诵读应用项目平台",
@@ -823,12 +823,12 @@
     "feed.newClip": "新片段 — {name}",
     "feed.newRecitation": "新诵读",
     "feed.newDesign": "新设计",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "项目总览",
+    "summary.youtubeVideos": "YouTube 视频",
+    "summary.totalPosts": "YouTube 与 Instagram 帖子",
+    "summary.accounts": "我们管理的账号与频道",
+    "summary.teamClips": "团队制作的片段",
+    "unit.videos": "{n} 个视频"
   },
   "am": {
     "page.title": "የሐረማይን ቅዳሴ መተግበሪያ ፕሮጀክት መድረኮች",
@@ -882,12 +882,12 @@
     "feed.newClip": "አዲስ ቅንጫቢ — {name}",
     "feed.newRecitation": "አዲስ ቅዳሴ",
     "feed.newDesign": "አዲስ ዲዛይን",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "የፕሮጀክት ማጠቃለያ",
+    "summary.youtubeVideos": "በ YouTube ላይ ቪዲዮዎች",
+    "summary.totalPosts": "በ YouTube እና Instagram ላይ ልጥፎች",
+    "summary.accounts": "የምናስተዳድራቸው መለያዎችና ቻናሎች",
+    "summary.teamClips": "በቡድኑ የተዘጋጁ ቅንጫቢዎች",
+    "unit.videos": "{n} ቪዲዮዎች"
   },
   "fil": {
     "page.title": "Mga Platform ng Proyektong Haramain Recitations App",
@@ -941,12 +941,12 @@
     "feed.newClip": "Bagong clip — {name}",
     "feed.newRecitation": "Bagong tilawah",
     "feed.newDesign": "Bagong disenyo",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Buod ng proyekto",
+    "summary.youtubeVideos": "mga video sa YouTube",
+    "summary.totalPosts": "mga post sa YouTube at Instagram",
+    "summary.accounts": "mga account at channel na pinamamahalaan namin",
+    "summary.teamClips": "mga clip na gawa ng koponan",
+    "unit.videos": "{n} video"
   },
   "ne": {
     "page.title": "हरमैन तिलावत एप परियोजनाका प्लेटफर्महरू",
@@ -1000,12 +1000,12 @@
     "feed.newClip": "नयाँ क्लिप — {name}",
     "feed.newRecitation": "नयाँ तिलावत",
     "feed.newDesign": "नयाँ डिजाइन",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "परियोजना सारांश",
+    "summary.youtubeVideos": "YouTube मा भिडियोहरू",
+    "summary.totalPosts": "YouTube र Instagram मा पोस्टहरू",
+    "summary.accounts": "हामीले सञ्चालन गर्ने खाता र च्यानलहरू",
+    "summary.teamClips": "टोलीले बनाएका क्लिपहरू",
+    "unit.videos": "{n} भिडियो"
   },
   "es": {
     "page.title": "Plataformas del proyecto de la app de recitaciones de los Haramain",
@@ -1059,12 +1059,12 @@
     "feed.newClip": "Nuevo clip — {name}",
     "feed.newRecitation": "Nueva recitación",
     "feed.newDesign": "Nuevo diseño",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Resumen del proyecto",
+    "summary.youtubeVideos": "videos en YouTube",
+    "summary.totalPosts": "publicaciones en YouTube e Instagram",
+    "summary.accounts": "cuentas y canales que gestionamos",
+    "summary.teamClips": "clips producidos por el equipo",
+    "unit.videos": "{n} videos"
   },
   "fr": {
     "page.title": "Plateformes du projet d'application de récitations des Haramain",
@@ -1118,12 +1118,12 @@
     "feed.newClip": "Nouveau clip — {name}",
     "feed.newRecitation": "Nouvelle récitation",
     "feed.newDesign": "Nouveau design",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Bilan du projet",
+    "summary.youtubeVideos": "vidéos sur YouTube",
+    "summary.totalPosts": "publications sur YouTube et Instagram",
+    "summary.accounts": "comptes et chaînes que nous gérons",
+    "summary.teamClips": "clips produits par l'équipe",
+    "unit.videos": "{n} vidéos"
   },
   "ko": {
     "page.title": "하라마인 낭송 앱 프로젝트 플랫폼",
@@ -1177,12 +1177,12 @@
     "feed.newClip": "새 클립 — {name}",
     "feed.newRecitation": "새 낭송",
     "feed.newDesign": "새 디자인",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "프로젝트 요약",
+    "summary.youtubeVideos": "YouTube 동영상",
+    "summary.totalPosts": "YouTube 및 Instagram 게시물",
+    "summary.accounts": "우리가 운영하는 계정 및 채널",
+    "summary.teamClips": "팀이 제작한 클립",
+    "unit.videos": "동영상 {n}개"
   },
   "so": {
     "page.title": "Hirarka Mashruuca Abka Tilaawadda Haramayn",
@@ -1236,11 +1236,11 @@
     "feed.newClip": "Muuqaal cusub — {name}",
     "feed.newRecitation": "Tilaawad cusub",
     "feed.newDesign": "Naqshad cusub",
-    "summary.title": "حصيلة المشروع",
-    "summary.youtubeVideos": "مقطع على يوتيوب",
-    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
-    "summary.accounts": "حساب وقناة نديرها",
-    "summary.teamClips": "مقطع من إنتاج الفريق",
-    "unit.videos": "{n} فيديو"
+    "summary.title": "Soo-koobidda mashruuca",
+    "summary.youtubeVideos": "muuqaallo YouTube",
+    "summary.totalPosts": "qoraallo YouTube iyo Instagram",
+    "summary.accounts": "akoonno iyo kanaallo aan maamulno",
+    "summary.teamClips": "muuqaallo ay kooxdu soo saartay",
+    "unit.videos": "{n} muuqaal"
   }
 }
