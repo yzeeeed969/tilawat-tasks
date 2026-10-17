@@ -14,8 +14,9 @@ type Reel = { account: string; url: string; thumbnail: string | null; publishedA
 type Showcase = {
   generatedAt: string;
   hero: { youtubeViews: number; youtubeSubscribers: number; appsCount: number };
+  totals?: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number };
   featured: (Clip & { channelTitle: string }) | null;
-  youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; clips: Clip[] }>;
+  youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; videos?: number | null; clips: Clip[] }>;
   apps: Array<{ name: string; iosUrl: string | null; androidUrl: string | null; avatar: string | null }>;
   platforms: {
     instagram: { accounts: Account[]; reels: Reel[] };
@@ -206,6 +207,15 @@ export default function Achievements() {
   };
 
   const hero = data?.hero ?? { youtubeViews: 0, youtubeSubscribers: 0, appsCount: 0 };
+  const totals = data?.totals ?? { youtubeVideos: 0, totalPosts: 0, accounts: 0, teamClips: 0 };
+  // رقم متحرّك في شريط «حصيلة المشروع».
+  const stat = (key: string, value: number, label: AchKey, extra?: ReactNode) => (
+    <div className="hs" key={key}>
+      <b className="mono-num count" data-to={value} key={`${key}-${value}`}>{ar(value)}</b>
+      {extra}
+      <span>{t(label)}</span>
+    </div>
+  );
   // الحاشية: اسم الجمعية بخط مميّز داخل الجملة، أينما وقع {charityName} في ترجمة اللغة.
   const [footerBefore, footerAfter = ""] = translate(lang, "footer.supportedBy", { charityName: "\u0001" }).split("\u0001");
   const p = data?.platforms;
@@ -242,10 +252,20 @@ export default function Achievements() {
             </div>
           </div>
           <h1>{t("hero.title")}</h1>
-          <div className="hero-stats">
-            <div className="hs"><b className="mono-num count" data-to={hero.youtubeViews} key={`v-${hero.youtubeViews}`}>{ar(hero.youtubeViews)}</b>{lang === "ar" && hero.youtubeViews > 0 && <em className="words">{arabicNumberWords(hero.youtubeViews)}</em>}<span>{t("hero.views")}</span></div>
-            <div className="hs"><b className="mono-num count" data-to={hero.youtubeSubscribers} key={`s-${hero.youtubeSubscribers}`}>{ar(hero.youtubeSubscribers)}</b><span>{t("hero.subscribers")}</span></div>
-            <div className="hs"><b className="mono-num count" data-to={hero.appsCount} key={`a-${hero.appsCount}`}>{ar(hero.appsCount)}</b><span>{t("hero.apps")}</span></div>
+          {/* «حصيلة المشروع»: صف رئيسي (يوتيوب والمنشورات) وصف ثانوي (الحسابات وإنتاج الفريق والتطبيقات). */}
+          <div className="summary">
+            <div className="summary-title">{t("summary.title")}</div>
+            <div className="hero-stats primary">
+              {stat("v", hero.youtubeViews, "hero.views", lang === "ar" && hero.youtubeViews > 0 ? <em className="words">{arabicNumberWords(hero.youtubeViews)}</em> : null)}
+              {stat("s", hero.youtubeSubscribers, "hero.subscribers")}
+              {stat("yv", totals.youtubeVideos, "summary.youtubeVideos")}
+              {stat("tp", totals.totalPosts, "summary.totalPosts")}
+            </div>
+            <div className="hero-stats secondary">
+              {stat("ac", totals.accounts, "summary.accounts")}
+              {stat("tc", totals.teamClips, "summary.teamClips")}
+              {stat("a", hero.appsCount, "hero.apps")}
+            </div>
           </div>
         </div>
       </div>
@@ -285,6 +305,7 @@ export default function Achievements() {
                     <span className="meta">
                       {channel.subscribers != null && <strong className="mono-num">{t("unit.subscribers", { n: compact(channel.subscribers)! })}</strong>}
                       {channel.views != null && <strong className="mono-num">{t("unit.views", { n: compact(channel.views)! })}</strong>}
+                      {channel.videos != null && <strong className="mono-num">{t("unit.videos", { n: compact(channel.videos)! })}</strong>}
                     </span>
                   </span>
                   <Ext href={channel.url} className="btn btn-red">{t("youtube.visitChannel")}</Ext>
@@ -436,9 +457,18 @@ const CSS = `
 .manassat .brandbar{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap}
 .manassat .plate{background:#FBF9F2;border-radius:14px;padding:9px 16px;box-shadow:0 8px 22px rgba(0,0,0,.22);display:flex;align-items:center;gap:10px}
 .manassat .hero h1{font-size:clamp(30px,6.4vw,52px);margin-top:20px;line-height:1.1}
-.manassat .hero-stats{display:flex;gap:12px;flex-wrap:wrap;margin-top:26px}
-.manassat .hs{background:rgba(246,241,231,.08);border:1px solid rgba(246,241,231,.18);padding:14px 18px;border-radius:14px;min-width:118px}
-.manassat .hs b{font-family:var(--display);font-size:clamp(22px,4.4vw,32px);color:#E9D9A9;line-height:1;display:block}
+.manassat .summary{margin-top:24px;max-width:920px}
+.manassat .summary-title{display:inline-flex;align-items:center;gap:8px;font-family:var(--display);font-size:14px;font-weight:600;letter-spacing:.2px;color:#E9D9A9;margin-bottom:10px}
+.manassat .summary-title::before{content:"";width:22px;height:2px;border-radius:2px;background:#B88A2E}
+.manassat .hero-stats{display:grid;gap:10px}
+.manassat .hero-stats.primary{grid-template-columns:repeat(4,minmax(0,1fr))}
+.manassat .hero-stats.secondary{grid-template-columns:repeat(3,minmax(0,1fr));margin-top:10px}
+.manassat .hs{background:rgba(246,241,231,.08);border:1px solid rgba(246,241,231,.18);padding:14px 16px;border-radius:14px;min-width:0}
+.manassat .hero-stats.secondary .hs{background:rgba(246,241,231,.05);padding:11px 16px}
+.manassat .hero-stats.secondary .hs b{font-size:clamp(18px,3.4vw,24px)}
+@media (max-width:760px){.manassat .hero-stats.primary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:420px){.manassat .hero-stats.secondary{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.manassat .hs b{font-family:var(--display);font-size:clamp(20px,3.4vw,30px);color:#E9D9A9;line-height:1;display:block}
 .manassat .hs span{color:rgba(246,241,231,.82);font-size:13px;margin-top:7px;display:block}
 .manassat .hs .words{display:block;font-style:normal;font-family:var(--body);font-size:12.5px;line-height:1.55;color:rgba(233,217,169,.92);margin-top:8px;max-width:30ch}
 .manassat section{padding-block:40px}

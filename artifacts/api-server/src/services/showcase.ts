@@ -40,8 +40,12 @@ export type ShowcaseData = {
   generatedAt: string;
   dataVersion?: number;
   hero: { youtubeViews: number; youtubeSubscribers: number; appsCount: number };
+  // «حصيلة المشروع» — كلها آلية: youtubeVideos = مجموع videoCount للقنوات الظاهرة؛ totalPosts = فيديوهات يوتيوب +
+  // منشورات إنستقرام (media_count) للحسابات الظاهرة؛ accounts = حسابات يوتيوب+إنستقرام+فيسبوك+تلقرام الظاهرة؛
+  // teamClips = الشواهد الموثّقة في نظام المهام (بلا الشواهد التكميلية/المحذوفة).
+  totals: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number };
   featured: (ShowcaseClip & { channelTitle: string }) | null;
-  youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; clips: ShowcaseClip[] }>;
+  youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; videos: number | null; clips: ShowcaseClip[] }>;
   apps: Array<{ name: string; iosUrl: string | null; androidUrl: string | null; avatar: string | null }>;
   platforms: {
     instagram: { accounts: ShowcaseAccount[]; reels: ShowcaseReel[] };
@@ -202,6 +206,8 @@ async function loadYoutube(targets: Array<YoutubeTarget & { channelId: string }>
       avatar: (thumbs.high ?? thumbs.medium ?? thumbs.default)?.url ?? null,
       subscribers: stats.hiddenSubscriberCount ? null : stats.subscriberCount != null ? Number(stats.subscriberCount) : null,
       views: stats.viewCount != null ? Number(stats.viewCount) : null,
+      // عدد الفيديوهات من نفس الطلب (statistics) — بلا طلب إضافي.
+      videos: stats.videoCount != null ? Number(stats.videoCount) : null,
       // الأحدث + أكثر مقطعين مشاهدة في القناة (احتياطًا: الأكثر مشاهدة بين المقاطع الحديثة).
       clips: mixClips(recent, (popularIds.get(target.channelId) ?? []).map(toClip).filter((clip): clip is ShowcaseClip => Boolean(clip))),
       recent,
@@ -229,6 +235,17 @@ async function loadPages(): Promise<PageRow[]> {
 }
 
 const cleanName = (value: unknown) => String(value ?? "").replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\uFEFF\u0640]/g, "").trim();
+
+async function loadTeamClips(): Promise<number> {
+  const [row] = rowsOf(await db.execute(sql`
+    SELECT
+      (SELECT count(*) FROM task_proofs tp JOIN tasks t ON t.id = tp.task_id
+        WHERE t.deleted_at IS NULL AND tp.deleted_at IS NULL AND NOT tp.is_supplementary)
+      + (SELECT count(*) FROM tasks t
+        WHERE t.deleted_at IS NULL AND t.submission_url IS NOT NULL
+          AND NOT EXISTS (SELECT 1 FROM task_proofs tp WHERE tp.task_id = t.id AND tp.deleted_at IS NULL)) AS n`));
+  return Number(row?.n ?? 0);
+}
 
 async function loadApps() {
   return rowsOf(await db.execute(sql`SELECT id, name, ios_url, android_url, covers_all_reciters FROM platforms ORDER BY covers_all_reciters DESC, id`))
@@ -417,11 +434,12 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   for (const row of youtubeReport) row.hiddenByAdmin = hiddenPageIds.has(row.pageId);
   const youtubeResolved = allYoutubeResolved.filter((target) => !hiddenPageIds.has(target.pageId));
   const facebookReciters = new Set(pagesOf(FACEBOOK_PLATFORM_NAME).map((page) => page.reciterId).filter((id): id is number => id != null));
-  const [youtubeAll, apps, instagram, facebook] = await Promise.all([
+  const [youtubeAll, apps, instagram, facebook, teamClips] = await Promise.all([
     loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
     loadApps(),
     loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), mediaCountByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }>, problems: new Map<number, string>(), configured: true })),
     loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[], problems: new Map<number, string>(), configured: true })),
+    loadTeamClips().catch(() => 0),
   ]);
   const youtube = youtubeAll.filter((channel) => {
     if (channel.subscribers != null || channel.views != null) return true;
@@ -534,22 +552,36 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     ...designItems.slice(0, 3).map((item) => ({ platform: "designs" as const, title: "", kind: "design" as const, url: item.url, publishedAt: item.publishedAt })),
   ].sort((a, b) => b.publishedAt.localeCompare(a.publishedAt)).slice(0, 8);
 
+  const shown = {
+    instagram: withNumber(instagramAccounts, "انستقرام"),
+    facebook: withNumber(facebookAccounts, "فيسبوك"),
+    telegram: withNumber(telegramAccounts, "تيليجرام"),
+    twitter: withNumber(twitterAccounts, "تويتر / X"),
+  };
+  const youtubeVideos = youtube.reduce((sum, channel) => sum + (channel.videos ?? 0), 0);
+
   return {
     generatedAt: now.toISOString(),
-    dataVersion: 3,
+    dataVersion: 4,
     hero: {
       youtubeViews: youtube.reduce((sum, channel) => sum + (channel.views ?? 0), 0),
       youtubeSubscribers: youtube.reduce((sum, channel) => sum + (channel.subscribers ?? 0), 0),
       appsCount: apps.length,
     },
+    totals: {
+      youtubeVideos,
+      totalPosts: youtubeVideos + shown.instagram.reduce((sum, account) => sum + (account.posts ?? 0), 0),
+      accounts: youtube.length + shown.instagram.length + shown.facebook.length + shown.telegram.length,
+      teamClips,
+    },
     featured,
     youtube: youtube.map(({ reciterName: _r, recent: _recent, ...channel }) => channel),
     apps: apps.map((app) => ({ name: app.name, iosUrl: app.iosUrl, androidUrl: app.androidUrl, avatar: avatarFor(app.name) })),
     platforms: {
-      instagram: { accounts: withNumber(instagramAccounts, "انستقرام"), reels: pickInstagramRow(instagram.reels) },
-      facebook: { accounts: withNumber(facebookAccounts, "فيسبوك"), reels: [...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3) },
-      telegram: { accounts: withNumber(telegramAccounts, "تيليجرام") },
-      twitter: { accounts: withNumber(twitterAccounts, "تويتر / X") },
+      instagram: { accounts: shown.instagram, reels: pickInstagramRow(instagram.reels) },
+      facebook: { accounts: shown.facebook, reels: [...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3) },
+      telegram: { accounts: shown.telegram },
+      twitter: { accounts: shown.twitter },
     },
     designs: {
       items: designItems,

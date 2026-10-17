@@ -55,7 +55,13 @@
     "footer.charityName": "جمعية جود",
     "feed.newClip": "مقطع جديد — {name}",
     "feed.newRecitation": "تلاوة جديدة",
-    "feed.newDesign": "تصميم جديد"
+    "feed.newDesign": "تصميم جديد",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "en": {
     "page.title": "Platforms of the Haramain Recitations App",
@@ -108,7 +114,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "New clip — {name}",
     "feed.newRecitation": "New recitation",
-    "feed.newDesign": "New design"
+    "feed.newDesign": "New design",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "ur": {
     "page.title": "حرمین تلاوات ایپ کے پلیٹ فارمز",
@@ -161,7 +173,13 @@
     "footer.charityName": "جود چیریٹی",
     "feed.newClip": "نئی ویڈیو — {name}",
     "feed.newRecitation": "نئی تلاوت",
-    "feed.newDesign": "نیا ڈیزائن"
+    "feed.newDesign": "نیا ڈیزائن",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "id": {
     "page.title": "Platform Proyek Aplikasi Tilawah Haramain",
@@ -214,7 +232,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Klip baru — {name}",
     "feed.newRecitation": "Tilawah baru",
-    "feed.newDesign": "Desain baru"
+    "feed.newDesign": "Desain baru",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "tr": {
     "page.title": "Haremeyn Tilavet Uygulaması Platformları",
@@ -267,7 +291,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Yeni klip — {name}",
     "feed.newRecitation": "Yeni tilavet",
-    "feed.newDesign": "Yeni tasarım"
+    "feed.newDesign": "Yeni tasarım",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "bn": {
     "page.title": "হারামাইন তিলাওয়াত অ্যাপ প্রকল্পের প্ল্যাটফর্মসমূহ",
@@ -320,7 +350,13 @@
     "footer.charityName": "জুদ চ্যারিটি",
     "feed.newClip": "নতুন ক্লিপ — {name}",
     "feed.newRecitation": "নতুন তিলাওয়াত",
-    "feed.newDesign": "নতুন ডিজাইন"
+    "feed.newDesign": "নতুন ডিজাইন",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "fa": {
     "page.title": "پلتفرم‌های پروژهٔ اپلیکیشن تلاوت حرمین",
@@ -373,7 +409,13 @@
     "footer.charityName": "مؤسسهٔ جود",
     "feed.newClip": "ویدیوی جدید — {name}",
     "feed.newRecitation": "تلاوت جدید",
-    "feed.newDesign": "طرح جدید"
+    "feed.newDesign": "طرح جدید",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "hi": {
     "page.title": "हरमैन तिलावत ऐप परियोजना के प्लेटफ़ॉर्म",
@@ -426,7 +468,13 @@
     "footer.charityName": "जूद चैरिटी",
     "feed.newClip": "नई क्लिप — {name}",
     "feed.newRecitation": "नई तिलावत",
-    "feed.newDesign": "नया डिज़ाइन"
+    "feed.newDesign": "नया डिज़ाइन",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "ms": {
     "page.title": "Platform Projek Aplikasi Tilawah Haramain",
@@ -479,7 +527,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Klip baharu — {name}",
     "feed.newRecitation": "Tilawah baharu",
-    "feed.newDesign": "Reka bentuk baharu"
+    "feed.newDesign": "Reka bentuk baharu",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "ha": {
     "page.title": "Dandamalin Aikin App na Tilawar Haramain",
@@ -532,7 +586,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Sabon bidiyo — {name}",
     "feed.newRecitation": "Sabuwar tilawa",
-    "feed.newDesign": "Sabon zane"
+    "feed.newDesign": "Sabon zane",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "ru": {
     "page.title": "Платформы проекта приложения «Тиляуат Харамейн»",
@@ -585,7 +645,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Новый ролик — {name}",
     "feed.newRecitation": "Новое чтение",
-    "feed.newDesign": "Новый дизайн"
+    "feed.newDesign": "Новый дизайн",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "sw": {
     "page.title": "Majukwaa ya Mradi wa Programu ya Tilawa za Haramain",
@@ -638,7 +704,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Klipu mpya — {name}",
     "feed.newRecitation": "Tilawa mpya",
-    "feed.newDesign": "Mchoro mpya"
+    "feed.newDesign": "Mchoro mpya",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "de": {
     "page.title": "Plattformen des Haramain-Rezitations-App-Projekts",
@@ -691,7 +763,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Neuer Clip — {name}",
     "feed.newRecitation": "Neue Rezitation",
-    "feed.newDesign": "Neues Design"
+    "feed.newDesign": "Neues Design",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "zh": {
     "page.title": "哈拉曼诵读应用项目平台",
@@ -744,7 +822,13 @@
     "footer.charityName": "Jood 慈善会",
     "feed.newClip": "新片段 — {name}",
     "feed.newRecitation": "新诵读",
-    "feed.newDesign": "新设计"
+    "feed.newDesign": "新设计",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "am": {
     "page.title": "የሐረማይን ቅዳሴ መተግበሪያ ፕሮጀክት መድረኮች",
@@ -797,7 +881,13 @@
     "footer.charityName": "ጁድ ድርጅት",
     "feed.newClip": "አዲስ ቅንጫቢ — {name}",
     "feed.newRecitation": "አዲስ ቅዳሴ",
-    "feed.newDesign": "አዲስ ዲዛይን"
+    "feed.newDesign": "አዲስ ዲዛይን",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "fil": {
     "page.title": "Mga Platform ng Proyektong Haramain Recitations App",
@@ -850,7 +940,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Bagong clip — {name}",
     "feed.newRecitation": "Bagong tilawah",
-    "feed.newDesign": "Bagong disenyo"
+    "feed.newDesign": "Bagong disenyo",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "ne": {
     "page.title": "हरमैन तिलावत एप परियोजनाका प्लेटफर्महरू",
@@ -903,7 +999,13 @@
     "footer.charityName": "जुद च्यारिटी",
     "feed.newClip": "नयाँ क्लिप — {name}",
     "feed.newRecitation": "नयाँ तिलावत",
-    "feed.newDesign": "नयाँ डिजाइन"
+    "feed.newDesign": "नयाँ डिजाइन",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "es": {
     "page.title": "Plataformas del proyecto de la app de recitaciones de los Haramain",
@@ -956,7 +1058,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Nuevo clip — {name}",
     "feed.newRecitation": "Nueva recitación",
-    "feed.newDesign": "Nuevo diseño"
+    "feed.newDesign": "Nuevo diseño",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "fr": {
     "page.title": "Plateformes du projet d'application de récitations des Haramain",
@@ -1009,7 +1117,13 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Nouveau clip — {name}",
     "feed.newRecitation": "Nouvelle récitation",
-    "feed.newDesign": "Nouveau design"
+    "feed.newDesign": "Nouveau design",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "ko": {
     "page.title": "하라마인 낭송 앱 프로젝트 플랫폼",
@@ -1062,7 +1176,13 @@
     "footer.charityName": "Jood 자선단체",
     "feed.newClip": "새 클립 — {name}",
     "feed.newRecitation": "새 낭송",
-    "feed.newDesign": "새 디자인"
+    "feed.newDesign": "새 디자인",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   },
   "so": {
     "page.title": "Hirarka Mashruuca Abka Tilaawadda Haramayn",
@@ -1115,6 +1235,12 @@
     "footer.charityName": "Jood Charity",
     "feed.newClip": "Muuqaal cusub — {name}",
     "feed.newRecitation": "Tilaawad cusub",
-    "feed.newDesign": "Naqshad cusub"
+    "feed.newDesign": "Naqshad cusub",
+    "summary.title": "حصيلة المشروع",
+    "summary.youtubeVideos": "مقطع على يوتيوب",
+    "summary.totalPosts": "منشور على يوتيوب وانستقرام",
+    "summary.accounts": "حساب وقناة نديرها",
+    "summary.teamClips": "مقطع من إنتاج الفريق",
+    "unit.videos": "{n} فيديو"
   }
 }
