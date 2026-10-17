@@ -55,7 +55,8 @@ export type ShowcaseData = {
   // «حصيلة المشروع» — كلها آلية: youtubeVideos = مجموع videoCount للقنوات الظاهرة؛ totalPosts = فيديوهات يوتيوب +
   // منشورات إنستقرام (media_count) للحسابات الظاهرة؛ accounts = حسابات يوتيوب+إنستقرام+فيسبوك+تلقرام الظاهرة؛
   // teamClips = الشواهد الموثّقة في نظام المهام (بلا الشواهد التكميلية/المحذوفة).
-  totals: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number };
+  // instagramViews90 = مجموع مشاهدات حسابات انستقرام الظاهرة لآخر 90 يومًا (insights: views/total_value)؛ null ⇐ لا رقم.
+  totals: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number; instagramViews90: number | null };
   featured: (ShowcaseClip & { channelTitle: string }) | null;
   youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; videos: number | null; clips: ShowcaseClip[] }>;
   apps: Array<{ name: string; iosUrl: string | null; androidUrl: string | null; avatar: string | null }>;
@@ -278,14 +279,32 @@ async function igGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; mediaCountByPage: Map<number, number>; reels: InstagramReelSource[]; tokensByPage: Map<number, string>; problems: Map<number, string>; configured: boolean }> {
+// مشاهدات حساب انستقرام لآخر 90 يومًا: insights views (total_value) بنوافذ 30 يومًا (حدّ الواجهة) ثم الجمع.
+// أي نافذة تتعذّر ⇐ null للحساب كله (لا رقم ناقص). صلاحية instagram_business_manage_insights.
+const DAY_SECONDS = 24 * 60 * 60;
+async function instagramViews90(token: string, now = new Date()): Promise<number | null> {
+  const until = Math.floor(now.getTime() / 1000);
+  const windows = [0, 1, 2].map((i) => ({ since: until - (i + 1) * 30 * DAY_SECONDS, until: until - i * 30 * DAY_SECONDS }));
+  try {
+    const values = await Promise.all(windows.map(async (window) => metricValue(await igGet("me/insights", {
+      metric: "views", period: "day", metric_type: "total_value", since: String(window.since), until: String(window.until), access_token: token,
+    }))));
+    if (values.some((value) => value == null)) return null;
+    return values.reduce<number>((sum, value) => sum + (value ?? 0), 0);
+  } catch {
+    return null;
+  }
+}
+
+async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; mediaCountByPage: Map<number, number>; views90ByPage: Map<number, number>; reels: InstagramReelSource[]; tokensByPage: Map<number, string>; problems: Map<number, string>; configured: boolean }> {
   const followersByPage = new Map<number, number>();
+  const views90ByPage = new Map<number, number>();
   const mediaCountByPage = new Map<number, number>();
   const problems = new Map<number, string>();
   const reels: InstagramReelSource[] = [];
   const tokensByPage = new Map<number, string>();
   const config = getInstagramConfig();
-  if (!config) return { followersByPage, mediaCountByPage, reels, tokensByPage, problems, configured: false };
+  if (!config) return { followersByPage, mediaCountByPage, views90ByPage, reels, tokensByPage, problems, configured: false };
   await ensureInstagramSchema();
   const accounts = rowsOf(await db.execute(sql`
     SELECT a.id, a.page_id, a.access_token_encrypted, a.username, r.name AS reciter_name
@@ -303,6 +322,8 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
       // العدد الحقيقي الكلي لمنشورات الحساب (نفس الطلب — بلا طلب إضافي).
       if (me?.media_count != null && Number.isFinite(Number(me.media_count))) mediaCountByPage.set(Number(account.page_id), Number(me.media_count));
     } catch (err) { problems.set(Number(account.page_id), `رفضت ميتا الطلب: ${(err as Error).message}`); }
+    const views90 = await instagramViews90(token);
+    if (views90 != null) views90ByPage.set(Number(account.page_id), views90);
     try {
       const media = await igGet("me/media", { fields: "id,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp", limit: "10", access_token: token });
       for (const item of Array.isArray(media?.data) ? media.data : []) {
@@ -312,7 +333,7 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
       }
     } catch { /* بلا مقاطع لهذا الحساب */ }
   }));
-  return { followersByPage, mediaCountByPage, reels, tokensByPage, problems, configured: true };
+  return { followersByPage, mediaCountByPage, views90ByPage, reels, tokensByPage, problems, configured: true };
 }
 
 // صف إنستقرام: 3 مقاطع حديثة من حسابات مختلفة (حساب واحد لكل مقطع)، باختيار عشوائي بين الحسابات.
@@ -467,7 +488,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const [youtubeAll, apps, instagram, facebook, teamClips] = await Promise.all([
     loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
     loadApps(),
-    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), mediaCountByPage: new Map<number, number>(), reels: [] as InstagramReelSource[], tokensByPage: new Map<number, string>(), problems: new Map<number, string>(), configured: true })),
+    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), mediaCountByPage: new Map<number, number>(), views90ByPage: new Map<number, number>(), reels: [] as InstagramReelSource[], tokensByPage: new Map<number, string>(), problems: new Map<number, string>(), configured: true })),
     loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as FacebookReelSource[], problems: new Map<number, string>(), configured: true })),
     loadTeamClips().catch(() => 0),
   ]);
@@ -589,6 +610,10 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     twitter: withNumber(twitterAccounts, "تويتر / X"),
   };
   const youtubeVideos = youtube.reduce((sum, channel) => sum + (channel.videos ?? 0), 0);
+  // مشاهدات انستقرام (90 يومًا) للحسابات الظاهرة فقط؛ الحساب بلا رقم يُتخطّى، ولا رقم إطلاقًا ⇐ null.
+  const shownInstagramPages = pagesOf(INSTAGRAM_PLATFORM_NAME).filter((page) => instagram.followersByPage.has(page.id));
+  const instagramViewsList = shownInstagramPages.map((page) => instagram.views90ByPage.get(page.id)).filter((value): value is number => value != null);
+  const instagramViews90 = instagramViewsList.length > 0 ? instagramViewsList.reduce((sum, value) => sum + value, 0) : null;
   const [instagramRow, facebookRow] = await Promise.all([
     Promise.all(pickInstagramRow(instagram.reels).map(async ({ pageId, mediaId, ...reel }) => ({ ...reel, views: await instagramReelViews(mediaId, instagram.tokensByPage.get(pageId)) }))),
     Promise.all([...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3)
@@ -608,6 +633,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
       totalPosts: youtubeVideos + shown.instagram.reduce((sum, account) => sum + (account.posts ?? 0), 0),
       accounts: youtube.length + shown.instagram.length + shown.facebook.length + shown.telegram.length,
       teamClips,
+      instagramViews90,
     },
     featured,
     youtube: youtube.map(({ reciterName: _r, recent: _recent, ...channel }) => channel),

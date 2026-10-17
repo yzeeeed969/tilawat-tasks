@@ -15,7 +15,7 @@ type Reel = { account: string; url: string; thumbnail: string | null; publishedA
 type Showcase = {
   generatedAt: string;
   hero: { youtubeViews: number; youtubeSubscribers: number; appsCount: number };
-  totals?: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number };
+  totals?: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number; instagramViews90?: number | null };
   featured: (Clip & { channelTitle: string }) | null;
   youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; videos?: number | null; clips: Clip[] }>;
   apps: Array<{ name: string; iosUrl: string | null; androidUrl: string | null; avatar: string | null }>;
@@ -343,6 +343,7 @@ export default function Achievements() {
               {box("tb-ig", ICONS.ig(17), "platform.instagram", <>
                 {num("igf", igFollowers, "stat.followers")}
                 {num("igp", igPosts, "stat.posts")}
+                {totals.instagramViews90 != null && num("igv", totals.instagramViews90, "stat.views90")}
               </>)}
               {box("tb-fb", ICONS.fb(17), "platform.facebook", num("fbf", fbFollowers, "stat.followers"))}
               {box("tb-tg", ICONS.tg(17), "platform.telegram", num("tgm", tgMembers, "stat.subscribers"))}
@@ -555,8 +556,8 @@ const CSS = `
 .manassat .summary-title::before{content:"";width:22px;height:2px;border-radius:2px;background:#B88A2E}
 .manassat .tally-grid{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:10px}
 .manassat .tbox{background:rgba(246,241,231,.08);border:1px solid rgba(246,241,231,.18);border-radius:16px;padding:12px 14px 14px;min-width:0}
-.manassat .tb-yt{grid-column:span 7}
-.manassat .tb-ig{grid-column:span 5}
+.manassat .tb-yt{grid-column:span 6}
+.manassat .tb-ig{grid-column:span 6}
 .manassat .tb-fb,.manassat .tb-tg{grid-column:span 3}
 .manassat .tb-apps{grid-column:span 2}
 .manassat .tb-team{grid-column:span 4}
