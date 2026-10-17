@@ -15,7 +15,6 @@ type Diagnostics = {
   followers: Array<{ platform: string; account: string; automatic: boolean; reason: string | null }>;
   youtubeBreakdown: { channels: Array<{ channelId: string; title: string; subscribers: number | null; views: number | null; pages: string[] }>; totalViews: number; totalSubscribers: number };
   apps: string[];
-  facebookPosts: Array<{ account: string; fbPageId: string | null; realCount: number | null; complete: boolean; documented: number; checkedAt: string | null; problem: string | null }>;
 };
 const num = (n: number | null) => (n == null ? "—" : n.toLocaleString("ar-EG"));
 const PLATFORM_LABEL: Record<string, string> = { instagram: "انستقرام", facebook: "فيسبوك", telegram: "تيليجرام", twitter: "تويتر / X", designs: "تصاميم (تيليجرام)" };
@@ -114,31 +113,6 @@ export function ShowcaseManualValues() {
             <div className="pt-2 text-xs">
               <span className="text-sm font-semibold">التطبيقات المحسوبة في العدّاد ({num(diagnostics.apps.length)}): </span>
               {diagnostics.apps.join("، ") || "لا شيء"}
-            </div>
-          )}
-          {diagnostics && (diagnostics.facebookPosts?.length ?? 0) > 0 && (
-            <div className="overflow-x-auto pt-2">
-              <div className="text-sm font-semibold">فيسبوك: عدد المنشورات الحقيقي مقابل الموثّق (تشخيص — لا يظهر للزوار)</div>
-              <p className="text-xs text-muted-foreground">
-                الحقيقي = عدّ منشورات الصفحة من فيسبوك (published_posts) ويُحدَّث مرة يوميًا؛ الموثّق = شواهد المهام على هذه الصفحة.
-                قارنهما على صفحاتنا قبل اعتماد الحقيقي للعرض العام (قد تُرجع ميتا عددًا ناقصًا للصفحات القديمة).
-              </p>
-              <table className="w-full min-w-[560px] text-xs">
-                <thead><tr className="text-muted-foreground"><th className="p-1 text-right font-medium">الصفحة</th><th className="p-1 text-right font-medium">الحقيقي (فيسبوك)</th><th className="p-1 text-right font-medium">الموثّق (الشواهد)</th><th className="p-1 text-right font-medium">آخر عدّ</th><th className="p-1 text-right font-medium">ملاحظة</th></tr></thead>
-                <tbody>
-                  {diagnostics.facebookPosts.map((row, i) => (
-                    <tr key={`${row.account}-${i}`} className="border-t">
-                      <td className="p-1">{row.account}{row.fbPageId && <span className="block font-mono text-[10px] text-muted-foreground" dir="ltr">{row.fbPageId}</span>}</td>
-                      <td className="p-1 font-semibold">{row.realCount == null ? "—" : `${num(row.realCount)}${row.complete ? "" : "+"}`}</td>
-                      <td className="p-1">{num(row.documented)}</td>
-                      <td className="p-1 text-muted-foreground">{row.checkedAt ? new Date(row.checkedAt).toLocaleString("ar-SA-u-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "short", timeStyle: "short" }) : "—"}</td>
-                      <td className="p-1 text-muted-foreground">
-                        {row.problem ? <span className="text-red-700">{row.problem}</span> : !row.complete ? "توقّف العدّ عند سقف الأمان (10,000) — العدد الفعلي أكبر" : ""}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
             </div>
           )}
           {diagnostics && diagnostics.followers.length > 0 && (
