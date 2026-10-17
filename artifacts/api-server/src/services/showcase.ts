@@ -33,7 +33,8 @@ const APP_PLATFORM_NAME = /^تطبيق/;
 const YOUTUBE_PLATFORM_NAME = /يوتيوب|youtube/i;
 
 export type ShowcaseClip = { title: string; views: number | null; url: string; thumbnail: string | null; publishedAt: string | null };
-export type ShowcaseAccount = { name: string; url: string | null; followers: number | null; posts: number };
+// posts = العدد الحقيقي الكلي من المنصة نفسها (إنستقرام: media_count)، وnull حيث يتعذّر (فلا يُعرض).
+export type ShowcaseAccount = { name: string; url: string | null; followers: number | null; posts: number | null };
 export type ShowcaseReel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null };
 export type ShowcaseData = {
   generatedAt: string;
@@ -66,6 +67,8 @@ export type ShowcaseDiagnostics = {
   youtubeBreakdown: { channels: Array<{ channelId: string; title: string; subscribers: number | null; views: number | null; pages: string[] }>; totalViews: number; totalSubscribers: number };
   // التطبيقات المحسوبة في العدّاد (منصات اسمها يبدأ بـ«تطبيق»).
   apps: string[];
+  // فيسبوك (تشخيص للمدير فقط — لا يُعرض للزوار): العدد الحقيقي المحسوب عبر published_posts مقابل الشواهد الموثّقة.
+  facebookPosts: Array<{ account: string; fbPageId: string | null; realCount: number | null; complete: boolean; documented: number; checkedAt: string | null; problem: string | null }>;
 };
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -243,12 +246,13 @@ async function igGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; reels: Array<ShowcaseReel & { pageId: number }>; problems: Map<number, string>; configured: boolean }> {
+async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; mediaCountByPage: Map<number, number>; reels: Array<ShowcaseReel & { pageId: number }>; problems: Map<number, string>; configured: boolean }> {
   const followersByPage = new Map<number, number>();
+  const mediaCountByPage = new Map<number, number>();
   const problems = new Map<number, string>();
   const reels: Array<ShowcaseReel & { pageId: number }> = [];
   const config = getInstagramConfig();
-  if (!config) return { followersByPage, reels, problems, configured: false };
+  if (!config) return { followersByPage, mediaCountByPage, reels, problems, configured: false };
   await ensureInstagramSchema();
   const accounts = rowsOf(await db.execute(sql`
     SELECT a.id, a.page_id, a.access_token_encrypted, a.username, r.name AS reciter_name
@@ -262,6 +266,8 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
       const me = await igGet("me", { fields: "followers_count,media_count", access_token: token });
       if (me?.followers_count != null) followersByPage.set(Number(account.page_id), Number(me.followers_count));
       else problems.set(Number(account.page_id), "لم تُرجع ميتا عدد المتابعين لهذا الحساب");
+      // العدد الحقيقي الكلي لمنشورات الحساب (نفس الطلب — بلا طلب إضافي).
+      if (me?.media_count != null && Number.isFinite(Number(me.media_count))) mediaCountByPage.set(Number(account.page_id), Number(me.media_count));
     } catch (err) { problems.set(Number(account.page_id), `رفضت ميتا الطلب: ${(err as Error).message}`); }
     try {
       const media = await igGet("me/media", { fields: "id,media_type,media_product_type,permalink,thumbnail_url,media_url,timestamp", limit: "10", access_token: token });
@@ -272,7 +278,7 @@ async function loadInstagram(): Promise<{ followersByPage: Map<number, number>; 
       }
     } catch { /* بلا مقاطع لهذا الحساب */ }
   }));
-  return { followersByPage, reels, problems, configured: true };
+  return { followersByPage, mediaCountByPage, reels, problems, configured: true };
 }
 
 // صف إنستقرام: 3 مقاطع حديثة من حسابات مختلفة (حساب واحد لكل مقطع)، باختيار عشوائي بين الحسابات.
@@ -297,12 +303,46 @@ async function fbGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; reels: ShowcaseReel[]; problems: Map<number, string>; configured: boolean }> {
+// عدد منشورات صفحة فيسبوك الحقيقي: لا حقل مباشر في Graph API ⇐ عدّ /published_posts بدفعات 100 حتى النهاية.
+// للتشخيص فقط (قد يأتي ناقصًا لحدود ميتا) — مخزّن 24 ساعة لكل صفحة، وبسقف أمان لعدد الطلبات.
+const FB_POSTS_CACHE_MS = 24 * 60 * 60 * 1000;
+const FB_POSTS_MAX_REQUESTS = 100; // = 10,000 منشور كحدّ أعلى للعدّ في الدورة الواحدة
+type FacebookPostCount = { count: number | null; complete: boolean; checkedAt: string; error: string | null };
+const facebookPostCounts = new Map<string, FacebookPostCount & { at: number }>();
+
+async function countFacebookPosts(fbPageId: string, token: string): Promise<FacebookPostCount> {
+  const hit = facebookPostCounts.get(fbPageId);
+  if (hit && Date.now() - hit.at < FB_POSTS_CACHE_MS) return hit;
+  let count = 0;
+  let complete = false;
+  let error: string | null = null;
+  try {
+    let body: any = await fbGet(`${fbPageId}/published_posts`, { fields: "id", limit: "100", access_token: token });
+    for (let requests = 1; ; requests += 1) {
+      count += Array.isArray(body?.data) ? body.data.length : 0;
+      const next = typeof body?.paging?.next === "string" ? body.paging.next : null;
+      if (!next) { complete = true; break; }
+      if (requests >= FB_POSTS_MAX_REQUESTS) break;
+      const res = await fetch(next);
+      body = await res.json().catch(() => null);
+      if (!res.ok || body?.error) throw new Error(String(body?.error?.message ?? `HTTP ${res.status}`));
+    }
+  } catch (err) {
+    error = (err as Error).message;
+  }
+  const result = { count: error ? null : count, complete: !error && complete, checkedAt: new Date().toISOString(), error };
+  // الخطأ لا يُخزَّن: يُعاد المحاولة في البناء التالي.
+  if (!error) facebookPostCounts.set(fbPageId, { ...result, at: Date.now() });
+  return result;
+}
+
+async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; postsByReciter: Map<number, FacebookPostCount & { fbPageId: string }>; reels: ShowcaseReel[]; problems: Map<number, string>; configured: boolean }> {
   const followersByReciter = new Map<number, number>();
+  const postsByReciter = new Map<number, FacebookPostCount & { fbPageId: string }>();
   const problems = new Map<number, string>();
   const reels: ShowcaseReel[] = [];
   const config = getFacebookConfig();
-  if (!config) return { followersByReciter, reels, problems, configured: false };
+  if (!config) return { followersByReciter, postsByReciter, reels, problems, configured: false };
   await ensureInstagramSchema();
   // صفحة فيسبوك لكل قارئ: الربط المحفوظ في مراقبة إنستقرام (حساب القارئ ← صفحة فيسبوك).
   const pages = rowsOf(await db.execute(sql`
@@ -326,6 +366,7 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
       if (followers != null) followersByReciter.set(Number(page.reciter_id), Number(followers));
       else problems.set(Number(page.reciter_id), "لم تُرجع ميتا عدد متابعي الصفحة");
     } catch (err) { problems.set(Number(page.reciter_id), `رفضت ميتا الطلب: ${(err as Error).message}`); }
+    postsByReciter.set(Number(page.reciter_id), { fbPageId: String(page.fb_page_id), ...(await countFacebookPosts(String(page.fb_page_id), token)) });
     try {
       const data = await fbGet(`${page.fb_page_id}/video_reels`, { fields: "id,created_time,picture", limit: "5", access_token: token });
       for (const row of Array.isArray(data?.data) ? data.data : []) {
@@ -334,7 +375,7 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
       }
     } catch { /* بلا مقاطع */ }
   }));
-  return { followersByReciter, reels, problems, configured: true };
+  return { followersByReciter, postsByReciter, reels, problems, configured: true };
 }
 
 // ── تلقرام (Bot API: getChatMemberCount — مجاني، للعامة باسمها وللخاصة التي البوت عضو/مشرف فيها) ─────
@@ -416,8 +457,8 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const [youtubeAll, apps, instagram, facebook] = await Promise.all([
     loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
     loadApps(),
-    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }>, problems: new Map<number, string>(), configured: true })),
-    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as ShowcaseReel[], problems: new Map<number, string>(), configured: true })),
+    loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), mediaCountByPage: new Map<number, number>(), reels: [] as Array<ShowcaseReel & { pageId: number }>, problems: new Map<number, string>(), configured: true })),
+    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), postsByReciter: new Map<number, FacebookPostCount & { fbPageId: string }>(), reels: [] as ShowcaseReel[], problems: new Map<number, string>(), configured: true })),
   ]);
   const youtube = youtubeAll.filter((channel) => {
     if (channel.subscribers != null || channel.views != null) return true;
@@ -434,7 +475,8 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const instagramAccounts: ShowcaseAccount[] = pagesOf(INSTAGRAM_PLATFORM_NAME).map((page) => {
     const followers = instagram.followersByPage.get(page.id) ?? null;
     report("instagram", accountName(page), followers, !instagram.configured ? "متغيرات إنستقرام غير مضبوطة في Railway" : !igLinked.has(page.id) ? "الحساب غير مربوط (أو انقطع ربطه) في «مراقبة إنستقرام» — اربطه هناك" : instagram.problems.get(page.id) ?? null);
-    return { name: accountName(page), url: accountUrl(page), followers, posts: page.posts };
+    // المنشورات: العدد الحقيقي من إنستقرام (media_count)؛ تعذّره ⇐ لا رقم (لا عدد الشواهد).
+    return { name: accountName(page), url: accountUrl(page), followers, posts: instagram.mediaCountByPage.get(page.id) ?? null };
   });
   // فيسبوك: Graph API لصفحة القارئ المربوطة في «مراقبة إنستقرام» (حساب القارئ ← صفحة فيسبوك).
   const fbMapped = new Set(rowsOf(await db.execute(sql`SELECT a.reciter_id FROM instagram_accounts a JOIN facebook_pages fp ON fp.fb_page_id = a.fb_page_id AND fp.status = 'connected'`).catch(() => ({ rows: [] }))).map((row) => Number(row.reciter_id)));
@@ -444,7 +486,8 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
       : page.reciterId == null ? "الصفحة غير مربوطة بقارئ في صفحة المنصات"
       : !fbMapped.has(page.reciterId) ? "صفحة فيسبوك هذا القارئ غير مربوطة في «مراقبة إنستقرام» (أو تحتاج إعادة ربط فيسبوك) — اربطها هناك"
       : facebook.problems.get(page.reciterId) ?? null);
-    return { name: accountName(page), url: accountUrl(page), followers, posts: page.posts };
+    // المنشورات مخفية للزوار مؤقتًا (العدّ قد يأتي ناقصًا) — المقارنة في تشخيص المدير فقط.
+    return { name: accountName(page), url: accountUrl(page), followers, posts: null };
   });
   // تلقرام: Bot API (getChatMemberCount) للقنوات العامة، وللخاصة التي البوت عضو/مشرف فيها.
   const telegramPages = pagesOf(TELEGRAM_PLATFORM_NAME);
@@ -455,12 +498,13 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     const ref = resolveTelegramChat(page, linkedChats, seenChats);
     const result = await telegramMembers(ref.chatId);
     report("telegram", accountName(page), result.count, ref.reason ?? (result.error ? `رفض تلقرام الطلب (${result.error}) — إن كانت القناة خاصة فأضف البوت @Tilawatalharamain_bot عضوًا/مشرفًا فيها` : null));
-    return { name: accountName(page), url: accountUrl(page), followers: result.count, posts: page.posts };
+    // تلقرام: البوت لا يستطيع معرفة عدد منشورات القناة ⇐ لا رقم منشورات.
+    return { name: accountName(page), url: accountUrl(page), followers: result.count, posts: null };
   }));
   // تويتر/X: لا يوجد مصدر رسمي مجاني ⇐ الحساب بلا رقم دائمًا (لا رقم يدوي ولا تقديري).
   const twitterAccounts: ShowcaseAccount[] = pagesOf(TWITTER_PLATFORM_NAME).map((page) => {
     report("twitter", accountName(page), null, "واجهة X الرسمية لقراءة عدد المتابعين تتطلب اشتراكًا مدفوعًا (X API Basic أو أعلى) — يُعرض الحساب بلا رقم");
-    return { name: accountName(page), url: accountUrl(page), followers: null, posts: page.posts };
+    return { name: accountName(page), url: accountUrl(page), followers: null, posts: null };
   });
 
   // لا رقم آلي ⇐ لا يُعرض الحساب (يظهر من نفسه متى توفّر رقمه). السبب يبقى في التشخيص.
@@ -567,6 +611,18 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
         totalSubscribers: youtube.reduce((sum, channel) => sum + (channel.subscribers ?? 0), 0),
       },
       apps: apps.map((app) => app.name),
+      facebookPosts: pagesOf(FACEBOOK_PLATFORM_NAME).map((page) => {
+        const real = page.reciterId != null ? facebook.postsByReciter.get(page.reciterId) : undefined;
+        return {
+          account: accountName(page),
+          fbPageId: real?.fbPageId ?? null,
+          realCount: real?.count ?? null,
+          complete: real?.complete ?? false,
+          documented: page.posts,
+          checkedAt: real?.checkedAt ?? null,
+          problem: real ? real.error : "صفحة فيسبوك هذا القارئ غير مربوطة في «مراقبة إنستقرام» (أو تحتاج إعادة ربط) — لا عدّ",
+        };
+      }),
     },
   };
 }

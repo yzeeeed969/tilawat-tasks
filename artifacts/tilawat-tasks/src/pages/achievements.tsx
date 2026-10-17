@@ -9,7 +9,7 @@ import { ACH_LANGS, dateLocale, fontPlan, initialLang, isRtl, saveLang, translat
 // الأنماط محصورة تحت ‎.manassat‎ فلا تمس بقية الموقع.
 
 type Clip = { title: string; views: number | null; url: string; thumbnail: string | null; publishedAt: string | null };
-type Account = { name: string; url: string | null; followers: number | null; posts: number };
+type Account = { name: string; url: string | null; followers: number | null; posts: number | null };
 type Reel = { account: string; url: string; thumbnail: string | null; publishedAt: string | null };
 type Showcase = {
   generatedAt: string;
@@ -86,7 +86,7 @@ function AccountsGrid({ accounts, unit, t }: { accounts: Account[]; unit: AchKey
   return (
     <div className="accs">
       {accounts.map((account, index) => {
-        const parts = [account.followers != null ? t(unit, { n: compact(account.followers)! }) : null, t("unit.posts", { n: ar(account.posts) })].filter(Boolean);
+        const parts = [account.followers != null ? t(unit, { n: compact(account.followers)! }) : null, account.posts != null ? t("unit.posts", { n: ar(account.posts) }) : null].filter(Boolean);
         return (
           <Ext key={`${account.name}-${index}`} href={account.url} className="acc">
             <span className="dot" />
