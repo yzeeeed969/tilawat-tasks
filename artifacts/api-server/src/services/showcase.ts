@@ -56,7 +56,8 @@ export type ShowcaseData = {
   // منشورات إنستقرام (media_count) للحسابات الظاهرة؛ accounts = حسابات يوتيوب+إنستقرام+فيسبوك+تلقرام الظاهرة؛
   // teamClips = الشواهد الموثّقة في نظام المهام (بلا الشواهد التكميلية/المحذوفة).
   // instagramViews90 = مجموع مشاهدات حسابات انستقرام الظاهرة لآخر 90 يومًا (insights: views/total_value)؛ null ⇐ لا رقم.
-  totals: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number; instagramViews90: number | null };
+  // facebookViews90: مشاهدات فيديو صفحات فيسبوك لآخر 90 يومًا — يُعرض فقط إن رجع كاملًا لكل الصفحات الظاهرة، وإلا null.
+  totals: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number; instagramViews90: number | null; facebookViews90: number | null };
   featured: (ShowcaseClip & { channelTitle: string }) | null;
   youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; videos: number | null; clips: ShowcaseClip[] }>;
   apps: Array<{ name: string; iosUrl: string | null; androidUrl: string | null; avatar: string | null }>;
@@ -84,6 +85,8 @@ export type ShowcaseDiagnostics = {
   youtubeBreakdown: { channels: Array<{ channelId: string; title: string; subscribers: number | null; views: number | null; pages: string[] }>; totalViews: number; totalSubscribers: number };
   // التطبيقات المحسوبة في العدّاد (منصات اسمها يبدأ بـ«تطبيق»).
   apps: string[];
+  // فيسبوك (للمدير): نتيجة مقياس مشاهدات الفيديو لكل صفحة ظاهرة — لماذا يُعرض المجموع أو لا يُعرض.
+  facebookViews: { metric: string; shown: boolean; reason: string | null; pages: Array<{ account: string; value: number | null; problem: string | null }> };
 };
 
 const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
@@ -369,12 +372,37 @@ async function fbGet(path: string, params: Record<string, string>) {
   return body;
 }
 
-async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; reels: FacebookReelSource[]; problems: Map<number, string>; configured: boolean }> {
+// مشاهدات فيديو صفحة فيسبوك لآخر 90 يومًا (Page Insights: page_video_views، period=day، read_insights).
+// ثلاث نوافذ 30 يومًا؛ الدقة شرط: كل نافذة يجب أن تُرجع قيمًا يومية (≥ 28 يومًا) وإلا تُعدّ الصفحة ناقصة.
+const FACEBOOK_VIEWS_METRIC = "page_video_views";
+async function facebookViews90(pageId: string, token: string, now = new Date()): Promise<{ value: number | null; problem: string | null }> {
+  const until = Math.floor(now.getTime() / 1000);
+  const windows = [0, 1, 2].map((i) => ({ since: until - (i + 1) * 30 * DAY_SECONDS, until: until - i * 30 * DAY_SECONDS }));
+  let total = 0;
+  for (const window of windows) {
+    let body: any;
+    try {
+      body = await fbGet(`${pageId}/insights`, { metric: FACEBOOK_VIEWS_METRIC, period: "day", since: String(window.since), until: String(window.until), access_token: token });
+    } catch (err) {
+      return { value: null, problem: `رفضت ميتا ${FACEBOOK_VIEWS_METRIC}: ${(err as Error).message}` };
+    }
+    const metric = Array.isArray(body?.data) ? body.data.find((row: any) => row?.name === FACEBOOK_VIEWS_METRIC) : null;
+    const values = Array.isArray(metric?.values) ? metric.values : [];
+    const numbers = values.map((row: any) => Number(row?.value)).filter((value: number) => Number.isFinite(value) && value >= 0);
+    if (!metric) return { value: null, problem: `لم تُرجع ميتا المقياس ${FACEBOOK_VIEWS_METRIC} (قد يكون ملغى أو غير متاح لهذه الصفحة)` };
+    if (numbers.length < 28) return { value: null, problem: `بيانات ناقصة: ${numbers.length} يومًا فقط في نافذة 30 يومًا` };
+    total += numbers.reduce((sum: number, value: number) => sum + value, 0);
+  }
+  return { value: total, problem: null };
+}
+
+async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseDiagnostics["hidden"]): Promise<{ followersByReciter: Map<number, number>; viewsByReciter: Map<number, { value: number | null; problem: string | null }>; reels: FacebookReelSource[]; problems: Map<number, string>; configured: boolean }> {
   const followersByReciter = new Map<number, number>();
+  const viewsByReciter = new Map<number, { value: number | null; problem: string | null }>();
   const problems = new Map<number, string>();
   const reels: FacebookReelSource[] = [];
   const config = getFacebookConfig();
-  if (!config) return { followersByReciter, reels, problems, configured: false };
+  if (!config) return { followersByReciter, viewsByReciter, reels, problems, configured: false };
   await ensureInstagramSchema();
   // صفحة فيسبوك لكل قارئ: الربط المحفوظ في مراقبة إنستقرام (حساب القارئ ← صفحة فيسبوك).
   const pages = rowsOf(await db.execute(sql`
@@ -398,6 +426,7 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
       if (followers != null) followersByReciter.set(Number(page.reciter_id), Number(followers));
       else problems.set(Number(page.reciter_id), "لم تُرجع ميتا عدد متابعي الصفحة");
     } catch (err) { problems.set(Number(page.reciter_id), `رفضت ميتا الطلب: ${(err as Error).message}`); }
+    viewsByReciter.set(Number(page.reciter_id), await facebookViews90(String(page.fb_page_id), token));
     try {
       const data = await fbGet(`${page.fb_page_id}/video_reels`, { fields: "id,created_time,picture", limit: "5", access_token: token });
       for (const row of Array.isArray(data?.data) ? data.data : []) {
@@ -406,7 +435,7 @@ async function loadFacebook(registeredReciterIds: Set<number>, hidden: ShowcaseD
       }
     } catch { /* بلا مقاطع */ }
   }));
-  return { followersByReciter, reels, problems, configured: true };
+  return { followersByReciter, viewsByReciter, reels, problems, configured: true };
 }
 
 // ── تلقرام (Bot API: getChatMemberCount — مجاني، للعامة باسمها وللخاصة التي البوت عضو/مشرف فيها) ─────
@@ -489,7 +518,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
     loadYoutube(youtubeResolved, youtubeReport).catch(() => [] as YoutubeChannelData[]),
     loadApps(),
     loadInstagram().catch(() => ({ followersByPage: new Map<number, number>(), mediaCountByPage: new Map<number, number>(), views90ByPage: new Map<number, number>(), reels: [] as InstagramReelSource[], tokensByPage: new Map<number, string>(), problems: new Map<number, string>(), configured: true })),
-    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), reels: [] as FacebookReelSource[], problems: new Map<number, string>(), configured: true })),
+    loadFacebook(facebookReciters, hidden).catch(() => ({ followersByReciter: new Map<number, number>(), viewsByReciter: new Map<number, { value: number | null; problem: string | null }>(), reels: [] as FacebookReelSource[], problems: new Map<number, string>(), configured: true })),
     loadTeamClips().catch(() => 0),
   ]);
   const youtube = youtubeAll.filter((channel) => {
@@ -614,6 +643,14 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
   const shownInstagramPages = pagesOf(INSTAGRAM_PLATFORM_NAME).filter((page) => instagram.followersByPage.has(page.id));
   const instagramViewsList = shownInstagramPages.map((page) => instagram.views90ByPage.get(page.id)).filter((value): value is number => value != null);
   const instagramViews90 = instagramViewsList.length > 0 ? instagramViewsList.reduce((sum, value) => sum + value, 0) : null;
+  // فيسبوك: شرط الدقة — يُعرض المجموع فقط إن رجع المقياس كاملًا لكل صفحة ظاهرة؛ وإلا لا يُعرض إطلاقًا.
+  const shownFacebookPages = pagesOf(FACEBOOK_PLATFORM_NAME).filter((page) => page.reciterId != null && facebook.followersByReciter.has(page.reciterId));
+  const facebookViewRows = shownFacebookPages.map((page) => {
+    const result = facebook.viewsByReciter.get(page.reciterId!);
+    return { account: accountName(page), value: result?.value ?? null, problem: result ? result.problem : "لم يُجلب (الصفحة غير مربوطة بمفتاح فيسبوك)" };
+  });
+  const facebookComplete = facebookViewRows.length > 0 && facebookViewRows.every((row) => row.value != null);
+  const facebookViews90 = facebookComplete ? facebookViewRows.reduce((sum, row) => sum + (row.value ?? 0), 0) : null;
   const [instagramRow, facebookRow] = await Promise.all([
     Promise.all(pickInstagramRow(instagram.reels).map(async ({ pageId, mediaId, ...reel }) => ({ ...reel, views: await instagramReelViews(mediaId, instagram.tokensByPage.get(pageId)) }))),
     Promise.all([...facebook.reels].sort((a, b) => String(b.publishedAt).localeCompare(String(a.publishedAt))).slice(0, 3)
@@ -634,6 +671,7 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
       accounts: youtube.length + shown.instagram.length + shown.facebook.length + shown.telegram.length,
       teamClips,
       instagramViews90,
+      facebookViews90,
     },
     featured,
     youtube: youtube.map(({ reciterName: _r, recent: _recent, ...channel }) => channel),
@@ -667,6 +705,12 @@ export async function buildShowcase(now = new Date()): Promise<ShowcaseData> {
         totalSubscribers: youtube.reduce((sum, channel) => sum + (channel.subscribers ?? 0), 0),
       },
       apps: apps.map((app) => app.name),
+      facebookViews: {
+        metric: FACEBOOK_VIEWS_METRIC,
+        shown: facebookComplete,
+        reason: facebookComplete ? null : facebookViewRows.length === 0 ? "لا توجد صفحات فيسبوك ظاهرة" : `لا يُعرض: ${facebookViewRows.filter((row) => row.value == null).length} من ${facebookViewRows.length} صفحات بلا رقم كامل`,
+        pages: facebookViewRows,
+      },
     },
   };
 }

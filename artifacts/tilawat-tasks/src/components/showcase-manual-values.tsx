@@ -15,6 +15,7 @@ type Diagnostics = {
   followers: Array<{ platform: string; account: string; automatic: boolean; reason: string | null }>;
   youtubeBreakdown: { channels: Array<{ channelId: string; title: string; subscribers: number | null; views: number | null; pages: string[] }>; totalViews: number; totalSubscribers: number };
   apps: string[];
+  facebookViews?: { metric: string; shown: boolean; reason: string | null; pages: Array<{ account: string; value: number | null; problem: string | null }> };
 };
 const num = (n: number | null) => (n == null ? "—" : n.toLocaleString("ar-EG"));
 const PLATFORM_LABEL: Record<string, string> = { instagram: "انستقرام", facebook: "فيسبوك", telegram: "تيليجرام", twitter: "تويتر / X", designs: "تصاميم (تيليجرام)" };
@@ -158,6 +159,20 @@ export function ShowcaseManualValues() {
             <div className="pt-2 text-xs">
               <span className="text-sm font-semibold">التطبيقات المحسوبة في العدّاد ({num(diagnostics.apps.length)}): </span>
               {diagnostics.apps.join("، ") || "لا شيء"}
+            </div>
+          )}
+          {diagnostics?.facebookViews && (
+            <div className="pt-2">
+              <div className="text-sm font-semibold">فيسبوك: مشاهدات آخر 90 يومًا (المقياس {diagnostics.facebookViews.metric})</div>
+              <div className={`text-xs ${diagnostics.facebookViews.shown ? "text-green-700" : "text-amber-700"}`}>
+                {diagnostics.facebookViews.shown ? "✔ يُعرض في الصفحة العامة (رجع كاملًا لكل الصفحات)" : `✘ ${diagnostics.facebookViews.reason ?? "لا يُعرض"}`}
+              </div>
+              {diagnostics.facebookViews.pages.map((row, i) => (
+                <div key={i} className="text-xs">
+                  <span className={row.value != null ? "text-green-700" : "text-red-700"}>{row.value != null ? "✔" : "✘"}</span>{" "}
+                  <b>{row.account}</b>: {row.value != null ? num(row.value) : <span className="text-muted-foreground">{row.problem}</span>}
+                </div>
+              ))}
             </div>
           )}
           {diagnostics && diagnostics.followers.length > 0 && (

@@ -15,7 +15,7 @@ type Reel = { account: string; url: string; thumbnail: string | null; publishedA
 type Showcase = {
   generatedAt: string;
   hero: { youtubeViews: number; youtubeSubscribers: number; appsCount: number };
-  totals?: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number; instagramViews90?: number | null };
+  totals?: { youtubeVideos: number; totalPosts: number; accounts: number; teamClips: number; instagramViews90?: number | null; facebookViews90?: number | null };
   featured: (Clip & { channelTitle: string }) | null;
   youtube: Array<{ channelId: string; title: string; url: string; avatar: string | null; subscribers: number | null; views: number | null; videos?: number | null; clips: Clip[] }>;
   apps: Array<{ name: string; iosUrl: string | null; androidUrl: string | null; avatar: string | null }>;
@@ -345,7 +345,10 @@ export default function Achievements() {
                 {num("igp", igPosts, "stat.posts")}
                 {totals.instagramViews90 != null && num("igv", totals.instagramViews90, "stat.views90")}
               </>)}
-              {box("tb-fb", ICONS.fb(17), "platform.facebook", num("fbf", fbFollowers, "stat.followers"))}
+              {box("tb-fb", ICONS.fb(17), "platform.facebook", <>
+                {num("fbf", fbFollowers, "stat.followers")}
+                {totals.facebookViews90 != null && num("fbv", totals.facebookViews90, "stat.views90")}
+              </>)}
               {box("tb-tg", ICONS.tg(17), "platform.telegram", num("tgm", tgMembers, "stat.subscribers"))}
               {box("tb-apps", ICONS.appsWhite, "hero.apps", num("apps", hero.appsCount, "stat.apps"))}
               {box("tb-team", ICONS.ds(17), "team.title", (
