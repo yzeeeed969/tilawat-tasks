@@ -80,7 +80,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "en": {
     "page.title": "Platforms of the Haramain Recitations App",
@@ -158,7 +160,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "ur": {
     "page.title": "حرمین تلاوات ایپ کے پلیٹ فارمز",
@@ -236,7 +240,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "id": {
     "page.title": "Platform Proyek Aplikasi Tilawah Haramain",
@@ -314,7 +320,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "tr": {
     "page.title": "Haremeyn Tilavet Uygulaması Platformları",
@@ -392,7 +400,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "bn": {
     "page.title": "হারামাইন তিলাওয়াত অ্যাপ প্রকল্পের প্ল্যাটফর্মসমূহ",
@@ -470,7 +480,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "fa": {
     "page.title": "پلتفرم‌های پروژهٔ اپلیکیشن تلاوت حرمین",
@@ -548,7 +560,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "hi": {
     "page.title": "हरमैन तिलावत ऐप परियोजना के प्लेटफ़ॉर्म",
@@ -626,7 +640,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "ms": {
     "page.title": "Platform Projek Aplikasi Tilawah Haramain",
@@ -704,7 +720,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "ha": {
     "page.title": "Dandamalin Aikin App na Tilawar Haramain",
@@ -782,7 +800,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "ru": {
     "page.title": "Платформы проекта приложения «Тиляуат Харамейн»",
@@ -860,7 +880,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "sw": {
     "page.title": "Majukwaa ya Mradi wa Programu ya Tilawa za Haramain",
@@ -938,7 +960,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "de": {
     "page.title": "Plattformen des Haramain-Rezitations-App-Projekts",
@@ -1016,7 +1040,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "zh": {
     "page.title": "哈拉曼诵读应用项目平台",
@@ -1094,7 +1120,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "am": {
     "page.title": "የሐረማይን ቅዳሴ መተግበሪያ ፕሮጀክት መድረኮች",
@@ -1172,7 +1200,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "fil": {
     "page.title": "Mga Platform ng Proyektong Haramain Recitations App",
@@ -1250,7 +1280,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "ne": {
     "page.title": "हरमैन तिलावत एप परियोजनाका प्लेटफर्महरू",
@@ -1328,7 +1360,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "es": {
     "page.title": "Plataformas del proyecto de la app de recitaciones de los Haramain",
@@ -1406,7 +1440,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "fr": {
     "page.title": "Plateformes du projet d'application de récitations des Haramain",
@@ -1484,7 +1520,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "ko": {
     "page.title": "하라마인 낭송 앱 프로젝트 플랫폼",
@@ -1562,7 +1600,9 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   },
   "so": {
     "page.title": "Hirarka Mashruuca Abka Tilaawadda Haramayn",
@@ -1640,6 +1680,8 @@
     "telegram.title": "قنواتنا على تيليجرام",
     "row.openAccount": "فتح الحساب ↗",
     "row.openPage": "فتح الصفحة ↗",
-    "row.openChannel": "فتح القناة ↗"
+    "row.openChannel": "فتح القناة ↗",
+    "app.downloadAppStore": "تحميل على App Store",
+    "app.downloadGooglePlay": "تحميل على Google Play"
   }
 }

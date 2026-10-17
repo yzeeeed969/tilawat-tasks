@@ -380,8 +380,8 @@ export default function Achievements() {
             app.name,
             [app.iosUrl ? "App Store" : null, app.androidUrl ? "Google Play" : null].filter(Boolean).join(" · "),
             <span className="store">
-              {app.iosUrl && <a href={app.iosUrl} target="_blank" rel="noopener noreferrer">App Store</a>}
-              {app.androidUrl && <a href={app.androidUrl} target="_blank" rel="noopener noreferrer">Google Play</a>}
+              {app.iosUrl && <a href={app.iosUrl} target="_blank" rel="noopener noreferrer">{t("app.downloadAppStore")}</a>}
+              {app.androidUrl && <a href={app.androidUrl} target="_blank" rel="noopener noreferrer">{t("app.downloadGooglePlay")}</a>}
             </span>,
           )))}
         </div>

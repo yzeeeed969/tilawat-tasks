@@ -259,6 +259,11 @@ async function loadTeamClips(): Promise<number> {
   return Number(row?.n ?? 0);
 }
 
+// التطبيقات = منصات اسمها يبدأ بـ«تطبيق» أو معلّمة «تشمل كل القرّاء» — نفس القائمة للصفحة العامة ولبطاقة المدير.
+export async function loadShowcaseApps() {
+  return loadApps();
+}
+
 async function loadApps() {
   return rowsOf(await db.execute(sql`SELECT id, name, ios_url, android_url, covers_all_reciters FROM platforms ORDER BY covers_all_reciters DESC, id`))
     .filter((row) => APP_PLATFORM_NAME.test(cleanName(row.name)) || row.covers_all_reciters)

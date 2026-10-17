@@ -35,13 +35,53 @@ export function ShowcaseManualValues() {
   const { data } = useQuery({ queryKey: ["showcase-manual"], queryFn: () => api<Manual>("/api/showcase/manual") });
   const { data: diagnostics } = useQuery({ queryKey: ["showcase-diagnostics"], queryFn: () => api<Diagnostics>("/api/showcase/diagnostics") });
   const [draft, setDraft] = useState<Record<string, string>>({});
+  // أخطاء/نجاح الحفظ لكل تطبيق (يبقى ما كتبه المستخدم كما هو ليصحّحه).
+  const [appErrors, setAppErrors] = useState<Record<number, { iosUrl?: string; androidUrl?: string; general?: string }>>({});
+  const [appSaved, setAppSaved] = useState<Record<number, boolean>>({});
   const onError = (err: Error) => toast({ title: err.message, variant: "destructive" });
-  const done = () => { queryClient.invalidateQueries({ queryKey: ["showcase-manual"] }); toast({ title: "تم الحفظ — يظهر في صفحة المنصات خلال دقائق" }); };
   const saveApp = useMutation({
-    mutationFn: (v: { id: number; iosUrl: string; androidUrl: string }) => api(`/api/showcase/manual/platforms/${v.id}`, { method: "PUT", body: JSON.stringify({ iosUrl: v.iosUrl || null, androidUrl: v.androidUrl || null }) }),
-    onSuccess: done,
-    onError,
+    mutationFn: async (v: { id: number; name: string; iosUrl: string; androidUrl: string }) => {
+      const res = await fetch(`/api/showcase/manual/platforms/${v.id}`, {
+        method: "PUT",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ iosUrl: v.iosUrl || null, androidUrl: v.androidUrl || null }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) throw Object.assign(new Error(body?.message ?? "فشل الحفظ"), { fieldErrors: body?.errors });
+      return body;
+    },
+    onSuccess: (_body, v) => {
+      setAppErrors((s) => ({ ...s, [v.id]: {} }));
+      setAppSaved((s) => ({ ...s, [v.id]: true }));
+      queryClient.invalidateQueries({ queryKey: ["showcase-manual"] });
+      toast({ title: `تم حفظ روابط «${v.name}»`, description: "تظهر في صفحة المنصات خلال دقائق (أو فورًا بزر «تحديث الآن»)" });
+    },
+    onError: (err: Error & { fieldErrors?: { iosUrl?: string; androidUrl?: string } }, v) => {
+      setAppSaved((s) => ({ ...s, [v.id]: false }));
+      setAppErrors((s) => ({ ...s, [v.id]: err.fieldErrors ?? { general: err.message } }));
+      toast({ title: err.message, variant: "destructive" });
+    },
   });
+  // نفس قاعدة الخادم: فارغ مسموح، وإلا رابط صالح يبدأ بـ https://
+  const checkUrl = (value: string): string | undefined => {
+    const trimmed = value.trim();
+    if (!trimmed) return undefined;
+    if (!/^https:\/\//i.test(trimmed)) return "يجب أن يبدأ الرابط بـ https://";
+    try { const url = new URL(trimmed); if (!url.hostname.includes(".")) throw new Error(); } catch { return "الرابط غير صالح — انسخه كاملًا من صفحة التطبيق في المتجر"; }
+    return undefined;
+  };
+  const submitApp = (app: { id: number; name: string; iosUrl: string | null; androidUrl: string | null }) => {
+    const iosUrl = value(`ios-${app.id}`, app.iosUrl).trim();
+    const androidUrl = value(`android-${app.id}`, app.androidUrl).trim();
+    const errors = { iosUrl: checkUrl(iosUrl), androidUrl: checkUrl(androidUrl) };
+    if (errors.iosUrl || errors.androidUrl) {
+      setAppSaved((s) => ({ ...s, [app.id]: false }));
+      setAppErrors((s) => ({ ...s, [app.id]: errors }));
+      return;
+    }
+    saveApp.mutate({ id: app.id, name: app.name, iosUrl, androidUrl });
+  };
   const visibility = useMutation({
     mutationFn: (v: { pageId: number; hidden: boolean }) => api(`/api/showcase/pages/${v.pageId}/visibility`, { method: "PUT", body: JSON.stringify({ hidden: v.hidden }) }),
     onSuccess: () => refresh.mutate(),
@@ -54,9 +94,14 @@ export function ShowcaseManualValues() {
   });
 
   if (!data) return null;
-  const apps = data.platforms.filter((p) => /^تطبيق/.test(p.name.trim()));
+  // الخادم يرسل تطبيقات الصفحة العامة نفسها (اسم يبدأ بـ«تطبيق» أو «تشمل كل القرّاء»).
+  const apps = data.platforms;
   const value = (key: string, fallback: string | number | null) => draft[key] ?? (fallback == null ? "" : String(fallback));
-  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) => setDraft((s) => ({ ...s, [key]: e.target.value }));
+  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    setDraft((s) => ({ ...s, [key]: e.target.value }));
+    const id = Number(key.split("-")[1]);
+    setAppSaved((s) => ({ ...s, [id]: false }));
+  };
 
   return (
     <Card className="border-border/50 shadow-sm">
@@ -148,15 +193,29 @@ export function ShowcaseManualValues() {
         </div>
         <div className="space-y-2">
           <div className="text-sm font-semibold">التطبيقات</div>
-          {apps.length === 0 && <p className="text-xs text-muted-foreground">لا توجد منصات تبدأ بـ«تطبيق».</p>}
-          {apps.map((app) => (
-            <div key={app.id} className="flex flex-wrap items-center gap-2">
-              <span className="w-48 text-sm">{app.name}</span>
-              <Input dir="ltr" className="h-8 w-64" placeholder="رابط App Store" value={value(`ios-${app.id}`, app.iosUrl)} onChange={set(`ios-${app.id}`)} />
-              <Input dir="ltr" className="h-8 w-64" placeholder="رابط Google Play" value={value(`android-${app.id}`, app.androidUrl)} onChange={set(`android-${app.id}`)} />
-              <Button size="sm" variant="outline" disabled={saveApp.isPending} onClick={() => saveApp.mutate({ id: app.id, iosUrl: value(`ios-${app.id}`, app.iosUrl).trim(), androidUrl: value(`android-${app.id}`, app.androidUrl).trim() })}>حفظ</Button>
-            </div>
-          ))}
+          <p className="text-xs text-muted-foreground">كل تطبيق يظهر في الصفحة العامة. الرابطان اختياريان (قد يكون التطبيق على متجر واحد)، ويجب أن يبدأ كل رابط بـ https://.</p>
+          {apps.length === 0 && <p className="text-xs text-muted-foreground">لا توجد تطبيقات (منصات تبدأ بـ«تطبيق» أو معلّمة «تشمل كل القرّاء»).</p>}
+          {apps.map((app) => {
+            const errors = appErrors[app.id] ?? {};
+            return (
+              <div key={app.id} className="flex flex-wrap items-start gap-2">
+                <span className="w-48 pt-1.5 text-sm">{app.name}</span>
+                <div className="w-64 space-y-1">
+                  <Input dir="ltr" className={`h-8 ${errors.iosUrl ? "border-red-500 focus-visible:ring-red-500" : ""}`} placeholder="رابط App Store (https://…)" value={value(`ios-${app.id}`, app.iosUrl)} onChange={set(`ios-${app.id}`)} aria-invalid={Boolean(errors.iosUrl)} />
+                  {errors.iosUrl && <p className="text-xs text-red-600">{errors.iosUrl}</p>}
+                </div>
+                <div className="w-64 space-y-1">
+                  <Input dir="ltr" className={`h-8 ${errors.androidUrl ? "border-red-500 focus-visible:ring-red-500" : ""}`} placeholder="رابط Google Play (https://…)" value={value(`android-${app.id}`, app.androidUrl)} onChange={set(`android-${app.id}`)} aria-invalid={Boolean(errors.androidUrl)} />
+                  {errors.androidUrl && <p className="text-xs text-red-600">{errors.androidUrl}</p>}
+                </div>
+                <div className="space-y-1">
+                  <Button size="sm" variant="outline" disabled={saveApp.isPending} onClick={() => submitApp(app)}>حفظ</Button>
+                  {appSaved[app.id] && <p className="text-xs text-green-700">✓ تم الحفظ</p>}
+                  {errors.general && <p className="text-xs text-red-600">{errors.general}</p>}
+                </div>
+              </div>
+            );
+          })}
         </div>
       </CardContent>
     </Card>
