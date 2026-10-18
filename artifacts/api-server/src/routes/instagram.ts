@@ -1,11 +1,5 @@
 import { Router } from "express";
-import fs from "node:fs";
-import os from "node:os";
-import path from "node:path";
-import { pipeline } from "node:stream/promises";
 import { asc } from "drizzle-orm";
-import { facebookTestUpload } from "../services/facebook-test-upload";
-import { youtubeDownloadTest } from "../services/youtube-download-test";
 import { db, membersTable } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
 import { getPublicAppUrl } from "../lib/public-url";
@@ -227,47 +221,6 @@ router.post("/instagram/legacy-cleanup", async (req, res) => {
     return;
   }
   res.json(await applyInstagramLegacyCleanup((req as any).currentUser?.id ?? null));
-});
-
-// ⚠️ تجربة مؤقتة (تُحذف بعد القرار): هل يستطيع الخادم تنزيل فيديو يوتيوب بنفسه؟ تنزيل فقط ثم حذف — للمدير فقط.
-// افتح الرابط وأنت مسجّل دخول بحساب المدير: /api/instagram/youtube-download-test
-router.get("/instagram/youtube-download-test", async (req, res) => {
-  const channelId = String(req.query.channel ?? "UCqe5E-6-HxFrWGyBOdWOz8Q"); // قناة تلاوات د. بندر بليلة
-  if (!/^UC[\w-]{22}$/.test(channelId)) {
-    res.status(400).json({ ok: false, message: "معرّف قناة غير صالح" });
-    return;
-  }
-  try {
-    res.json(await youtubeDownloadTest(channelId));
-  } catch (err) {
-    res.status(500).json({ ok: false, message: (err as Error).message });
-  }
-});
-
-// ⚠️ تجربة مؤقتة (تُحذف بعد التأكد): رفع فيديو واحد إلى صفحة فيسبوك كمسودة غير منشورة — للمدير فقط
-// (محمي بـ requireAdmin على /instagram). جسم الطلب = ملف الفيديو نفسه (application/octet-stream).
-router.post("/instagram/facebook/test-upload", async (req, res) => {
-  const reciter = String(req.query.reciter ?? "").trim();
-  const title = String(req.query.title ?? "").trim();
-  if (!reciter || !title) {
-    res.status(400).json({ ok: false, message: "reciter و title مطلوبان" });
-    return;
-  }
-  const filePath = path.join(os.tmpdir(), `fb-test-${Date.now()}.mp4`);
-  try {
-    await pipeline(req, fs.createWriteStream(filePath));
-    const { size } = await fs.promises.stat(filePath);
-    if (size < 1024) {
-      res.status(400).json({ ok: false, message: "لم يصل ملف الفيديو" });
-      return;
-    }
-    const result = await facebookTestUpload({ reciterMatch: reciter, title, filePath, fileSize: size });
-    res.status(result.ok ? 200 : 502).json(result);
-  } catch (err) {
-    res.status(500).json({ ok: false, stage: "server", message: (err as Error).message });
-  } finally {
-    fs.promises.unlink(filePath).catch(() => {});
-  }
 });
 
 export default router;
