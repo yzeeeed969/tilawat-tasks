@@ -26,6 +26,8 @@ import Achievements from "@/pages/achievements";
 import SignInPage from "@/pages/sign-in";
 import ResetPasswordPage from "@/pages/reset-password";
 import Help from "@/pages/help";
+// تجربة مؤقتة (تُحذف بعد التأكد).
+import FacebookUploadTest from "@/pages/facebook-upload-test";
 import NotFound from "@/pages/not-found";
 
 const queryClient = new QueryClient({
@@ -209,6 +211,11 @@ function AppRouter() {
       <Route path="/help">
         <ProtectedRoute>
           <AppLayout><Help /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/fb-upload-test">
+        <ProtectedRoute>
+          <AppLayout><FacebookUploadTest /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route component={NotFound} />
