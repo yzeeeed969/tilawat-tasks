@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { privacyPageHtml } from "./lib/privacy-page";
 
 const app: Express = express();
 const clientDistDir = path.resolve(process.cwd(), "artifacts/tilawat-tasks/dist/public");
@@ -76,6 +77,12 @@ app.use(express.static(clientDistDir, {
     }
   },
 }));
+
+// سياسة الخصوصية العامة لتطبيق Quran Views — HTML ثابت من الخادم (بلا تسجيل دخول، يقرؤه مدقّق ميتا بلا JavaScript).
+app.get("/privacy", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.type("html").send(privacyPageHtml());
+});
 
 app.get(/.*/, (req, res, next) => {
   if (req.path.startsWith("/api")) {
