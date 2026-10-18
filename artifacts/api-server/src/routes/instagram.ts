@@ -5,6 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { asc } from "drizzle-orm";
 import { facebookTestUpload } from "../services/facebook-test-upload";
+import { youtubeDownloadTest } from "../services/youtube-download-test";
 import { db, membersTable } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
 import { getPublicAppUrl } from "../lib/public-url";
@@ -226,6 +227,21 @@ router.post("/instagram/legacy-cleanup", async (req, res) => {
     return;
   }
   res.json(await applyInstagramLegacyCleanup((req as any).currentUser?.id ?? null));
+});
+
+// ⚠️ تجربة مؤقتة (تُحذف بعد القرار): هل يستطيع الخادم تنزيل فيديو يوتيوب بنفسه؟ تنزيل فقط ثم حذف — للمدير فقط.
+// افتح الرابط وأنت مسجّل دخول بحساب المدير: /api/instagram/youtube-download-test
+router.get("/instagram/youtube-download-test", async (req, res) => {
+  const channelId = String(req.query.channel ?? "UCqe5E-6-HxFrWGyBOdWOz8Q"); // قناة تلاوات د. بندر بليلة
+  if (!/^UC[\w-]{22}$/.test(channelId)) {
+    res.status(400).json({ ok: false, message: "معرّف قناة غير صالح" });
+    return;
+  }
+  try {
+    res.json(await youtubeDownloadTest(channelId));
+  } catch (err) {
+    res.status(500).json({ ok: false, message: (err as Error).message });
+  }
 });
 
 // ⚠️ تجربة مؤقتة (تُحذف بعد التأكد): رفع فيديو واحد إلى صفحة فيسبوك كمسودة غير منشورة — للمدير فقط
