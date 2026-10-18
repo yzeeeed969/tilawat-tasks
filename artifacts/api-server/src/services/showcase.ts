@@ -744,4 +744,4 @@ export function publicShowcase(data: ShowcaseData): ShowcaseData {
   return rest;
 }
 
-export { pickInstagramRow, telegramUsername };
+export { pickInstagramRow, telegramUsername, resolveYoutubeTargets };

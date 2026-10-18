@@ -20,6 +20,7 @@ import publicRouter from "./public";
 import youtubeRouter from "./youtube";
 import instagramRouter, { instagramOauthRouter } from "./instagram";
 import showcaseRouter, { showcasePublicRouter } from "./showcase";
+import crosspostRouter, { crosspostMachineRouter } from "./crosspost";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -33,6 +34,8 @@ router.use(publicRouter);
 router.use(instagramOauthRouter);
 // صفحة «منصات المشروع» العامة (/achievements).
 router.use(showcasePublicRouter);
+// جهاز تنزيل الرفع التلقائي يوتيوب ← فيسبوك — محمي بمفتاح سري (CROSSPOST_API_KEY)، لا بالجلسة.
+router.use(crosspostMachineRouter);
 
 // Protected routes
 router.use(requireAuth);
@@ -44,6 +47,7 @@ router.use(weeklyScheduleRouter);
 router.use(telegramMonitorRouter);
 router.use(instagramRouter);
 router.use(showcaseRouter);
+router.use(crosspostRouter);
 router.use(taskGenerationRouter);
 router.use(commentsRouter);
 router.use(statsRouter);

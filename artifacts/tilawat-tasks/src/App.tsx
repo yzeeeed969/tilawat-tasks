@@ -20,6 +20,7 @@ import PublishingTemplatePage from "@/pages/publishing-template";
 import WeeklySchedulePage from "@/pages/weekly-schedule";
 import TelegramMonitorPage from "@/pages/telegram-monitor";
 import InstagramMonitorPage from "@/pages/instagram-monitor";
+import CrosspostMonitorPage from "@/pages/crosspost-monitor";
 import Account from "@/pages/account";
 import Reminders from "@/pages/reminders";
 import Achievements from "@/pages/achievements";
@@ -184,6 +185,11 @@ function AppRouter() {
       <Route path="/telegram-monitor">
         <ProtectedRoute>
           <AppLayout><TelegramMonitorPage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/crosspost-monitor">
+        <ProtectedRoute>
+          <AppLayout><CrosspostMonitorPage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/instagram-monitor">

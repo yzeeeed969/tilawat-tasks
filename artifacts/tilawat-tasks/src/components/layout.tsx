@@ -29,6 +29,7 @@ import {
   Globe,
   ShieldCheck,
   Radar,
+  Upload,
 } from "lucide-react";
 import { NotificationsPanel } from "@/components/notifications-panel";
 import { useHijriPreference } from "@/lib/hijri-date";
@@ -319,6 +320,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { href: "/youtube-monitor", label: "مراقبة يوتيوب", icon: RefreshCw, show: canManageSettings },
         { href: "/telegram-monitor", label: "مراقبة تلقرام", icon: Send, show: isAdmin },
         { href: "/instagram-monitor", label: "مراقبة إنستقرام", icon: Camera, show: isAdmin },
+        { href: "/crosspost-monitor", label: "رفع يوتيوب ← فيسبوك", icon: Upload, show: isAdmin },
       ].filter((item) => item.show),
     },
   ].filter((group) => group.items.length > 0);
