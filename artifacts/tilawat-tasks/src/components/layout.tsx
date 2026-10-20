@@ -32,6 +32,7 @@ import {
   Upload,
 } from "lucide-react";
 import { NotificationsPanel } from "@/components/notifications-panel";
+import { HelpButton } from "@/components/help-button";
 import { useHijriPreference } from "@/lib/hijri-date";
 import {
   useRole,
@@ -339,7 +340,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <img src={`${import.meta.env.BASE_URL}logo.svg`} alt="تلاوة الحرمين" className="w-8 h-8 rounded-lg" />
             <h1 className="text-sidebar-primary-foreground font-bold text-base tracking-tight truncate">تلاوة الحرمين</h1>
           </div>
-          <NotificationsPanel />
+          <div className="flex items-center gap-1">
+            <HelpButton />
+            <NotificationsPanel />
+          </div>
         </div>
 
         <nav className="flex-1 overflow-y-auto py-3 px-3 space-y-0.5">
@@ -388,6 +392,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <h1 className="text-sidebar-foreground font-bold text-base truncate">تلاوة الحرمين</h1>
           </div>
           <div className="flex items-center gap-2">
+            <HelpButton />
             <NotificationsPanel />
             <button
               type="button"

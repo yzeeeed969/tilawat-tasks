@@ -1,190 +1,131 @@
+import { useEffect } from "react";
+import { HelpCircle, Sparkles } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
-import {
-  CheckSquare,
-  Users,
-  BarChart3,
-  Settings,
-  Bell,
-  Repeat2,
-  Link2,
-  MessageSquare,
-  Filter,
-  Trash2,
-  Copy,
-  Moon,
-  Sun,
-  HelpCircle,
-  Shield,
-  Lock,
-} from "lucide-react";
+import { useIsAdmin } from "@/lib/roles";
+import { APP_VERSION, APP_VERSION_DATE } from "@/lib/app-version";
+import { HELP_SECTIONS, WHATS_NEW, type HelpSection } from "@/lib/help-content";
 
-const sections = [
-  {
-    icon: CheckSquare,
-    color: "text-blue-600",
-    bg: "bg-blue-50",
-    title: "صفحة المهام",
-    items: [
-      { label: "إضافة مهمة", desc: "اضغط على «مهمة جديدة» لإنشاء مهمة جديدة. اختر المنصة والصفحة والقارئ والعضو المسؤول." },
-      { label: "تعديل المهمة", desc: "اضغط على قائمة ⋯ بجانب المهمة واختر «تعديل المهمة»." },
-      { label: "تكرار المهمة", desc: "اضغط على ⋯ واختر «نسخ المهمة» لإنشاء نسخة منها بسهولة." },
-      { label: "سلة المهام", desc: "عند الحذف تنتقل المهمة إلى السلة. افتح تبويب «السلة» لاستعادتها أو حذفها نهائياً." },
-      { label: "بحث وفلترة", desc: "استخدم شريط البحث السريع للبحث في العناوين والمنصات والأعضاء. الفلاتر تشمل: المنصة، القارئ، العضو، الحالة، التاريخ." },
-      { label: "رابط الشاهد", desc: "بعد إتمام مهمة أضف رابط المنشور أو المقطع كإثبات. يظهر للفريق كلّه." },
-      { label: "التكرار التلقائي", desc: "عند إتمام مهمة متكررة (يومي/أسبوعي/شهري) يُنشئ النظام مهمة جديدة تلقائياً بنفس البيانات." },
-    ],
-  },
-  {
-    icon: Users,
-    color: "text-emerald-600",
-    bg: "bg-emerald-50",
-    title: "صفحة الأعضاء",
-    items: [
-      { label: "إضافة حساب", desc: "اضغط «إضافة حساب» وأدخل الاسم واسم المستخدم وكلمة المرور والصلاحية." },
-      { label: "صلاحيات", desc: "مدير: كامل الصلاحيات. محرر: تعديل المهام. متابع: عرض فقط وتحديث حالة مهامه." },
-      { label: "تجميد الحساب", desc: "يمنع المستخدم من تسجيل الدخول مؤقتاً دون حذف البيانات." },
-      { label: "تغيير كلمة المرور", desc: "يمكن للمدير تغيير كلمة مرور أي عضو من قائمة الإجراءات." },
-      { label: "معدل الإنجاز", desc: "يُحسب تلقائياً من نسبة المهام المكتملة إلى إجمالي المهام لكل عضو." },
-      { label: "تصدير Excel", desc: "اضغط «تصدير Excel» للحصول على ملف يحتوي بيانات وإحصاءات الأعضاء." },
-      { label: "استيراد Excel", desc: "استيراد أعضاء دفعة واحدة من ملف Excel بالأعمدة: الاسم الكامل، اسم المستخدم، كلمة المرور، المسمى الوظيفي، الصلاحية." },
-    ],
-  },
-  {
-    icon: BarChart3,
-    color: "text-purple-600",
-    bg: "bg-purple-50",
-    title: "صفحة التقارير",
-    items: [
-      { label: "الفترة الزمنية", desc: "اختر: اليوم / الأسبوع / الشهر (الافتراضي) / الإجمالي. كل أقسام الصفحة تتبعها ما عدا «تصدير الشواهد»." },
-      { label: "ملخّص الإنجاز", desc: "في أعلى الصفحة وبلا أسماء: إجمالي المهام المكتملة، والمنشورات، والمنصات النشطة، والمتأخرات غير المكتملة." },
-      { label: "إنجاز المنصّات وأداء الأعضاء", desc: "أعداد المكتملة والمنشورات والمتأخرات لكل منصة ولكل عضو. تُخفى المنصة التي لا إنجاز ولا متأخرات عليها." },
-      { label: "إخفاء الأسماء", desc: "يستبدل أسماء الأعضاء بـ«عضو 1، عضو 2…» في كل الصفحة والتصدير والنسخ." },
-      { label: "نسخ التقرير", desc: "زر واحد ينسخ تقريرًا منسقًا جاهزًا للإرسال على واتساب." },
-      { label: "تصدير الشواهد", desc: "له فترته الخاصة وفلاتره، ويُصدَّر إلى Excel أو CSV." },
-      { label: "طباعة / PDF", desc: "اضغط «طباعة» لطباعة التقرير أو حفظه كـ PDF عبر خيار «حفظ كـ PDF» في نافذة الطباعة." },
-    ],
-  },
-  {
-    icon: Bell,
-    color: "text-amber-600",
-    bg: "bg-amber-50",
-    title: "الإشعارات",
-    items: [
-      { label: "إشعارات المهام", desc: "تصلك إشعارات عند: إسناد مهمة لك، تعديل مهمة خاصة بك، أو اكتمال مهمة (للمديرين)." },
-      { label: "تعليم كمقروء", desc: "اضغط ✓ بجانب الإشعار أو «قراءة الكل» لتعليم جميع الإشعارات كمقروءة." },
-      { label: "الأرشيف", desc: "الإشعارات المحذوفة تنتقل إلى تبويب الأرشيف للرجوع إليها لاحقاً." },
-      { label: "التحديث التلقائي", desc: "تتحدث الإشعارات تلقائياً كل 30 ثانية." },
-    ],
-  },
-  {
-    icon: Settings,
-    color: "text-gray-600",
-    bg: "bg-gray-50",
-    title: "إدارة النظام (للمديرين)",
-    items: [
-      { label: "المنصات", desc: "إضافة وتعديل وحذف المنصات الاجتماعية. يمكن تعيين منصة رئيسية وإدارة صفحاتها وربطها بقارئ." },
-      { label: "القراء", desc: "إضافة القراء وتحديد مسجدهم (النبوي / الحرام). تُستخدم في تصنيف المهام." },
-      { label: "إدارة المستخدمين", desc: "قبول الحسابات المعلقة، تغيير الصلاحيات، تجميد أو حذف الحسابات." },
-    ],
-  },
-  {
-    icon: Moon,
-    color: "text-indigo-600",
-    bg: "bg-indigo-50",
-    title: "الوضع الليلي وإعدادات العرض",
-    items: [
-      { label: "تبديل الوضع", desc: "اضغط «الإعدادات» أسفل القائمة الجانبية (أو «المزيد» في الجوال) وفعّل «الوضع الداكن». ومن نفس اللوحة يمكن إظهار التاريخ الهجري أو إخفاؤه." },
-      { label: "حفظ التفضيل", desc: "يُحفظ تفضيلك تلقائياً في المتصفح ويُطبَّق عند كل زيارة." },
-    ],
-  },
-  {
-    icon: Shield,
-    color: "text-red-600",
-    bg: "bg-red-50",
-    title: "الأمان",
-    items: [
-      { label: "كلمة المرور", desc: "استخدم كلمة مرور قوية (8 أحرف على الأقل). غيّرها بنفسك من صفحة «حسابي» (الإعدادات ← حسابي)، ويمكن للمدير تغييرها في أي وقت." },
-      { label: "صفحة حسابي", desc: "تجمع بياناتك وإحصاءات مهامك وتغيير كلمة المرور والبريد الإلكتروني وربط Telegram في مكان واحد." },
-      { label: "الجلسات", desc: "تسجيل الخروج يُنهي الجلسة الحالية فقط." },
-      { label: "الحسابات المعلقة", desc: "الحسابات الجديدة تحتاج موافقة المدير قبل الاستخدام." },
-    ],
-  },
-];
+// «دليل الاستخدام»: قسم للأعضاء وقسم للمدير — كلٌّ يرى ما يخصه فقط. خطوات مرقّمة + صور حقيقية للشاشات.
+// المحتوى في lib/help-content.ts (يُحدَّث مع كل تحديث للموقع)، ورقم الإصدار يُقرأ تلقائيًا.
 
-export default function Help() {
+const imageUrl = (file: string) => `${import.meta.env.BASE_URL}help/${file}`;
+
+function SectionCard({ section }: { section: HelpSection }) {
+  const Icon = section.icon;
   return (
-    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div>
-        <h2 className="text-3xl font-bold text-foreground tracking-tight flex items-center gap-3">
-          <HelpCircle className="h-8 w-8 text-sidebar-primary" />
-          دليل الاستخدام
-        </h2>
-        <p className="text-muted-foreground mt-2 text-lg">
-          كل ما تحتاج لمعرفته عن استخدام نظام إدارة مهام تلاوة الحرمين
-        </p>
-      </div>
-
-      {/* Quick tips banner */}
-      <div className="bg-sidebar-primary/10 border border-sidebar-primary/20 rounded-xl p-5">
-        <h3 className="font-bold text-sidebar-primary mb-3 flex items-center gap-2">
-          <Lock className="h-4 w-4" />
-          نصائح سريعة
-        </h3>
-        <ul className="space-y-2 text-sm text-foreground/80">
-          <li className="flex items-start gap-2">
-            <span className="text-sidebar-primary font-bold shrink-0">•</span>
-            <span>لإتمام مهمة يجب إضافة رابط الشاهد أولاً (المنشور أو المقطع)</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-sidebar-primary font-bold shrink-0">•</span>
-            <span>المهام المتأخرة تظهر بخلفية حمراء خفيفة في قائمة المهام</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-sidebar-primary font-bold shrink-0">•</span>
-            <span>يمكن تعيين قارئ تلقائياً للمهمة عند اختيار صفحة مرتبطة بقارئ</span>
-          </li>
-          <li className="flex items-start gap-2">
-            <span className="text-sidebar-primary font-bold shrink-0">•</span>
-            <span>استخدم عرض «بالقارئ» في المهام لرؤية جميع مهام كل قارئ مجمّعة</span>
-          </li>
-        </ul>
-      </div>
-
-      {/* Sections grid */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {sections.map(({ icon: Icon, color, bg, title, items }) => (
-          <Card key={title} className="border-border/50 shadow-sm">
-            <CardHeader className="pb-3">
-              <CardTitle className="flex items-center gap-3 text-lg">
-                <div className={`p-2 rounded-lg ${bg}`}>
-                  <Icon className={`h-5 w-5 ${color}`} />
-                </div>
-                {title}
-              </CardTitle>
-            </CardHeader>
-            <CardContent>
-              <ul className="space-y-3">
-                {items.map(({ label, desc }) => (
-                  <li key={label} className="flex gap-2.5">
-                    <Badge
-                      variant="outline"
-                      className={`shrink-0 mt-0.5 text-[11px] font-semibold h-5 px-2 ${bg} ${color} border-current/20`}
-                    >
-                      {label}
-                    </Badge>
-                    <p className="text-sm text-muted-foreground leading-snug">{desc}</p>
-                  </li>
-                ))}
+    <Card id={section.id} className="scroll-mt-20 border-border/60 shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center gap-2 text-lg">
+          <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-lg ${section.bg}`}>
+            <Icon className={`h-5 w-5 ${section.color}`} />
+          </span>
+          {section.title}
+        </CardTitle>
+        {section.where && <p className="text-xs text-muted-foreground">مكانها: {section.where}</p>}
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {section.topics.map((topic) => (
+          <div key={topic.title} className="space-y-2">
+            <h3 className="font-bold text-sm">{topic.title}</h3>
+            {topic.steps.length > 0 && (
+              <ol className="list-decimal space-y-1.5 pr-5 text-sm leading-7 marker:font-bold marker:text-sidebar-primary">
+                {topic.steps.map((step, i) => <li key={i}>{step}</li>)}
+              </ol>
+            )}
+            {topic.notes && topic.notes.length > 0 && (
+              <ul className="space-y-1 rounded-md bg-muted/40 p-3 text-xs leading-6 text-muted-foreground">
+                {topic.notes.map((note, i) => <li key={i}>• {note}</li>)}
               </ul>
-            </CardContent>
-          </Card>
+            )}
+            {topic.image && (
+              <img
+                src={imageUrl(topic.image)}
+                alt={topic.title}
+                loading="lazy"
+                className="mx-auto w-full max-w-[320px] rounded-xl border border-border shadow-sm"
+              />
+            )}
+          </div>
+        ))}
+      </CardContent>
+    </Card>
+  );
+}
+
+export default function HelpPage() {
+  const isAdmin = useIsAdmin();
+  const memberSections = HELP_SECTIONS.filter((s) => s.audience === "member");
+  const adminSections = isAdmin ? HELP_SECTIONS.filter((s) => s.audience === "admin") : [];
+
+  // فتح الدليل على قسم محدد (من زر «؟» في الصفحات): /help#id
+  useEffect(() => {
+    const id = window.location.hash.replace("#", "");
+    if (!id) return;
+    const t = setTimeout(() => document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }), 150);
+    return () => clearTimeout(t);
+  }, []);
+
+  const toc = (title: string, list: HelpSection[]) => (
+    <div className="space-y-1">
+      <p className="text-xs font-bold text-muted-foreground">{title}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {list.map((s) => (
+          <a key={s.id} href={`#${s.id}`} className="rounded-full border border-border bg-background px-3 py-1 text-xs hover:bg-muted">
+            {s.title}
+          </a>
         ))}
       </div>
+    </div>
+  );
 
-      <div className="text-center text-sm text-muted-foreground pb-4">
-        نظام إدارة مهام تلاوة الحرمين — الإصدار 2.0
+  return (
+    <div className="mx-auto max-w-3xl space-y-6 animate-in fade-in duration-300">
+      <div>
+        <h2 className="flex items-center gap-2 text-2xl font-bold tracking-tight md:text-3xl">
+          <HelpCircle className="h-7 w-7 text-sidebar-primary" /> دليل الاستخدام
+        </h2>
+        <p className="mt-1 text-sm text-muted-foreground">خطوات مرقّمة لكل ما تحتاجه في الموقع. في كل صفحة زر «؟» أعلى الشاشة يفتح شرحها هنا مباشرة.</p>
       </div>
+
+      <Card className="border-border/60">
+        <CardContent className="space-y-3 pt-5">
+          {toc(isAdmin ? "للأعضاء" : "الأقسام", memberSections)}
+          {adminSections.length > 0 && toc("للمدير", adminSections)}
+          <a href="#whats-new" className="inline-flex items-center gap-1 text-xs font-medium text-sidebar-primary hover:underline">
+            <Sparkles className="h-3.5 w-3.5" /> ما الجديد؟
+          </a>
+        </CardContent>
+      </Card>
+
+      {isAdmin && <h2 className="pt-2 text-xl font-bold">للأعضاء</h2>}
+      {memberSections.map((s) => <SectionCard key={s.id} section={s} />)}
+
+      {adminSections.length > 0 && (
+        <>
+          <h2 className="pt-4 text-xl font-bold">للمدير</h2>
+          {adminSections.map((s) => <SectionCard key={s.id} section={s} />)}
+        </>
+      )}
+
+      <Card id="whats-new" className="scroll-mt-20 border-sidebar-primary/30">
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-lg"><Sparkles className="h-5 w-5 text-sidebar-primary" /> ما الجديد؟</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {WHATS_NEW.filter((entry) => entry.items.some((item) => isAdmin || !item.adminOnly)).map((entry) => (
+            <div key={entry.version} className="space-y-1">
+              <p className="text-sm font-bold">التحديث {entry.version} <span className="font-normal text-muted-foreground">· {entry.date}</span></p>
+              <ul className="space-y-1 pr-4 text-sm leading-7">
+                {entry.items.filter((item) => isAdmin || !item.adminOnly).map((item, i) => <li key={i} className="list-disc">{item.text}</li>)}
+              </ul>
+            </div>
+          ))}
+        </CardContent>
+      </Card>
+
+      <p className="pb-4 text-center text-xs text-muted-foreground">
+        نظام إدارة مهام تلاوة الحرمين — التحديث رقم {APP_VERSION} · {APP_VERSION_DATE}
+      </p>
     </div>
   );
 }
