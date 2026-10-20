@@ -20,7 +20,7 @@ import {
 import { checkInstagramAccount, currentWeekPostCounts, listInstagramMedia, revertInstagramMedia, runInstagramMonitorTick } from "../services/instagram-monitor";
 import { applyInstagramLegacyCleanup, previewInstagramLegacyCleanup } from "../services/instagram-legacy-cleanup";
 import { FACEBOOK_SCOPES, getFacebookConfig, missingFacebookEnv } from "../services/facebook-client";
-import { completeFacebookConnect, getFacebookConnection, listFacebookPages, setAccountFacebookPage, startFacebookConnect } from "../services/facebook-accounts";
+import { completeFacebookConnect, connectFacebookWithToken, getFacebookConnection, listFacebookPages, setAccountFacebookPage, startFacebookConnect } from "../services/facebook-accounts";
 import { listFacebookLinks, revertFacebookLink, runFacebookCrosspostTick, setManualFacebookLink } from "../services/facebook-crosspost";
 
 function sendError(res: any, err: unknown) {
@@ -139,6 +139,12 @@ router.post("/instagram/facebook/connect", async (req, res) => {
   } catch (err) {
     sendError(res, err);
   }
+});
+
+router.post("/instagram/facebook/connect-token", async (req, res) => {
+  const outcome = await connectFacebookWithToken(req.body?.token);
+  if (outcome.ok) res.json(outcome);
+  else res.status(400).json({ message: outcome.message });
 });
 
 router.get("/instagram/facebook-links", async (req, res) => {

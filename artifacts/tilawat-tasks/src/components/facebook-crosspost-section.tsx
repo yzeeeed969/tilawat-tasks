@@ -85,6 +85,12 @@ export function FacebookCrosspostSection({ facebook, accounts, settings, onChang
     onSuccess: ({ url }) => { window.location.href = url; },
     onError,
   });
+  const [manualToken, setManualToken] = useState("");
+  const tokenMutation = useMutation({
+    mutationFn: (token: string) => api<{ pages: number; userName: string | null }>("/api/instagram/facebook/connect-token", { method: "POST", body: JSON.stringify({ token }) }),
+    onSuccess: ({ pages }) => { setManualToken(""); refresh(); toast({ title: `تم ربط فيسبوك — ${pages} صفحة` }); },
+    onError,
+  });
   const settingsMutation = useMutation({
     mutationFn: (patch: Record<string, unknown>) => api("/api/instagram/settings", { method: "PATCH", body: JSON.stringify(patch) }),
     onSuccess: refresh,
@@ -145,6 +151,21 @@ export function FacebookCrosspostSection({ facebook, accounts, settings, onChang
               <Link2 className="ml-1 h-4 w-4" /> {connection.status === "not_connected" ? "ربط فيسبوك" : "تحديث الربط والصفحات"}
             </Button>
           </div>
+          <details className="rounded-lg border border-border/60 p-3 text-sm">
+            <summary className="cursor-pointer font-medium">ربط يدوي برمز (إن تعذّرت نافذة فيسبوك)</summary>
+            <div className="mt-3 space-y-2">
+              <p className="text-xs text-muted-foreground">
+                من «مستكشف Graph API» اختر التطبيق نفسه، وأضف الأذونات: pages_show_list، pages_read_engagement، read_insights، pages_manage_posts، business_management،
+                ثم «Generate Access Token» وانسخ الرمز والصقه هنا. يُحوَّل تلقائيًا لرمز طويل الأمد ويُحفظ مشفّرًا — لا يُعرض لأحد.
+              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <Input type="password" dir="ltr" autoComplete="off" placeholder="EAA…" className="h-9 max-w-md flex-1" value={manualToken} onChange={(e) => setManualToken(e.target.value)} />
+                <Button size="sm" disabled={!facebook.configured || !manualToken.trim() || tokenMutation.isPending} onClick={() => tokenMutation.mutate(manualToken.trim())}>
+                  {tokenMutation.isPending && <Loader2 className="ml-1 h-4 w-4 animate-spin" />} ربط بالرمز
+                </Button>
+              </div>
+            </div>
+          </details>
           {facebook.redirectUri && <p className="text-xs text-muted-foreground">رابط إعادة التوجيه: <code dir="ltr" className="rounded bg-muted px-1">{facebook.redirectUri}</code></p>}
           <div className="flex flex-wrap items-center gap-6 text-sm">
             <label className="flex items-center gap-2">

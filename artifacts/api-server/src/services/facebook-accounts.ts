@@ -63,6 +63,32 @@ export async function completeFacebookConnect(query: { state?: unknown; code?: u
 
   try {
     const shortToken = await exchangeFacebookCode(config, code);
+    return await saveFacebookConnection(config, shortToken);
+  } catch (err) {
+    const message = err instanceof FacebookApiError ? err.message : String((err as Error)?.message ?? err);
+    return { ok: false, message: `تعذّر إكمال ربط فيسبوك: ${message}` };
+  }
+}
+
+// ربط يدوي برمز مستخدم (للمدير فقط): يُولَّد الرمز من «مستكشف Graph API» لنفس التطبيق (FACEBOOK_APP_ID)
+// ويُلصق في الموقع. بديل لنافذة التفويض حين تكون مقفلة على التطبيق (تطبيقات «نشاط تجاري» تشترط التحقق
+// التجاري لتسجيل دخول فيسبوك للأعمال). نفس المسار تمامًا: رمز ← طويل الأمد ← /me/accounts ← حفظ مشفّر.
+export async function connectFacebookWithToken(rawToken: unknown): Promise<FacebookConnectOutcome> {
+  await ensureInstagramSchema();
+  const config = getFacebookConfig();
+  if (!config) return { ok: false, message: "إعدادات فيسبوك غير مكتملة في Railway" };
+  const token = typeof rawToken === "string" ? rawToken.trim() : "";
+  if (token.length < 50 || /\s/.test(token)) return { ok: false, message: "الرمز غير صالح — انسخ رمز الوصول كاملًا من مستكشف Graph API" };
+  try {
+    return await saveFacebookConnection(config, token);
+  } catch (err) {
+    const message = err instanceof FacebookApiError ? err.message : String((err as Error)?.message ?? err);
+    return { ok: false, message: `تعذّر الربط بالرمز (تأكد أنه من تطبيق ${config.appId} وبالصلاحيات المطلوبة): ${message}` };
+  }
+}
+
+async function saveFacebookConnection(config: NonNullable<ReturnType<typeof getFacebookConfig>>, shortToken: string): Promise<FacebookConnectOutcome> {
+  {
     const long = await exchangeFacebookLongLived(config, shortToken);
     const me = await fetchFacebookMe(long.accessToken);
     const pages = await fetchManagedPages(long.accessToken);
@@ -95,9 +121,6 @@ export async function completeFacebookConnect(query: { state?: unknown; code?: u
       updatedAt: now,
     }).where(eq(facebookConnectionTable.id, connection.id));
     return { ok: true, pages: pages.length, userName: me.name };
-  } catch (err) {
-    const message = err instanceof FacebookApiError ? err.message : String((err as Error)?.message ?? err);
-    return { ok: false, message: `تعذّر إكمال ربط فيسبوك: ${message}` };
   }
 }
 
