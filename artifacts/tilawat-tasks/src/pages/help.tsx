@@ -42,6 +42,7 @@ function SectionCard({ section }: { section: HelpSection }) {
                 src={imageUrl(topic.image)}
                 alt={topic.title}
                 loading="lazy"
+                onError={(e) => { (e.currentTarget as HTMLImageElement).style.display = "none"; }}
                 className="mx-auto w-full max-w-[320px] rounded-xl border border-border shadow-sm"
               />
             )}
