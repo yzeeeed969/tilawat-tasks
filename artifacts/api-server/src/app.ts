@@ -1,3 +1,6 @@
+// ملاحظة نشر: خدمة الموقع الحي على Railway (api-server) تبني الواجهة أيضًا وتخدمها، لكنها لا تُعاد
+// إلا عند تغيّر ملفات api-server. فأي تحديث للواجهة وحدها يحتاج لمس ملف هنا (أو إضافة
+// artifacts/tilawat-tasks/** إلى Watch Paths لخدمة api-server في Railway).
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";
