@@ -1159,7 +1159,12 @@ export async function sendDailyPublicSummaryNow(userId: number, dateInput?: stri
 async function sendWeeklyQuotaReminders(settings: TelegramSettings, now: Date) {
   if (!settings.notifyDailyReminder || !isTimeReached(now, settings.dailyReminderTime)) return 0;
   const parts = riyadhParts(now);
-  if (parts.weekday < 4) return 0; // يبدأ التنبيه من الخميس حتى نهاية الأسبوع.
+  // تذكيران في الأسبوع (الأحد بداية الأسبوع عندنا):
+  // - «البداية»: يوم الأحد فقط — بهدف الأسبوع.
+  // - «الإكمال»: من الأربعاء (يُستدرك حتى السبت إن فات) — لمن لم يبلغ الهدف بعد.
+  // كل تذكير مرة واحدة لكل عضو ومهمة في الأسبوع (dedupeKey بالفترة).
+  if (parts.weekday === 1 || parts.weekday === 2) return 0;
+  const slot: "start" | "midweek" = parts.weekday === 0 ? "start" : "midweek";
 
   const { start, end } = riyadhWeekRange(now);
   const weekKey = riyadhWeekKey(now);
@@ -1180,18 +1185,27 @@ async function sendWeeklyQuotaReminders(settings: TelegramSettings, now: Date) {
 
     for (const recipient of recipients) {
       if (!recipient.memberId) continue;
-      const text = [
-        "<b>تنبيه الهدف الأسبوعي</b>",
-        taskLine(task),
-        `المضاف: ${done}/${required}`,
-        `المتبقي: ${remaining} شاهد`,
-        `نهاية الأسبوع: ${escapeHtml(formatRiyadhDate(task.weeklyQuotaPeriodEnd ?? task.dueDate))}`,
-        "يرجى إضافة الشواهد قبل انتهاء الأسبوع.",
-      ].join("\n");
+      const text = (slot === "start"
+        ? [
+            "<b>مهمة الأسبوع الجديد</b>",
+            taskLine(task),
+            `الهدف هذا الأسبوع: ${required}`,
+            done > 0 ? `المضاف حتى الآن: ${done}/${required}` : "",
+            `نهاية الأسبوع: ${escapeHtml(formatRiyadhDate(task.weeklyQuotaPeriodEnd ?? task.dueDate))}`,
+            "بالتوفيق — ابدأ مبكرًا لتبلغ الهدف.",
+          ]
+        : [
+            "<b>تذكير بإكمال الهدف الأسبوعي</b>",
+            taskLine(task),
+            `المضاف: ${done}/${required}`,
+            `المتبقي: ${remaining}`,
+            `نهاية الأسبوع: ${escapeHtml(formatRiyadhDate(task.weeklyQuotaPeriodEnd ?? task.dueDate))}`,
+            "يرجى إكمال المهمة ونشر المزيد قبل انتهاء الأسبوع.",
+          ]).filter(Boolean).join("\n");
 
       const result = await sendLoggedTelegram({
         type: "telegram_weekly_quota_reminder",
-        dedupeKey: `telegram:weekly_quota:${weekKey}:task:${task.id}:member:${recipient.memberId}`,
+        dedupeKey: `telegram:weekly_quota:${weekKey}:${slot}:task:${task.id}:member:${recipient.memberId}`,
         chatId: recipient.chatId,
         text,
         recipientUserId: recipient.userId,
