@@ -61,6 +61,15 @@ type Media = {
   status: string;
   reason: string | null;
   taskId: number | null;
+  postedBy?: string | null;
+  attribution?: string | null;
+};
+
+const ATTRIBUTION_LABEL: Record<string, string> = {
+  auto: "تلقائي (عضو واحد)",
+  member: "حدّده العضو",
+  admin: "حدّده المدير",
+  timeout: "تلقائي بعد 24 ساعة",
 };
 
 const MEDIA_STATUS: Record<string, { label: string; className: string }> = {
@@ -453,6 +462,10 @@ export default function InstagramMonitorPage() {
                   </Badge>
                 </div>
                 {item.reason && <p className="text-xs text-muted-foreground">{item.reason}</p>}
+                {item.attribution === "pending" && <p className="text-xs text-amber-600">الناشر: بانتظار التحديد من الأعضاء في تلقرام</p>}
+                {item.postedBy && item.attribution !== "pending" && (
+                  <p className="text-xs">الناشر: <span className="font-medium">{item.postedBy}</span>{item.attribution && ATTRIBUTION_LABEL[item.attribution] ? <span className="text-muted-foreground"> · {ATTRIBUTION_LABEL[item.attribution]}</span> : null}</p>
+                )}
                 <div className="flex flex-wrap gap-2 pt-1">
                   {item.permalink && <a href={item.permalink} target="_blank" rel="noreferrer" className="text-xs text-sidebar-primary hover:underline">فتح المنشور</a>}
                   {canRevert && (

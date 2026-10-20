@@ -17,6 +17,7 @@ import {
 } from "../services/telegram-notification-engine";
 import { ensureTelegramSchema } from "../services/telegram-schema";
 import { handleMyChatMemberUpdate, processTelegramPost, storeChannelUpdate } from "../services/telegram-channel-monitor";
+import { handleInstagramAttributionCallback } from "../services/instagram-attribution";
 
 const router = Router();
 
@@ -54,6 +55,12 @@ router.post("/telegram/webhook/:secret", async (req, res) => {
     if (postId) {
       processTelegramPost(postId).catch((err) => (req as any).log?.error?.({ err, postId }, "telegram_channel_post_process_failed"));
     }
+    return;
+  }
+  // ضغطات الأزرار: «أنا نشرته» لمنشورات إنستقرام.
+  if (req.body?.callback_query) {
+    await handleInstagramAttributionCallback(req.body.callback_query).catch((err) => (req as any).log?.error?.({ err }, "telegram_callback_failed"));
+    res.json({ ok: true });
     return;
   }
   // إضافة البوت إلى قناة/مجموعة أو إزالته — يُسجَّل في «المحادثات المرئية» فقط.

@@ -16,6 +16,7 @@ import { ensureInstagramSchema } from "./instagram-schema";
 import { getInstagramSettings, InstagramError } from "./instagram-accounts";
 import { fetchRecentMedia, getInstagramConfig, InstagramApiError, refreshLongLivedToken, type InstagramMediaItem } from "./instagram-client";
 import { addQuotaProof } from "./auto-documentation";
+import { attributeNewInstagramMedia, attributionByMedia } from "./instagram-attribution";
 import { notifyTelegramAdminsInstagramReconnect } from "./telegram-notification-engine";
 import { decryptToken, encryptToken } from "../lib/instagram-token-crypto";
 import { safeAnchorFromDateKey } from "../lib/hijri";
@@ -320,6 +321,20 @@ async function processMediaItem(account: InstagramAccount, item: InstagramMediaI
       ? { status: "proof_counted", reason: `شاهد ${count}/${required} — المهمة لم تكتمل بعد` }
       : { status: "extra_proof", reason: `شاهد إضافي (+${count - required} فوق الهدف) — بلا تغيير حالة ولا إشعار` };
   await setMedia(row.id, { ...outcome, taskId: weekly.taskId, proofId: added.createdProofId });
+  // من نشر؟ (للمعرفة فقط — لا تؤثر على المهمة). أي خطأ هنا لا يُفسد التوثيق.
+  try {
+    const assignees = await weeklyTaskAssignees(account);
+    await attributeNewInstagramMedia({
+      mediaRowId: row.id,
+      reciterName: await reciterNameOf(account.reciterId),
+      username: account.username,
+      permalink: item.permalink,
+      candidates: assignees.all,
+      primary: assignees.primary,
+    });
+  } catch (err) {
+    console.warn("instagram attribution failed", err);
+  }
   return true;
 }
 
@@ -376,7 +391,7 @@ export async function runInstagramMonitorTick(): Promise<{ processed: number; ac
 export async function listInstagramMedia(options: { accountId?: number; limit?: number } = {}) {
   await ensureInstagramSchema();
   const limit = Math.min(Math.max(options.limit ?? 100, 1), 300);
-  return db
+  const rows = await db
     .select({
       id: instagramMediaTable.id,
       accountId: instagramMediaTable.accountId,
@@ -397,6 +412,8 @@ export async function listInstagramMedia(options: { accountId?: number; limit?: 
     .where(options.accountId ? eq(instagramMediaTable.accountId, options.accountId) : undefined)
     .orderBy(desc(instagramMediaTable.publishedAt))
     .limit(limit);
+  const attribution = await attributionByMedia(rows.map((r: { id: number }) => r.id));
+  return rows.map((r: { id: number }) => ({ ...r, postedBy: attribution.get(r.id)?.postedBy ?? null, attribution: attribution.get(r.id)?.attribution ?? null }));
 }
 
 // عدد منشورات الأسبوع الحالي لكل حساب: الموثَّقة + الشواهد الإضافية، أو (في وضع التجربة) ما كان سيحدث.

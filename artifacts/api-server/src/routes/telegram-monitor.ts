@@ -1,4 +1,5 @@
 import { Router } from "express";
+import { TELEGRAM_REQUIRED_UPDATES } from "../services/instagram-attribution";
 import { eq } from "drizzle-orm";
 import { db, platformsTable, platformPagesTable, recitersTable, telegramChannelPostsTable, telegramChannelsTable } from "@workspace/db";
 import { requireAdmin } from "../middlewares/auth";
@@ -56,7 +57,7 @@ function sendError(res: any, error: unknown) {
 
 // أنواع التحديثات المطلوبة من الـ webhook: «message» لربط الأعضاء (يجب أن يبقى)، و«channel_post»
 // و«edited_channel_post» للقناة، و«my_chat_member» لمعرفة القنوات التي أُضيف إليها البوت.
-const REQUIRED_UPDATES = ["message", "channel_post", "edited_channel_post", "my_chat_member"];
+const REQUIRED_UPDATES = TELEGRAM_REQUIRED_UPDATES;
 
 // إخفاء الجزء السري من مسار الـ webhook عند العرض.
 function maskWebhookUrl(url: string | undefined) {
