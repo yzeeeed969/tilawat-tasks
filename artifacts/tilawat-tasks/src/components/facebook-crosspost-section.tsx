@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, Link2, Loader2, Undo2 } from "lucide-react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -70,21 +70,6 @@ export function FacebookCrosspostSection({ facebook, accounts, settings, onChang
   const refresh = () => { onChanged(); queryClient.invalidateQueries({ queryKey: ["facebook-links"] }); };
   const onError = (err: Error) => toast({ title: err.message, variant: "destructive" });
 
-  // نتيجة العودة من تفويض فيسبوك (?fb=connected|error).
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    const fb = params.get("fb");
-    if (!fb) return;
-    if (fb === "connected") toast({ title: `تم ربط فيسبوك — ${params.get("pages") ?? 0} صفحة` });
-    else toast({ title: "تعذّر ربط فيسبوك", description: params.get("message") ?? undefined, variant: "destructive" });
-    window.history.replaceState(null, "", window.location.pathname);
-  }, [toast]);
-
-  const connectMutation = useMutation({
-    mutationFn: () => api<{ url: string }>("/api/instagram/facebook/connect", { method: "POST" }),
-    onSuccess: ({ url }) => { window.location.href = url; },
-    onError,
-  });
   const [manualToken, setManualToken] = useState("");
   const tokenMutation = useMutation({
     mutationFn: (token: string) => api<{ pages: number; userName: string | null }>("/api/instagram/facebook/connect-token", { method: "POST", body: JSON.stringify({ token }) }),
@@ -137,9 +122,8 @@ export function FacebookCrosspostSection({ facebook, accounts, settings, onChang
             <div className="flex flex-wrap items-center justify-between gap-3 rounded-lg border border-red-200 bg-red-50 p-3 text-red-800">
               <div className="flex items-start gap-2 text-sm">
                 <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-                <div><p className="font-semibold">ربط فيسبوك يحتاج إعادة تفويض</p>{connection.lastError && <p>{connection.lastError}</p>}</div>
+                <div><p className="font-semibold">ربط فيسبوك يحتاج تجديدًا — استخدم «ربط فيسبوك برمز» أدناه</p>{connection.lastError && <p>{connection.lastError}</p>}</div>
               </div>
-              <Button size="sm" variant="destructive" disabled={!facebook.configured || connectMutation.isPending} onClick={() => connectMutation.mutate()}>إعادة الربط</Button>
             </div>
           )}
           <div className="flex flex-wrap items-center gap-4 text-sm">
@@ -147,12 +131,9 @@ export function FacebookCrosspostSection({ facebook, accounts, settings, onChang
               {connection.status === "connected" ? `مربوط${connection.userName ? ` — ${connection.userName}` : ""}` : connection.status === "needs_reconnect" ? "يحتاج إعادة ربط" : "غير مربوط"}
             </Badge>
             {connection.status === "connected" && <span className="text-xs text-muted-foreground">{availablePages.length} صفحة · مفتاح المستخدم ينتهي {riyadh(connection.tokenExpiresAt)}</span>}
-            <Button size="sm" variant={connection.status === "connected" ? "outline" : "default"} disabled={!facebook.configured || connectMutation.isPending} onClick={() => connectMutation.mutate()}>
-              <Link2 className="ml-1 h-4 w-4" /> {connection.status === "not_connected" ? "ربط فيسبوك" : "تحديث الربط والصفحات"}
-            </Button>
           </div>
-          <details className="rounded-lg border border-border/60 p-3 text-sm">
-            <summary className="cursor-pointer font-medium">ربط يدوي برمز (إن تعذّرت نافذة فيسبوك)</summary>
+          <details open={connection.status !== "connected"} className="rounded-lg border border-border/60 p-3 text-sm">
+            <summary className="cursor-pointer font-medium"><Link2 className="ml-1 inline h-4 w-4" />ربط فيسبوك برمز (للربط أول مرة وللتجديد قبل انتهاء المفتاح)</summary>
             <div className="mt-3 space-y-2">
               <p className="text-xs text-muted-foreground">
                 من «مستكشف Graph API» اختر التطبيق نفسه، وأضف الأذونات: pages_show_list، pages_read_engagement، read_insights، pages_manage_posts، business_management،
@@ -166,7 +147,6 @@ export function FacebookCrosspostSection({ facebook, accounts, settings, onChang
               </div>
             </div>
           </details>
-          {facebook.redirectUri && <p className="text-xs text-muted-foreground">رابط إعادة التوجيه: <code dir="ltr" className="rounded bg-muted px-1">{facebook.redirectUri}</code></p>}
           <div className="flex flex-wrap items-center gap-6 text-sm">
             <label className="flex items-center gap-2">
               <Switch checked={settings.fbTrialMode} onCheckedChange={(v) => settingsMutation.mutate({ fbTrialMode: v })} />

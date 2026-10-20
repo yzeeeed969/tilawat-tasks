@@ -53,34 +53,6 @@ export async function logWeeklyActivity(req: any, action: string, entityType: st
   });
 }
 
-// ── استيراد القالب الأولي ───────────────────────────────────────────────────────────────────
-router.get("/weekly-schedule/template/import", requireAdmin, async (_req, res) => {
-  try {
-    res.json(await buildImportPreview());
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
-router.post("/weekly-schedule/template/import", requireAdmin, async (req, res) => {
-  try {
-    const mapping = req.body?.mapping ?? {};
-    const result = await applyImport({
-      reciters: mapping.reciters ?? {},
-      members: mapping.members ?? {},
-      platforms: mapping.platforms ?? {},
-    });
-    await logWeeklyActivity(req, "publishing_template_imported", "publishing_template", null, "استيراد قالب النشر", {
-      inserted: result.inserted,
-      updated: result.updated,
-      skipped: result.skipped.length,
-    }).catch(() => {});
-    res.json(result);
-  } catch (error) {
-    sendError(res, error);
-  }
-});
-
 // ── إدارة صفوف القالب ───────────────────────────────────────────────────────────────────────
 router.get("/weekly-schedule/template", requireAdmin, async (_req, res) => {
   try {

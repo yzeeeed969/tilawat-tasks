@@ -204,6 +204,11 @@ function normalizeTaskRecurrence(value: unknown): "none" | "daily" | "weekly" | 
   return value === "daily" || value === "weekly" || value === "monthly" || value === "custom_days" ? value : "none";
 }
 
+// مهام إنستقرام الأسبوعية تُنشئها «مراقبة إنستقرام» تلقائيًا، والخادم يرفض «هدف أسبوعي» يدوي لإنستقرام.
+function isInstagramPlatformName(name: string | null | undefined) {
+  return /إنستقرام|انستقرام|إنستغرام|انستغرام|instagram/i.test(name ?? "");
+}
+
 function normalizeTaskSeriesType(value: unknown): "temporary" | "operational" | "weekly_quota" {
   return value === "operational" || value === "weekly_quota" || value === "temporary" ? value : "temporary";
 }
@@ -708,7 +713,6 @@ type TaskFormValues = z.infer<typeof taskSchema>;
 type AdminListLimit = typeof ADMIN_LIST_LIMIT_OPTIONS[number];
 type EditTaskScope = "single" | "future" | "series";
 const TASK_FORM_STABILITY_MODE = false;
-const USE_SAFE_PHASE_ONE_TASK_FORM = true;
 const ENABLE_MEMBER_CREATED_TASKS = true;
 const ENABLE_TASK_DEPENDENCIES = true;
 type DeleteSeriesScope = "single" | "from_this_forward" | "entire_series";
@@ -1939,10 +1943,13 @@ function BasicTaskFormFields({
       if (recurrence !== "weekly") setValue("recurrence", "weekly", { shouldDirty: false });
       if (!weeklyQuotaRequired) setValue("weeklyQuotaRequired", 3, { shouldDirty: false });
     }
+    if (seriesType === "weekly_quota" && isInstagramPlatformName(selectedPlatform?.name)) {
+      setValue("seriesType", "temporary", { shouldDirty: false });
+    }
     if ((seriesType !== "operational" || recurrence !== "weekly") && recurrenceDays) {
       setValue("recurrenceDays", null, { shouldDirty: false });
     }
-  }, [seriesType, recurrence, recurrenceDays, weeklyQuotaRequired, setValue]);
+  }, [seriesType, recurrence, recurrenceDays, weeklyQuotaRequired, selectedPlatform?.name, setValue]);
 
   // يملأ العضو المقترَح تلقائيًا فقط إذا لم تلمسه يدويًا (فارغ أو ما زال يساوي الاقتراح السابق).
   useEffect(() => {
@@ -1967,10 +1974,6 @@ function BasicTaskFormFields({
 
   return (
     <>
-      <div className="rounded-md border border-green-200 bg-green-50/70 px-3 py-2 text-xs leading-6 text-green-800">
-        نموذج آمن للمرحلة الأولى: يدعم المهام العادية ونطاق التاريخ والتكرار الأسبوعي/الشهري والهدف الأسبوعي، مع إبقاء الميزات المؤجلة مغلقة.
-      </div>
-
       <FormField
         name="platformId"
         render={({ field }) => (
@@ -2139,7 +2142,7 @@ function BasicTaskFormFields({
                 <SelectContent dir="rtl">
                   <SelectItem value="temporary">مهمة مؤقتة</SelectItem>
                   <SelectItem value="operational">مهمة تشغيلية متكررة</SelectItem>
-                  <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>
+                  {!isInstagramPlatformName(selectedPlatform?.name) && <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>}
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -2618,7 +2621,7 @@ function EditTaskFormFields({
                 <SelectContent dir="rtl">
                   <SelectItem value="temporary">مهمة مؤقتة</SelectItem>
                   <SelectItem value="operational">مهمة تشغيلية متكررة</SelectItem>
-                  <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>
+                  {(!isInstagramPlatformName(selectedPlatform?.name) || normalizeTaskSeriesType(field.value) === "weekly_quota") && <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>}
                 </SelectContent>
               </Select>
               <FormMessage />
@@ -2819,669 +2822,6 @@ function EditTaskFormFields({
 }
 
 
-function TaskFormFields({
-  platforms,
-  members,
-  reciters,
-  showStatus,
-  allTasks,
-  excludeTaskId,
-  currentTask,
-  isMemberSelfTask = false,
-  currentMemberName,
-  showDependency = false,
-}: {
-  platforms: { id: number; name: string }[] | undefined;
-  members: { id: number; name: string; role: string }[] | undefined;
-  reciters: Reciter[] | undefined;
-  showStatus?: boolean;
-  allTasks?: TaskWithDetails[];
-  excludeTaskId?: number;
-  currentTask?: TaskWithDetails | null;
-  isMemberSelfTask?: boolean;
-  currentMemberName?: string | null;
-  showDependency?: boolean;
-}) {
-  const { watch, setValue, getValues } = useFormContext<TaskFormValues>();
-  const platformId = watch("platformId");
-  const reciterId = watch("reciterId");
-  const pageId = watch("pageId");
-  const memberIds = watch("memberIds") ?? [];
-  const appPrayer = watch("appPrayer");
-  const dependsOnTaskId = watch("dependsOnTaskId");
-  const seriesType = watch("seriesType") ?? "temporary";
-  const recurrence = watch("recurrence") ?? "none";
-  const recurrenceDays = watch("recurrenceDays") ?? "";
-  const weeklyQuotaRequired = watch("weeklyQuotaRequired");
-  const platformOptions = useMemo(() => {
-    const currentPlatform = (currentTask as any)?.platform;
-    return mergeById<{ id: number; name: string }>([
-      ...(platforms ?? []),
-      currentPlatform?.id ? { id: currentPlatform.id, name: currentPlatform.name ?? `المنصة الحالية #${currentPlatform.id}` } : null,
-      platformId && !(platforms ?? []).some((p) => p.id === platformId)
-        ? { id: platformId, name: `المنصة الحالية #${platformId}` }
-        : null,
-    ]);
-  }, [platforms, currentTask, platformId]);
-  const selectedPlatform = platformOptions.find((p) => p.id === platformId);
-  const isApplicationPlatform = platformCoversAllReciters(selectedPlatform as CoversAllPlatform | undefined, platforms as ReadonlyArray<CoversAllPlatform> | undefined);
-  const applicationReciters = useMemo(
-    () => mergeById<Reciter>([
-      ...(reciters?.filter((r) => !isPlaceholderApplicationReciter(r.name)) ?? []),
-      (() => {
-        const currentReciter = (currentTask as any)?.reciter as Reciter | null | undefined;
-        return currentReciter && !isPlaceholderApplicationReciter(currentReciter.name) ? currentReciter : null;
-      })(),
-    ]),
-    [reciters, currentTask]
-  );
-  const dependencyOptions = useMemo(
-    () => buildTaskDependencySelectOptions(allTasks, excludeTaskId, dependsOnTaskId),
-    [allTasks, excludeTaskId, dependsOnTaskId]
-  );
-  const previousPlatformIdRef = useRef<number | undefined>(undefined);
-
-  const { data: pages } = useListPlatformPages(platformId ?? 0, {
-    query: { queryKey: getListPlatformPagesQueryKey(platformId ?? 0), enabled: !!platformId },
-  });
-
-  const selectedApplicationPage = useMemo(
-    () => pages?.find((pg) => pg.reciterId === reciterId),
-    [pages, reciterId]
-  );
-  const pageOptions = useMemo(() => {
-    const currentPageId = taskPageId(currentTask);
-    return mergeById<{ id: number; name: string; reciterId?: number | null }>([
-      ...(pages ?? []),
-      currentPageId
-        ? {
-            id: currentPageId,
-            name: `الصفحة الحالية #${currentPageId}`,
-            reciterId: taskReciterId(currentTask),
-          }
-        : null,
-      pageId && !(pages ?? []).some((pg) => pg.id === pageId)
-        ? {
-            id: pageId,
-            name: `الصفحة الحالية #${pageId}`,
-            reciterId: taskReciterId(currentTask),
-          }
-        : null,
-    ]);
-  }, [pages, currentTask, pageId]);
-
-  const { data: pageMembers } = useQuery<number[]>({
-    queryKey: ["page-members", platformId, pageId],
-    queryFn: async () => {
-      if (!platformId || !pageId) return [];
-      const r = await fetch(`/api/platforms/${platformId}/pages/${pageId}/members`, { credentials: "include" });
-      if (!r.ok) return [];
-      return r.json();
-    },
-    enabled: !!platformId && !!pageId,
-  });
-
-  const filteredMembers = useMemo(() => {
-    const baseMembers = (() => {
-      if (isApplicationPlatform) return members ?? [];
-      if (!pageId || pageMembers === undefined) return members ?? [];
-      if (pageMembers.length === 0) return [];
-      return (members ?? []).filter((m) => pageMembers.includes(m.id));
-    })();
-    const currentAssigned = taskAssignedMembers(currentTask).filter((member) => memberIds.includes(member.id));
-    const selectedFromAllMembers = (members ?? []).filter((member) => memberIds.includes(member.id));
-    return mergeById<{ id: number; name: string; role: string }>([
-      ...baseMembers,
-      ...currentAssigned,
-      ...selectedFromAllMembers,
-    ]);
-  }, [isApplicationPlatform, members, pageId, pageMembers, currentTask, memberIds]);
-
-  useEffect(() => {
-    if (previousPlatformIdRef.current === undefined) {
-      previousPlatformIdRef.current = platformId;
-      return;
-    }
-    if (previousPlatformIdRef.current === platformId) return;
-    previousPlatformIdRef.current = platformId;
-    setValue("pageId", null);
-    setValue("reciterId", null);
-    if (!isMemberSelfTask) setValue("memberIds", []);
-    setValue("appPrayer", null);
-  }, [platformId, isMemberSelfTask, setValue]);
-
-  useEffect(() => {
-    if (isMemberSelfTask) {
-      if (seriesType !== "temporary") setValue("seriesType", "temporary");
-      if (recurrence !== "none") setValue("recurrence", "none");
-      if (weeklyQuotaRequired) setValue("weeklyQuotaRequired", null);
-      if (recurrenceDays) setValue("recurrenceDays", null);
-      setValue("endDate", "");
-      setValue("dependsOnTaskId", null);
-      return;
-    }
-    if (seriesType === "temporary" && recurrence !== "none") {
-      setValue("recurrence", "none");
-    }
-    if (seriesType === "operational" && recurrence !== "weekly" && recurrence !== "monthly") {
-      setValue("recurrence", "weekly");
-    }
-    if (seriesType === "weekly_quota") {
-      if (recurrence !== "weekly") setValue("recurrence", "weekly");
-      if (!weeklyQuotaRequired) setValue("weeklyQuotaRequired", 3);
-    }
-    if ((seriesType !== "operational" || recurrence !== "weekly") && recurrenceDays) {
-      setValue("recurrenceDays", null);
-    }
-  }, [isMemberSelfTask, seriesType, recurrence, recurrenceDays, weeklyQuotaRequired, setValue]);
-
-  // Auto-set reciterId from page when page changes
-  useEffect(() => {
-    if (pageId && pageOptions) {
-      const page = pageOptions.find((pg) => pg.id === pageId);
-      if (page?.reciterId) {
-        setValue("reciterId", page.reciterId);
-      }
-    }
-  }, [pageId, pageOptions, setValue]);
-
-  useEffect(() => {
-    if (!isApplicationPlatform || !reciterId || pages === undefined) return;
-    const currentPageId = taskPageId(currentTask);
-    const currentReciterId = taskReciterId(currentTask);
-    if (selectedApplicationPage?.id) {
-      setValue("pageId", selectedApplicationPage.id);
-    } else if (currentPageId && currentReciterId === reciterId) {
-      setValue("pageId", currentPageId);
-    } else {
-      setValue("pageId", null);
-    }
-  }, [isApplicationPlatform, reciterId, selectedApplicationPage?.id, pages, currentTask, setValue]);
-
-  useEffect(() => {
-    if (isMemberSelfTask) return;
-    if (!isApplicationPlatform || !pageId || !pageMembers || pageMembers.length === 0 || memberIds.length > 0) return;
-    setValue("memberIds", pageMembers);
-  }, [isMemberSelfTask, isApplicationPlatform, pageId, pageMembers, memberIds.length, setValue]);
-
-  useEffect(() => {
-    const platform = platformOptions.find((p) => p.id === platformId);
-    const reciter =
-      reciters?.find((r) => r.id === reciterId) ??
-      applicationReciters.find((r) => r.id === reciterId) ??
-      ((currentTask as any)?.reciter?.id === reciterId ? ((currentTask as any).reciter as Reciter) : undefined);
-    const page = pageOptions.find((pg) => pg.id === pageId);
-    let nextTitle = "مهمة جديدة";
-    if (isApplicationPlatform) {
-      const parts = [appPrayer, reciter?.name, platform?.name].filter(Boolean) as string[];
-      nextTitle = parts.join(" — ") || "مهمة جديدة";
-    } else {
-      const location = page?.name || platform?.name || "";
-      const parts: string[] = [];
-      if (location) parts.push(location);
-      if (reciter?.name) parts.push(reciter.name);
-      nextTitle = parts.join(" — ") || "مهمة جديدة";
-    }
-    if (getValues("title") !== nextTitle) {
-      setValue("title", nextTitle, { shouldDirty: false });
-    }
-  }, [platformId, reciterId, pageId, appPrayer, isApplicationPlatform, platformOptions, reciters, applicationReciters, currentTask, pageOptions, setValue, getValues]);
-
-  return (
-    <>
-      <FormField
-        name="platformId"
-        render={({ field }) => (
-          <FormItem>
-            <FormLabel>المنصة</FormLabel>
-            <Select
-              onValueChange={(v) => field.onChange(parseSelectNumberValue(v) ?? undefined)}
-              value={safeSelectNumberValue(field.value)}
-            >
-              <FormControl>
-                <SelectTrigger>
-                  <SelectValue placeholder="اختر المنصة" />
-                </SelectTrigger>
-              </FormControl>
-              <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                <SelectItem value="none" disabled>
-                  <span className="text-muted-foreground">اختر المنصة</span>
-                </SelectItem>
-                {platformOptions.map((p) => (
-                  <SelectItem key={p.id} value={p.id.toString()}>
-                    <span className="flex items-center gap-2">
-                      <PlatformIcon name={p.name} />
-                      <span>{p.name || `المنصة #${p.id}`}</span>
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <FormMessage />
-          </FormItem>
-        )}
-      />
-
-      {isApplicationPlatform ? (
-        <>
-          <FormField
-            name="reciterId"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="flex items-center gap-2">
-                  <BookOpen className="h-3.5 w-3.5 text-sidebar-primary" />
-                  القارئ داخل التطبيق
-                </FormLabel>
-                <Select
-                  onValueChange={(v) => field.onChange(parseSelectNumberValue(v))}
-                  value={safeSelectNumberValue(field.value)}
-                >
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="اختر القارئ" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                    <SelectItem value="none">
-                      <span className="text-muted-foreground">اختر القارئ</span>
-                    </SelectItem>
-                    {applicationReciters.map((r) => (
-                      <SelectItem key={r.id} value={r.id.toString()}>
-                        {r.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-
-          <FormField
-            name="appPrayer"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="flex items-center gap-2">
-                  <CalendarClock className="h-3.5 w-3.5 text-sidebar-primary" />
-                  الصلاة
-                </FormLabel>
-                <Select
-                  onValueChange={(v) => field.onChange(v === "none" ? null : v)}
-                  value={field.value ?? "none"}
-                >
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="اختر الصلاة" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                    <SelectItem value="none">
-                      <span className="text-muted-foreground">اختر الصلاة</span>
-                    </SelectItem>
-                    {APP_PRAYER_OPTIONS.map((prayer) => (
-                      <SelectItem key={prayer} value={prayer}>
-                        {prayer}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        </>
-      ) : pageOptions.length > 0 ? (
-        <FormField
-          name="pageId"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="flex items-center gap-2">
-                <LayoutList className="h-3.5 w-3.5 text-sidebar-primary" />
-                الصفحة / القناة
-              </FormLabel>
-              <Select
-                onValueChange={(v) => field.onChange(parseSelectNumberValue(v))}
-                value={safeSelectNumberValue(field.value)}
-              >
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder="اختر الصفحة (اختياري)" />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent dir="rtl" className="max-h-[320px] overflow-y-auto">
-                  <SelectItem value="none">
-                    <span className="text-muted-foreground">بدون تحديد صفحة</span>
-                  </SelectItem>
-                  {pageOptions.map((pg) => (
-                    <SelectItem key={pg.id} value={pg.id.toString()}>
-                      {pg.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      ) : null}
-
-      {/* Display-only reciter from selected page */}
-      {!isApplicationPlatform && (() => {
-	        const page = pageOptions.find((pg) => pg.id === pageId);
-        const displayReciter =
-          reciters?.find((r) => r.id === page?.reciterId) ??
-          ((currentTask as any)?.reciter?.id === page?.reciterId ? ((currentTask as any).reciter as Reciter) : undefined);
-        return displayReciter ? (
-          <div className="flex items-center gap-2 p-2.5 rounded-md bg-sidebar-primary/5 border border-sidebar-primary/20 text-sm">
-            <BookOpen className="h-4 w-4 text-sidebar-primary shrink-0" />
-            <div>
-              <p className="text-[10px] text-muted-foreground">القارئ</p>
-              <p className="font-semibold text-sidebar-primary">{displayReciter.name}</p>
-            </div>
-          </div>
-        ) : null;
-      })()}
-
-      {isMemberSelfTask ? (
-        <div className="rounded-md border border-green-200 bg-green-50/60 px-4 py-3 text-sm font-semibold text-green-800">
-          ستُسند هذه المهمة لك فقط: {currentMemberName ?? "حسابي"}
-        </div>
-      ) : (
-        <FormField
-          name="memberIds"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="flex items-center gap-2">
-                <Users className="h-3.5 w-3.5" />
-                المسؤول عن الإضافة
-                {field.value?.length > 0 && (
-                  <span className="text-xs text-sidebar-primary font-semibold">
-                    ({field.value.length} مختار)
-                  </span>
-                )}
-              </FormLabel>
-              <MemberMultiSelect
-                members={filteredMembers as { id: number; name: string; role: string }[]}
-                value={field.value ?? []}
-                onChange={field.onChange}
-              />
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      )}
-
-      <TaskDescriptionField compact />
-
-      {showDependency && (
-        <FormField
-          name="dependsOnTaskId"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel>تعتمد على مهمة سابقة <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
-              <FormControl>
-                <DependencyTaskPicker
-                  value={field.value}
-                  onChange={field.onChange}
-                  options={dependencyOptions}
-                />
-              </FormControl>
-              <p className="text-[10px] text-muted-foreground">
-                عند اكتمال المهمة السابقة يصل تنبيه Telegram لمسؤول هذه المهمة.
-              </p>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-      )}
-
-      <div className="space-y-3 border border-border/60 rounded-lg p-3 bg-muted/20">
-        <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
-          <CalendarDays className="h-3.5 w-3.5" />
-          تاريخ المهمة
-        </p>
-        {!isMemberSelfTask && (
-          <FormField
-            name="seriesType"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>نوع المهمة</FormLabel>
-                <Select onValueChange={field.onChange} value={normalizeTaskSeriesType(field.value)}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="اختر نوع المهمة" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent dir="rtl">
-                    <SelectItem value="temporary">مهمة مؤقتة</SelectItem>
-                    <SelectItem value="operational">مهمة تشغيلية متكررة</SelectItem>
-                    <SelectItem value="weekly_quota">هدف أسبوعي بعدد مرات</SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        )}
-        {seriesType === "operational" && (
-          <FormField
-            name="recurrence"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>نوع التكرار</FormLabel>
-                <Select onValueChange={field.onChange} value={field.value === "monthly" ? "monthly" : "weekly"}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="اختر التكرار" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent dir="rtl">
-                    <SelectItem value="weekly">
-                      <span className="flex items-center gap-2">
-                        <Repeat2 className="h-3.5 w-3.5 text-blue-500" />
-                        أسبوعي - كل أسبوع في نفس اليوم
-                      </span>
-                    </SelectItem>
-                    <SelectItem value="monthly">
-                      <span className="flex items-center gap-2">
-                        <Repeat2 className="h-3.5 w-3.5 text-purple-500" />
-                        شهري - كل شهر في نفس التاريخ
-                      </span>
-                    </SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        )}
-        {seriesType === "operational" && recurrence === "weekly" && (
-          <FormField
-            name="recurrenceDays"
-            render={({ field }) => {
-              const selectedDays = new Set((field.value ?? "").split(",").filter(Boolean));
-              const toggleDay = (day: string) => {
-                const next = new Set(selectedDays);
-                if (next.has(day)) {
-                  next.delete(day);
-                } else {
-                  next.add(day);
-                }
-                const value = [...next].sort((a, b) => Number(a) - Number(b)).join(",");
-                field.onChange(value || null);
-              };
-
-              return (
-                <FormItem>
-                  <FormLabel>أيام التكرار الأسبوعي <span className="text-xs text-muted-foreground">(اختياري)</span></FormLabel>
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-                    {WEEKDAY_OPTIONS.map((day) => {
-                      const checked = selectedDays.has(day.value);
-                      return (
-                        <button
-                          key={day.value}
-                          type="button"
-                          onClick={() => toggleDay(day.value)}
-                          className={cn(
-                            "h-10 rounded-md border text-sm font-semibold transition-colors flex items-center justify-center gap-1.5",
-                            checked
-                              ? "bg-sidebar-primary text-sidebar-primary-foreground border-sidebar-primary"
-                              : "bg-background text-foreground border-input hover:bg-muted"
-                          )}
-                        >
-                          {checked && <Check className="h-3.5 w-3.5" />}
-                          {day.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <FormMessage />
-                </FormItem>
-              );
-            }}
-          />
-        )}
-        {seriesType === "weekly_quota" && (
-          <FormField
-            name="weeklyQuotaRequired"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>عدد مرات الإنجاز في الأسبوع</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    min={1}
-                    max={50}
-                    value={field.value ?? 3}
-                    onChange={(event) => field.onChange(event.target.value ? Number(event.target.value) : null)}
-                    placeholder="مثال: 3"
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        )}
-        <div className={cn("grid gap-3", isMemberSelfTask || seriesType === "operational" || seriesType === "weekly_quota" ? "grid-cols-1" : "grid-cols-2")}>
-        <FormField
-          name="startDate"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="flex items-center gap-1">
-                البداية <span className="text-[10px] text-red-500 font-normal">مطلوب</span>
-              </FormLabel>
-              <FormControl>
-                <DatePickerInput
-                  value={field.value ?? ""}
-                  onChange={field.onChange}
-                  placeholder="اختر تاريخاً"
-                />
-              </FormControl>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        {!isMemberSelfTask && seriesType === "temporary" && (
-          <FormField
-            name="endDate"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel className="flex items-center gap-1">
-                  النهاية <span className="text-[10px] text-muted-foreground font-normal">(اختياري)</span>
-                </FormLabel>
-                <FormControl>
-                  <DatePickerInput
-                    value={field.value ?? ""}
-                    onChange={field.onChange}
-                    placeholder="اختر تاريخاً"
-                    optional
-                  />
-                </FormControl>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        )}
-        </div>
-        <p className="text-[10px] text-sidebar-primary bg-sidebar-primary/5 border border-sidebar-primary/20 rounded px-2.5 py-1.5">
-          {seriesType === "operational"
-            ? recurrence === "monthly"
-              ? "ينشئ النظام مهاماً مستقلة شهرياً في نفس تاريخ البداية ضمن نافذة 60 يوماً قادمة."
-              : "ينشئ النظام مهاماً مستقلة أسبوعياً في نفس يوم البداية ضمن نافذة 60 يوماً قادمة."
-            : seriesType === "weekly_quota"
-              ? "ينشئ النظام مهمة واحدة لكل أسبوع. يضيف العضو الشواهد حتى يصل إلى العدد المطلوب، ثم تكتمل المهمة تلقائياً، ويمكنه إضافة شواهد إضافية بعدها دون تغيير العدد المطلوب."
-            : isMemberSelfTask
-              ? "هذه مهمة مقطوعة ليوم واحد، تظهر للمدير والتقارير ويمكنك إضافة شاهد لها وإكمالها."
-              : "إذا تركت النهاية فارغة تُنشأ مهمة ليوم واحد فقط. وإذا اخترت نهاية، ينشئ النظام مهمة مستقلة لكل يوم من البداية حتى النهاية، ولكل يوم شاهد وزر إتمام مستقل."}
-        </p>
-      </div>
-
-      <div className="grid grid-cols-2 gap-4">
-        <FormField
-          name="priority"
-          render={({ field }) => (
-            <FormItem>
-              <FormLabel className="flex items-center gap-1.5">
-                <Flame className="h-3.5 w-3.5 text-red-500" />
-                الأولوية
-              </FormLabel>
-              <Select onValueChange={field.onChange} value={field.value ?? "normal"}>
-                <FormControl>
-                  <SelectTrigger>
-                    <SelectValue placeholder="عادي" />
-                  </SelectTrigger>
-                </FormControl>
-                <SelectContent dir="rtl">
-                  <SelectItem value="urgent">
-                    <span className="flex items-center gap-2">
-                      <Flame className="h-3.5 w-3.5 text-red-500" />
-                      عاجل
-                    </span>
-                  </SelectItem>
-                  <SelectItem value="normal">
-                    <span className="flex items-center gap-2">
-                      <Minus className="h-3.5 w-3.5 text-blue-500" />
-                      عادي
-                    </span>
-                  </SelectItem>
-                  <SelectItem value="low">
-                    <span className="flex items-center gap-2">
-                      <ArrowDown className="h-3.5 w-3.5 text-gray-400" />
-                      منخفض
-                    </span>
-                  </SelectItem>
-                </SelectContent>
-              </Select>
-              <FormMessage />
-            </FormItem>
-          )}
-        />
-        {showStatus && (
-          <FormField
-            name="status"
-            render={({ field }) => (
-              <FormItem>
-                <FormLabel>الحالة</FormLabel>
-                <Select onValueChange={field.onChange} value={normalizeTaskStatus(field.value)}>
-                  <FormControl>
-                    <SelectTrigger>
-                      <SelectValue placeholder="الحالة" />
-                    </SelectTrigger>
-                  </FormControl>
-                  <SelectContent dir="rtl">
-                    <SelectItem value="pending">قيد الانتظار</SelectItem>
-                    <SelectItem value="completed">مكتمل</SelectItem>
-                  </SelectContent>
-                </Select>
-                <FormMessage />
-              </FormItem>
-            )}
-          />
-        )}
-      </div>
-    </>
-  );
-}
 
 // ──────────────────────────────────────────────────────────────────────────────
 // Grouped by Reciter view
@@ -5032,7 +4372,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                             reciters={reciters}
                             currentMemberName={currentMemberName}
                           />
-                        ) : (TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM) ? (
+                        ) : (
                           <>
                             <BasicTaskFormFields
                               platforms={platforms}
@@ -5052,16 +4392,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                               }
                             />
                           </>
-                        ) : (
-                          <TaskFormFields
-                            platforms={platforms}
-                            members={members as { id: number; name: string; role: string }[]}
-                            reciters={reciters}
-                            allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
-                            showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
-                            isMemberSelfTask={ENABLE_MEMBER_CREATED_TASKS && !isAdmin}
-                            currentMemberName={currentMemberName}
-                          />
                         )}
                       </form>
                     </Form>
@@ -5464,8 +4794,7 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         </p>
                       </div>
                     )}
-                    {TASK_FORM_STABILITY_MODE || USE_SAFE_PHASE_ONE_TASK_FORM ? (
-                      <EditTaskFormFields
+                    <EditTaskFormFields
                         platforms={platforms}
                         members={members as { id: number; name: string; role: string }[]}
                         reciters={reciters}
@@ -5475,18 +4804,6 @@ export default function Tasks({ taskId }: { taskId?: number } = {}) {
                         showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
                         onRequestSubstitution={() => openSubstitutionDialog(editingTask)}
                       />
-                    ) : (
-                      <TaskFormFields
-                        platforms={platforms}
-                        members={members as { id: number; name: string; role: string }[]}
-                        reciters={reciters}
-                        showStatus
-                        allTasks={dependencyCandidateTasks ?? rawTasks ?? []}
-                        currentTask={editingTask}
-                        showDependency={ENABLE_TASK_DEPENDENCIES && isAdmin}
-                        excludeTaskId={editingTask?.id}
-                      />
-                    )}
                   </form>
                 </Form>
                 {editingTask?.id && (

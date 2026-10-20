@@ -2009,7 +2009,7 @@ export async function notifyTelegramAdminsFacebookReconnect(input: { reason: str
       "",
       `❗ السبب: ${escapeHtml(input.reason)}`,
       "",
-      "افتح «مراقبة إنستقرام» واضغط «ربط فيسبوك». إرفاق نسخ فيسبوك متوقف حتى ذلك (توثيق إنستقرام نفسه مستمر).",
+      "افتح «مراقبة إنستقرام» ← قسم فيسبوك ← «ربط فيسبوك برمز»: ولّد رمزًا من مستكشف Graph API والصقه هناك. حتى ذلك يتوقف الرفع التلقائي يوتيوب ← فيسبوك وإرفاق نسخ فيسبوك (توثيق إنستقرام نفسه مستمر).",
     ].join(String.fromCharCode(10));
     const result = await sendLoggedTelegram({
       type: "telegram_facebook_reconnect",

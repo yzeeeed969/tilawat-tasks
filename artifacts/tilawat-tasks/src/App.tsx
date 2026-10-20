@@ -106,22 +106,15 @@ function LegacySettingsRedirect() {
   return null;
 }
 
+// صفحة «توليد المهام» حُذفت (الإصدار 60) — الروابط القديمة تُحوَّل إلى المهام.
 function TaskGenerationDisabledRoute() {
   const [, setLocation] = useLocation();
 
   useEffect(() => {
-    setLocation("/tasks");
+    setLocation("/tasks", { replace: true });
   }, [setLocation]);
 
-  return (
-    <ProtectedRoute>
-      <AppLayout>
-        <div className="rounded-lg border bg-card p-6 text-center text-muted-foreground">
-          ميزة توليد المهام غير مفعلة حاليًا
-        </div>
-      </AppLayout>
-    </ProtectedRoute>
-  );
+  return null;
 }
 
 function AppRouter() {

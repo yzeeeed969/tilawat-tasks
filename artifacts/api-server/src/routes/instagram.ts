@@ -18,7 +18,6 @@ import {
   updateInstagramSettings,
 } from "../services/instagram-accounts";
 import { checkInstagramAccount, currentWeekPostCounts, listInstagramMedia, revertInstagramMedia, runInstagramMonitorTick } from "../services/instagram-monitor";
-import { applyInstagramLegacyCleanup, previewInstagramLegacyCleanup } from "../services/instagram-legacy-cleanup";
 import { FACEBOOK_SCOPES, getFacebookConfig, missingFacebookEnv } from "../services/facebook-client";
 import { completeFacebookConnect, connectFacebookWithToken, getFacebookConnection, listFacebookPages, setAccountFacebookPage, startFacebookConnect } from "../services/facebook-accounts";
 import { listFacebookLinks, revertFacebookLink, runFacebookCrosspostTick, setManualFacebookLink } from "../services/facebook-crosspost";
@@ -214,19 +213,6 @@ router.post("/instagram/media/:id/revert", async (req, res) => {
   } catch (err) {
     sendError(res, err);
   }
-});
-
-// تنظيف مهام إنستقرام الأسبوعية القديمة المكرّرة (سلاسل «هدف أسبوعي» يدوية): معاينة ثم تطبيق (حذف ناعم).
-router.get("/instagram/legacy-cleanup", async (_req, res) => {
-  res.json(await previewInstagramLegacyCleanup());
-});
-
-router.post("/instagram/legacy-cleanup", async (req, res) => {
-  if (req.body?.confirm !== true) {
-    res.status(400).json({ message: "أكّد التنظيف أولًا" });
-    return;
-  }
-  res.json(await applyInstagramLegacyCleanup((req as any).currentUser?.id ?? null));
 });
 
 export default router;

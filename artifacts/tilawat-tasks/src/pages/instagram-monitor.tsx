@@ -39,16 +39,6 @@ type Setup = {
   pages: Array<{ id: number; name: string; reciterId: number | null; reciterName: string | null }>;
   members: Array<{ id: number; name: string }>;
 };
-type CleanupPreview = {
-  weekStart: string;
-  candidates: Array<{ id: number; title: string; dueDate: string; seriesId: number | null; weeklyQuotaRequired: number; weekStart: string; past: boolean; monitorTaskId: number | null }>;
-  historical: Array<{ legacyTaskId: number; title: string; dueDate: string; weekStart: string; hasProofs: boolean }>;
-  historicalCount: number;
-  transfers: Array<{ legacyTaskId: number; title: string; dueDate: string; weekStart: string; links: string[]; newLinks: string[]; monitorTaskId: number; monitorTitle: string; monitorCountBefore: number; monitorRequired: number }>;
-  unmatched: Array<{ legacyTaskId: number; title: string; dueDate: string; reason: string }>;
-  protectedCount: number;
-  seriesToStop: number[];
-};
 type Media = {
   id: number;
   reciterName: string;
@@ -162,25 +152,6 @@ export default function InstagramMonitorPage() {
     onError,
   });
 
-  const [cleanupPreview, setCleanupPreview] = useState<CleanupPreview | null>(null);
-  const previewCleanupMutation = useMutation({
-    mutationFn: () => api<CleanupPreview>("/api/instagram/legacy-cleanup"),
-    onSuccess: setCleanupPreview,
-    onError,
-  });
-  const applyCleanupMutation = useMutation({
-    mutationFn: () => api<{ deletedTasks: number; movedProofs: number; mergedTasks: number; stoppedSeries: number; protectedCount: number }>("/api/instagram/legacy-cleanup", { method: "POST", body: JSON.stringify({ confirm: true }) }),
-    onSuccess: (result) => {
-      setCleanupPreview(null);
-      refresh();
-      queryClient.invalidateQueries({ queryKey: ["/api/tasks"] });
-      toast({
-        title: `تم: حُذفت ${result.deletedTasks} مهمة حذفًا ناعمًا، ونُقل ${result.movedProofs} شاهد، وأُوقفت ${result.stoppedSeries} سلسلة`,
-        description: result.protectedCount > 0 ? `${result.protectedCount} مهمة لم تُمس (انظر المعاينة).` : undefined,
-      });
-    },
-    onError,
-  });
 
   const usedPageIds = useMemo(() => new Set(setup?.accounts.map((a) => a.pageId) ?? []), [setup]);
   const availablePages = (setup?.pages ?? []).filter((p) => p.reciterId && !usedPageIds.has(p.id));
@@ -357,80 +328,6 @@ export default function InstagramMonitorPage() {
 
       <FacebookCrosspostSection facebook={setup.facebook} accounts={setup.accounts} settings={setup.settings} onChanged={refresh} />
 
-      <Card className="border-border/50 shadow-sm">
-        <CardHeader>
-          <CardTitle className="text-lg">تنظيف المهام الأسبوعية القديمة المكرّرة</CardTitle>
-          <CardDescription>
-            مهام «هدف أسبوعي بعدد مرات» على إنستقرام من سلاسل يدوية قديمة (غير مهام المراقبة)، لكل الأسابيع.
-            التي بلا شواهد تُحذف، والتي فيها شواهد تُنقل روابطها (بلا تكرار بالرابط) إلى مهمة المراقبة لنفس القارئ والأسبوع ثم تُحذف.
-            الأسابيع الماضية التي ليس لها مهمة مراقبة (قبل تشغيل المراقب) تبقى كما هي سجلًا تاريخيًا.
-            الحذف ناعم (قابل للاسترجاع من المحذوفات)، وتُوقف السلاسل القديمة فلا تُولّد مجددًا.
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <Button size="sm" variant="outline" disabled={previewCleanupMutation.isPending} onClick={() => previewCleanupMutation.mutate()}>
-            {previewCleanupMutation.isPending && <Loader2 className="ml-1 h-4 w-4 animate-spin" />} معاينة
-          </Button>
-          {cleanupPreview && (
-            <div className="space-y-2 rounded-md border p-3 text-sm">
-              <p>
-                من أسبوع {cleanupPreview.weekStart}: <b>{cleanupPreview.candidates.length + cleanupPreview.transfers.length}</b> مهمة ستُحذف حذفًا ناعمًا
-                (منها {cleanupPreview.transfers.length} تُنقل شواهدها أولًا)، و<b>{cleanupPreview.seriesToStop.length}</b> سلسلة ستُوقف
-                {cleanupPreview.unmatched.length > 0 && <>، و{cleanupPreview.unmatched.length} مهمة لن تُمس</>}
-                {cleanupPreview.historicalCount > 0 && <>، و{cleanupPreview.historicalCount} مهمة من أسابيع قبل المراقب تبقى سجلًا تاريخيًا</>}.
-              </p>
-              {cleanupPreview.candidates.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold">بلا شواهد — حذف مباشر:</div>
-                  <ul className="max-h-40 list-disc overflow-y-auto pr-5 text-xs text-muted-foreground">
-                    {cleanupPreview.candidates.map((c) => (
-                      <li key={c.id}>
-                        #{c.id} — {c.title} — أسبوع {c.weekStart} (هدف {c.weeklyQuotaRequired})
-                        {c.past && c.monitorTaskId && <> — أسبوع ماضٍ، مهمة المراقبة #{c.monitorTaskId} موجودة</>}
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {cleanupPreview.transfers.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold">فيها شواهد — نقل ثم حذف:</div>
-                  <ul className="max-h-48 list-disc overflow-y-auto pr-5 text-xs text-muted-foreground">
-                    {cleanupPreview.transfers.map((t) => (
-                      <li key={t.legacyTaskId}>
-                        #{t.legacyTaskId} — {t.title} — {t.dueDate}: نقل <b>{t.newLinks.length}</b> شاهد
-                        {t.links.length > t.newLinks.length && <> ({t.links.length - t.newLinks.length} موجود مسبقًا)</>} إلى مهمة المراقبة #{t.monitorTaskId}
-                        {" "}({t.monitorCountBefore}/{t.monitorRequired} ← {t.monitorCountBefore + t.newLinks.length}/{t.monitorRequired})
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              )}
-              {cleanupPreview.historicalCount > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-muted-foreground">سجل تاريخي — لن يُمس ({cleanupPreview.historicalCount}{cleanupPreview.historicalCount > cleanupPreview.historical.length ? `، تُعرض أول ${cleanupPreview.historical.length}` : ""}):</div>
-                  <ul className="max-h-32 list-disc overflow-y-auto pr-5 text-xs text-muted-foreground">
-                    {cleanupPreview.historical.map((h) => <li key={h.legacyTaskId}>#{h.legacyTaskId} — {h.title} — أسبوع {h.weekStart}{h.hasProofs ? " (فيها شواهد)" : ""}</li>)}
-                  </ul>
-                </div>
-              )}
-              {cleanupPreview.unmatched.length > 0 && (
-                <div>
-                  <div className="text-xs font-semibold text-amber-700">لن تُمس:</div>
-                  <ul className="max-h-40 list-disc overflow-y-auto pr-5 text-xs text-amber-700">
-                    {cleanupPreview.unmatched.map((u) => <li key={u.legacyTaskId}>#{u.legacyTaskId} — {u.title} — {u.dueDate}: {u.reason}</li>)}
-                  </ul>
-                </div>
-              )}
-              {(cleanupPreview.candidates.length > 0 || cleanupPreview.transfers.length > 0 || cleanupPreview.seriesToStop.length > 0) && (
-                <Button size="sm" variant="destructive" disabled={applyCleanupMutation.isPending} onClick={() => { if (confirm(`تأكيد: حذف ناعم لـ ${cleanupPreview.candidates.length + cleanupPreview.transfers.length} مهمة (بعد نقل شواهد ${cleanupPreview.transfers.length} منها) وإيقاف ${cleanupPreview.seriesToStop.length} سلسلة؟`)) applyCleanupMutation.mutate(); }}>
-                  تنفيذ التنظيف
-                </Button>
-              )}
-            </div>
-          )}
-        </CardContent>
-      </Card>
 
       <Card className="border-border/50 shadow-sm">
         <CardHeader>

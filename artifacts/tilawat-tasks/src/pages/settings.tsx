@@ -118,7 +118,6 @@ interface TelegramSettingsData {
     notifyAdminCompleted: boolean;
     notifyAdminDailySummary: boolean;
     notifyDailyPublicSummary: boolean;
-    suppressRepeatHours: number;
   };
   recipients: Array<{
     id: number;
@@ -214,17 +213,6 @@ async function patchTelegramSettings(updates: Partial<TelegramSettingsData["sett
   return body;
 }
 
-async function createTelegramLinkToken(userId?: number) {
-  const res = await fetch("/api/telegram/link-token", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(userId ? { userId } : {}),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? "فشل إنشاء رمز الربط");
-  return body as { token: string; expiresAt: string };
-}
 
 async function runTelegramDueCheck() {
   const res = await fetch("/api/telegram/run-due", { method: "POST", credentials: "include" });
@@ -233,17 +221,6 @@ async function runTelegramDueCheck() {
   return body;
 }
 
-async function sendTelegramTest(userId?: number) {
-  const res = await fetch("/api/telegram/test", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    credentials: "include",
-    body: JSON.stringify(userId ? { userId } : {}),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(body.error ?? "فشل إرسال رسالة الاختبار");
-  return body;
-}
 
 function riyadhDateInputValue(date = new Date()) {
   const parts = new Intl.DateTimeFormat("en-US", {
@@ -283,17 +260,6 @@ function formatRiyadhDateTime(value?: string | null) {
   }).format(new Date(value));
 }
 
-function parseNonNegativeIntegerInput(value: string) {
-  const arabicDigits = "٠١٢٣٤٥٦٧٨٩";
-  const persianDigits = "۰۱۲۳۴۵۶۷۸۹";
-  const normalized = value
-    .replace(/[٠-٩]/g, (digit) => String(arabicDigits.indexOf(digit)))
-    .replace(/[۰-۹]/g, (digit) => String(persianDigits.indexOf(digit)))
-    .replace(/[,\s_]/g, "");
-  if (!normalized) return null;
-  const parsed = Number(normalized);
-  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : Number.NaN;
-}
 
 // ── Permission checkbox ────────────────────────────────────────────────────────
 function PermCheckbox({ label, checked, onChange }: { label: string; checked: boolean; onChange: (v: boolean) => void }) {
@@ -915,7 +881,6 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
 
   const [editMode, setEditMode] = useState(false);
   const [editName, setEditName] = useState(p.name);
-  const [editBaselinePostsCount, setEditBaselinePostsCount] = useState(String(p.baselinePostsCount ?? 0));
   const [pagesOpen, setPagesOpen] = useState(false);
   const [newPageName, setNewPageName] = useState("");
   const [newPageUrl, setNewPageUrl] = useState("");
@@ -988,12 +953,7 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
   };
 
   const saveEdit = () => {
-    const baselinePostsCount = parseNonNegativeIntegerInput(editBaselinePostsCount);
-    if (Number.isNaN(baselinePostsCount)) {
-      toast({ title: "أدخل رقمًا صحيحًا للرقم التأسيسي للمنشورات", variant: "destructive" });
-      return;
-    }
-    updatePlatform.mutate({ id: p.id, data: { name: editName.trim(), icon: p.icon, color: p.color, baselinePostsCount: baselinePostsCount ?? 0 } }, {
+    updatePlatform.mutate({ id: p.id, data: { name: editName.trim(), icon: p.icon, color: p.color, baselinePostsCount: p.baselinePostsCount ?? 0 } }, {
       onSuccess: () => { queryClient.invalidateQueries({ queryKey: getListPlatformsQueryKey() }); toast({ title: "تم التحديث" }); setEditMode(false); },
       onError: () => toast({ title: "حدث خطأ", variant: "destructive" }),
     });
@@ -1095,21 +1055,9 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
             <Button size="sm" className="h-8 bg-sidebar-primary text-sidebar-primary-foreground px-3" onClick={saveEdit} disabled={updatePlatform.isPending || !editName.trim()}>
               {updatePlatform.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
             </Button>
-            <Button size="sm" variant="outline" className="h-8 px-3" onClick={() => { setEditMode(false); setEditName(p.name); setEditBaselinePostsCount(String(p.baselinePostsCount ?? 0)); }}>
+            <Button size="sm" variant="outline" className="h-8 px-3" onClick={() => { setEditMode(false); setEditName(p.name); }}>
               <X className="h-3 w-3" />
             </Button>
-          </div>
-          <div className="space-y-1">
-            <label className="text-xs font-semibold text-muted-foreground">الرقم التأسيسي للمنشورات</label>
-            <Input
-              value={editBaselinePostsCount}
-              onChange={(event) => setEditBaselinePostsCount(event.target.value)}
-              inputMode="numeric"
-              dir="ltr"
-              min={0}
-              className="h-8 text-sm"
-              placeholder="0"
-            />
           </div>
         </div>
       ) : (
@@ -1122,9 +1070,6 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
             <span className="font-bold">{p.name}</span>
             {p.isMain && <span className="text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-200 rounded-full px-2 py-0.5">رئيسية</span>}
             {p.coversAllReciters && <span className="text-[10px] font-bold bg-sky-50 text-sky-700 border border-sky-200 rounded-full px-2 py-0.5">تشمل كل القرّاء</span>}
-            <span className="text-[10px] font-bold bg-emerald-50 text-emerald-700 border border-emerald-100 rounded-full px-2 py-0.5">
-              تأسيسي: {(p.baselinePostsCount ?? 0).toLocaleString("ar-SA")}
-            </span>
           </div>
           <div className="flex gap-1">
             <Button variant="ghost" size="icon" className={`h-8 w-8 ${p.isMain ? "text-amber-500 hover:bg-amber-50" : "text-muted-foreground hover:text-amber-500 hover:bg-amber-50"}`}
@@ -1140,7 +1085,7 @@ function PlatformItem({ p, reciters, selected, onToggleSelect }: {
               <Layers className="h-3.5 w-3.5" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-blue-600 hover:bg-blue-50"
-              onClick={() => { setEditMode(true); setEditName(p.name); setEditBaselinePostsCount(String(p.baselinePostsCount ?? 0)); }}>
+              onClick={() => { setEditMode(true); setEditName(p.name); }}>
               <Pencil className="h-3.5 w-3.5" />
             </Button>
             <Button variant="ghost" size="icon" className="h-8 w-8 text-muted-foreground hover:text-destructive hover:bg-destructive/10"
@@ -1357,25 +1302,6 @@ export function PlatformsSection() {
             <FormField control={form.control} name="name" render={({ field }) => (
               <FormItem><FormLabel>اسم المنصة</FormLabel><FormControl><Input placeholder="مثال: يوتيوب" {...field} /></FormControl><FormMessage /></FormItem>
             )} />
-            <FormField control={form.control} name="baselinePostsCount" render={({ field }) => (
-              <FormItem>
-                <FormLabel>الرقم التأسيسي للمنشورات</FormLabel>
-                <FormControl>
-                  <Input
-                    type="number"
-                    min={0}
-                    inputMode="numeric"
-                    dir="ltr"
-                    placeholder="0"
-                    {...field}
-                  />
-                </FormControl>
-                <p className="text-xs text-muted-foreground">
-                  يمثل منشورات هذه المنصة قبل بدء احتساب نظام المهام. اتركه 0 إذا لم يوجد رقم تأسيسي.
-                </p>
-                <FormMessage />
-              </FormItem>
-            )} />
             <Button type="submit" className="w-full bg-sidebar-primary hover:bg-sidebar-primary/90 text-sidebar-primary-foreground" disabled={createPlatform.isPending}>
               {createPlatform.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Plus className="ml-2 h-4 w-4" />}إضافة منصة
             </Button>
@@ -1447,8 +1373,6 @@ function TelegramToggleRow({ title, description, checked, onChange }: {
 export function TelegramSettingsSection() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
-  const { user } = useAuth();
-  const [linkToken, setLinkToken] = useState<string | null>(null);
   const [publicSummaryDate, setPublicSummaryDate] = useState(() => riyadhDateInputValue());
 
   const { data, isLoading } = useQuery({
@@ -1469,28 +1393,10 @@ export function TelegramSettingsSection() {
     onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
   });
 
-  const linkMutation = useMutation({
-    mutationFn: () => createTelegramLinkToken(user?.id),
-    onSuccess: (result) => {
-      setLinkToken(result.token);
-      toast({ title: "تم إنشاء رمز الربط" });
-    },
-    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
-  });
-
   const runMutation = useMutation({
     mutationFn: runTelegramDueCheck,
     onSuccess: (result) => {
       toast({ title: `تم تشغيل الفحص — أُرسل ${result.sent ?? 0}` });
-      queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
-    },
-    onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
-  });
-
-  const testMutation = useMutation({
-    mutationFn: () => sendTelegramTest(user?.id),
-    onSuccess: () => {
-      toast({ title: "تم إرسال رسالة اختبار" });
       queryClient.invalidateQueries({ queryKey: ["telegram-logs"] });
     },
     onError: (err: Error) => toast({ title: err.message, variant: "destructive" }),
@@ -1577,17 +1483,6 @@ export function TelegramSettingsSection() {
                   onBlur={(e) => saveMutation.mutate({ overdueAfterTime: e.target.value })}
                 />
               </div>
-              <div className="space-y-2">
-                <label className="text-sm font-semibold">منع التكرار بالساعات</label>
-                <Input
-                  type="number"
-                  min={1}
-                  max={168}
-                  dir="ltr"
-                  defaultValue={settings.suppressRepeatHours}
-                  onBlur={(e) => saveMutation.mutate({ suppressRepeatHours: Number(e.target.value) })}
-                />
-              </div>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -1657,27 +1552,8 @@ export function TelegramSettingsSection() {
             </div>
 
             <div className="rounded-xl border border-border/60 bg-muted/10 p-4 space-y-3">
-              <h3 className="font-bold flex items-center gap-2">
-                <Link2 className="h-4 w-4 text-sidebar-primary" />
-                ربط حسابي في Telegram
-              </h3>
-              <p className="text-sm text-muted-foreground">
-                أنشئ رمز ربط، ثم أرسل للبوت في Telegram: <span dir="ltr" className="font-mono">/start الرمز</span>. الرمز صالح لمدة 30 دقيقة.
-              </p>
-              {linkToken && (
-                <div className="rounded-lg bg-background border border-border px-3 py-2 font-mono text-sm text-left" dir="ltr">
-                  /start {linkToken}
-                </div>
-              )}
+              <p className="text-sm text-muted-foreground">ربط حسابك في Telegram وإرسال اختبار لك: من صفحة «حسابي».</p>
               <div className="flex flex-wrap gap-2">
-                <Button variant="outline" onClick={() => linkMutation.mutate()} disabled={linkMutation.isPending}>
-                  {linkMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Link2 className="h-4 w-4 ml-2" />}
-                  إنشاء رمز ربط
-                </Button>
-                <Button variant="outline" onClick={() => testMutation.mutate()} disabled={testMutation.isPending}>
-                  {testMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <Send className="h-4 w-4 ml-2" />}
-                  إرسال اختبار لي
-                </Button>
                 <Button variant="outline" onClick={() => runMutation.mutate()} disabled={runMutation.isPending}>
                   {runMutation.isPending ? <Loader2 className="h-4 w-4 ml-2 animate-spin" /> : <RefreshCw className="h-4 w-4 ml-2" />}
                   تشغيل الفحص الآن
