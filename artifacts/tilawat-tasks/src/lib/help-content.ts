@@ -53,7 +53,6 @@ export const HELP_SECTIONS: HelpSection[] = [
           "إن ضغطت ✓ خطأً على مهمة مكتملة، اضغط ✓ الأخضر مرة أخرى («إلغاء الإتمام»).",
           "في مهام يوتيوب: إن كان عنوان الفيديو لا يطابق الصلاة أو التاريخ تظهر نافذة «الفيديو لا يطابق المهمة» — راجع الرابط قبل «تأكيد الربط».",
         ],
-        image: "proof-dialog.jpg",
       },
       {
         title: "مهام «الهدف الأسبوعي» (مثل إنستقرام)",
@@ -537,6 +536,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
+  {
+    version: 63, date: "2026-10-20",
+    items: [
+      { text: "أُضيفت صور حقيقية للشاشات داخل «دليل الاستخدام» (بأسماء مخفية)." },
+    ],
+  },
   {
     version: 62, date: "2026-10-20",
     items: [
