@@ -52,6 +52,10 @@ async function runEnsure() {
       created_at timestamp NOT NULL DEFAULT now()
     )`);
   await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_yt_fb_uploads_video ON yt_fb_uploads(video_id)`);
+  // شاهد فيسبوك التكميلي على مهمة يوتيوب المطابقة (الخيار «ب»: لا مهام فيسبوك مستقلة).
+  await db.execute(sql`ALTER TABLE yt_fb_uploads ADD COLUMN IF NOT EXISTS proof_task_id integer`);
+  await db.execute(sql`ALTER TABLE yt_fb_uploads ADD COLUMN IF NOT EXISTS proof_id integer`);
+  await db.execute(sql`ALTER TABLE yt_fb_uploads ADD COLUMN IF NOT EXISTS proof_attached_at timestamp`);
 }
 
 export async function ensureCrosspostSchema() {

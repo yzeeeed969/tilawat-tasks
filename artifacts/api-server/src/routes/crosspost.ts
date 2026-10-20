@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
-import { checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
+import { attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
 export const crosspostMachineRouter = Router();
@@ -26,6 +26,7 @@ function requireMachineKey(req: Request, res: Response, next: NextFunction) {
 crosspostMachineRouter.get("/crosspost/machine/pending", requireMachineKey, async (_req, res) => {
   try {
     res.json(await listPendingVideos());
+    attachFacebookProofsToYoutubeTasks().catch(() => {}); // شاهد فيسبوك التكميلي لما وُثّق بعد الرفع
   } catch (err) {
     res.status(500).json({ ok: false, message: (err as Error).message });
   }
@@ -46,6 +47,7 @@ crosspostMachineRouter.post("/crosspost/machine/upload", requireMachineKey, asyn
     const { size } = await fs.promises.stat(filePath);
     const result = await performUpload(claim, filePath, size);
     res.status(result.ok ? 200 : 502).json({ ...result, videoId, pageId: claim.pageId, pageName: claim.pageName, title: claim.title });
+    if (result.ok) attachFacebookProofsToYoutubeTasks().catch(() => {});
   } catch (err) {
     const message = (err as Error).message;
     await performUpload(claim, filePath, 0).catch(() => {}); // يسجّل الإخفاق (ملف لم يكتمل)

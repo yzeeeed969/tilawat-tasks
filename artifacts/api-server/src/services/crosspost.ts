@@ -9,6 +9,7 @@ import { callYoutubeApi } from "./youtube-client";
 import { getFacebookConfig } from "./facebook-client";
 import { uploadFacebookVideo } from "./facebook-video-upload";
 import { decryptToken } from "../lib/instagram-token-crypto";
+import { addSupplementaryProof } from "./auto-documentation";
 
 // الرفع التلقائي للتلاوات يوتيوب ← فيسبوك (ناتيف). القرارات:
 // - الجديد فقط: عند كل تفعيل يُسجَّل أحدث فيديو حالي لكل قناة كـ«خط أساس»، ولا يُرفع ما قبله أبدًا.
@@ -289,4 +290,45 @@ export async function crosspostOverview() {
       startedAt: r.started_at, uploadedAt: r.uploaded_at ?? null,
     })),
   };
+}
+
+// ── شاهد فيسبوك التكميلي (الخيار «ب») ────────────────────────────────────────────────────────
+// كل فيديو رُفع إلى فيسبوك يُرفق رابطه «شاهدًا تكميليًا» على مهمة يوتيوب التي وثّقها نفس الفيديو
+// (youtube_videos.matched_task_id). لا يغيّر الحالة ولا العدّاد. ترتيب الحدثين غير مضمون (التوثيق قد
+// يسبق الرفع أو يتأخر عنه)، فتُستدعى بعد كل رفع ومع كل استعلام من جهاز التنزيل (~كل 10 دقائق).
+export async function attachFacebookProofsToYoutubeTasks(): Promise<number> {
+  await ensureCrosspostSchema();
+  await ensureYoutubeMonitorSchema();
+  const rows = rowsOf(await db.execute(sql`
+    SELECT u.id, u.video_id, u.fb_video_id, y.matched_task_id
+    FROM yt_fb_uploads u
+    JOIN youtube_videos y ON y.video_id = u.video_id
+    WHERE u.status = 'uploaded' AND u.fb_video_id IS NOT NULL AND u.proof_attached_at IS NULL
+      AND y.status = 'documented' AND y.matched_task_id IS NOT NULL
+      AND u.uploaded_at > now() - interval '14 days'
+    LIMIT 50`));
+  let attached = 0;
+  for (const row of rows) {
+    const fbUrl = `https://www.facebook.com/${row.fb_video_id}`;
+    const taskId = Number(row.matched_task_id);
+    // حجز قبل الإرفاق: لا يُرفق نفس الرابط مرتين حتى لو تزامن استدعاءان.
+    const claimed = rowsOf(await db.execute(sql`UPDATE yt_fb_uploads SET proof_attached_at = now(), proof_task_id = ${taskId}
+      WHERE id = ${row.id} AND proof_attached_at IS NULL RETURNING id`));
+    if (claimed.length === 0) continue;
+    const added = await addSupplementaryProof({
+      taskId,
+      proofUrl: fbUrl,
+      note: `نسخة فيسبوك لفيديو يوتيوب https://youtu.be/${row.video_id} — رفعها النظام تلقائيًا (شاهد تكميلي لا يغيّر الحالة)`,
+      activityUserName: "الرفع التلقائي يوتيوب ← فيسبوك",
+      activityAction: "youtube_facebook_proof_linked",
+      meta: { videoId: row.video_id, fbVideoId: row.fb_video_id, fbUrl },
+    }).catch(() => ({ added: false, createdProofId: null }));
+    if (added.added) {
+      attached += 1;
+      await db.execute(sql`UPDATE yt_fb_uploads SET proof_id = ${added.createdProofId} WHERE id = ${row.id}`);
+    } else {
+      await db.execute(sql`UPDATE yt_fb_uploads SET proof_attached_at = NULL, proof_task_id = NULL WHERE id = ${row.id}`);
+    }
+  }
+  return attached;
 }
