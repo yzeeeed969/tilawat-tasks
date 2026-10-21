@@ -321,6 +321,17 @@ export async function performUpload(claim: Extract<ClaimResult, { ok: true }>, f
   return { ok: true as const, fbVideoId: result.videoId };
 }
 
+// أعمدة timestamp (بلا منطقة) تُخزَّن بتوقيت UTC وتعود نصًّا بلا علامة منطقة، فيقرؤها المتصفح كتوقيت محلي
+// ويعرضها متأخرة 3 ساعات. نُرجعها ISO صريحة بـ Z ليعرضها المتصفح بتوقيت الرياض صحيحًا.
+function utcIso(value: unknown): string | null {
+  if (value == null) return null;
+  if (value instanceof Date) return value.toISOString();
+  const text = String(value).trim();
+  if (!text) return null;
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(text) ? text : `${text.replace(" ", "T")}Z`);
+  return Number.isNaN(d.getTime()) ? text : d.toISOString();
+}
+
 // ── لوحة المدير ─────────────────────────────────────────────────────────────────────────────────
 export async function crosspostOverview() {
   const settings = await getCrosspostSettings();
@@ -333,19 +344,19 @@ export async function crosspostOverview() {
     ORDER BY u.started_at DESC LIMIT 50`));
   return {
     enabled: settings.enabled,
-    enabledAt: settings.enabledAt,
-    lastMachinePollAt: settings.lastMachinePollAt,
+    enabledAt: utcIso(settings.enabledAt),
+    lastMachinePollAt: utcIso(settings.lastMachinePollAt),
     machineKeyConfigured: machineKeyConfigured(),
     channels: mappings.map((m) => ({
       ...m,
       baselineVideoId: byId.get(m.channelId)?.baseline_video_id ?? null,
-      baselinePublishedAt: byId.get(m.channelId)?.baseline_published_at ?? null,
-      baselineSetAt: byId.get(m.channelId)?.baseline_set_at ?? null,
+      baselinePublishedAt: utcIso(byId.get(m.channelId)?.baseline_published_at),
+      baselineSetAt: utcIso(byId.get(m.channelId)?.baseline_set_at),
     })),
     uploads: recent.map((r) => ({
       videoId: String(r.video_id), channelName: r.display_name ?? r.channel_id, pageName: r.fb_page_name ?? r.fb_page_id, title: String(r.title),
       status: String(r.status), fbVideoId: r.fb_video_id ?? null, error: r.error ?? null, attempts: Number(r.attempts), fileSize: r.file_size != null ? Number(r.file_size) : null,
-      startedAt: r.started_at, uploadedAt: r.uploaded_at ?? null,
+      startedAt: utcIso(r.started_at), uploadedAt: utcIso(r.uploaded_at),
     })),
   };
 }
