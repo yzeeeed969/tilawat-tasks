@@ -165,7 +165,7 @@ try {
   logger.error({ err }, "تعذّر إيقاف السلاسل المحذوفة سابقًا عند الإقلاع — سيُعاد قبل أول توليد");
 }
 
-app.listen(port, (err) => {
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
@@ -177,4 +177,10 @@ app.listen(port, (err) => {
   startTelegramMonitorScheduler(logger);
   startInstagramScheduler(logger);
 });
+
+// رفع الفيديوهات الطويلة من جهاز التنزيل (الإصدار 64): حد Node الافتراضي لاستلام الطلب 5 دقائق كان يقطع
+// رفع الفيديو الطويل. نرفعه إلى 60 دقيقة لاستلام جسم الطلب فقط؛ ويبقى حد استلام الترويسات 60 ثانية
+// (حماية من الاتصالات البطيئة المتعمدة)، ومسار الرفع نفسه محمي بالمفتاح السري.
+server.requestTimeout = 60 * 60 * 1000;
+server.headersTimeout = 60 * 1000;
 // trigger deploy
