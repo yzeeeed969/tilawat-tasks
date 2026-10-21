@@ -145,10 +145,12 @@ async function latestVideos(channelId: string, max = 10): Promise<YtVideo[]> {
 }
 
 async function videoDetails(ids: string[]): Promise<YtVideo[]> {
-  const data = await callYoutubeApi<{ items?: any[] }>("videos", { part: "snippet", id: ids.join(",") });
+  const data = await callYoutubeApi<{ items?: any[] }>("videos", { part: "snippet,liveStreamingDetails", id: ids.join(",") });
   return (data.items ?? []).map((v) => ({
     videoId: String(v.id), title: String(v.snippet?.title ?? ""), publishedAt: new Date(v.snippet?.publishedAt ?? 0).toISOString(),
-    channelId: String(v.snippet?.channelId ?? ""), live: String(v.snippet?.liveBroadcastContent ?? "none"),
+    channelId: String(v.snippet?.channelId ?? ""),
+    // بث مباشر (جارٍ أو مجدول) أو بث انتهى وبقي على القناة (liveStreamingDetails) — كله لا يُرفع (قرار المدير، الإصدار 64).
+    live: v.liveStreamingDetails ? (String(v.snippet?.liveBroadcastContent ?? "none") === "none" ? "ended" : String(v.snippet?.liveBroadcastContent)) : String(v.snippet?.liveBroadcastContent ?? "none"),
   }));
 }
 
@@ -228,7 +230,7 @@ export async function claimUpload(videoId: string): Promise<ClaimResult> {
   if (!/^[\w-]{11}$/.test(videoId)) return { ok: false, status: 400, message: "videoId غير صالح" };
   const [details] = await videoDetails([videoId]).catch(() => []);
   if (!details) return { ok: false, status: 404, message: "لم يُعثر على الفيديو في يوتيوب" };
-  if (details.live !== "none") return { ok: false, status: 409, message: "بث مباشر/مجدول — لا يُرفع" };
+  if (details.live !== "none") return { ok: false, status: 409, message: details.live === "ended" ? "كان بثًّا مباشرًا — لا يُرفع" : "بث مباشر/مجدول — لا يُرفع" };
   const [channel] = rowsOf(await db.execute(sql`SELECT channel_id, fb_page_id, fb_page_name, status, baseline_video_id, baseline_published_at FROM yt_fb_channels WHERE channel_id = ${details.channelId}`));
   if (!channel || channel.status !== "mapped") return { ok: false, status: 409, message: "قناة الفيديو غير مربوطة بصفحة فيسبوك" };
   if (!channel.baseline_published_at || details.videoId === channel.baseline_video_id || new Date(details.publishedAt).getTime() <= new Date(channel.baseline_published_at).getTime()) {
