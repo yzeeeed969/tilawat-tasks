@@ -537,6 +537,13 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 64, date: "2026-10-21",
+    items: [
+      { text: "تصاميم «تصاميم الحرمين» تُنشر تلقائيًا في قناة القارئ الخاصة (كمنشور أصلي + سطر «قناة تصاميم الحرمين» يفتح الأصل). الحالة في «مراقبة تلقرام».", adminOnly: true },
+      { text: "الرفع التلقائي لفيسبوك يتجاهل البث المباشر بعد انتهائه (لا يُرفع).", adminOnly: true },
+    ],
+  },
+  {
     version: 63, date: "2026-10-20",
     items: [
       { text: "أُضيفت صور حقيقية للشاشات داخل «دليل الاستخدام» (بأسماء مخفية)." },

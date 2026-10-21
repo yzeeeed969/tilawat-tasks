@@ -110,6 +110,57 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+type RelayTarget = { reciterName: string; pageName: string; chat: string; ready: boolean; note: string };
+type Relay = { id: number; status: string; error: string | null; attempts: number; backfill: boolean; targetName: string; createdAt: string; sentAt: string | null; postUrl: string | null; caption: string };
+
+// تحويل التصاميم تلقائيًا لقنوات القرّاء الخاصة (الإصدار 64).
+function DesignRelayCard() {
+  const q = useQuery({ queryKey: ["telegram-design-relay"], queryFn: () => api<{ targets: RelayTarget[]; relays: Relay[] }>("/api/telegram-monitor/design-relay") });
+  const fmt = (v: string | null) => v ? new Date(v).toLocaleString("ar-SA", { timeZone: "Asia/Riyadh", day: "numeric", month: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center justify-between gap-2 text-base">
+          <span className="flex items-center gap-2"><Send className="h-4 w-4" /> التحويل لقنوات القرّاء</span>
+          <Button variant="ghost" size="sm" onClick={() => q.refetch()} disabled={q.isFetching}><RefreshCw className={cn("h-4 w-4", q.isFetching && "animate-spin")} /></Button>
+        </CardTitle>
+        <CardDescription>كل تصميم (فيديو) فيه اسم قارئ له قناة خاصة في «المنصات والصفحات» يُنشر فيها تلقائيًا كمنشور أصلي، مع سطر «قناة تصاميم الحرمين» يفتح المنشور الأصلي.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {q.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : q.error ? <p className="text-sm text-destructive">{(q.error as Error).message}</p> : (
+          <>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {(q.data?.targets ?? []).map((t) => (
+                <div key={t.chat} className={cn("flex items-start gap-2 rounded-md border p-2 text-sm", t.ready ? "border-emerald-500/30" : "border-amber-500/40")}>
+                  {t.ready ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />}
+                  <div><p className="font-medium">{t.reciterName}</p><p className="text-xs text-muted-foreground">{t.note}</p></div>
+                </div>
+              ))}
+            </div>
+            <div className="space-y-1.5">
+              <p className="text-xs font-bold text-muted-foreground">آخر ما حُوِّل</p>
+              {(q.data?.relays ?? []).length === 0 && <p className="text-xs text-muted-foreground">لا شيء بعد.</p>}
+              {(q.data?.relays ?? []).map((r) => (
+                <div key={r.id} className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 p-2 text-xs">
+                  <span className={cn("rounded-full border px-1.5 py-0.5 font-semibold", r.status === "sent" ? "border-emerald-500/40 text-emerald-500" : r.status === "failed" ? "border-red-500/40 text-red-500" : "border-border text-muted-foreground")}>
+                    {r.status === "sent" ? "نُشر" : r.status === "failed" ? "فشل" : "جارٍ"}
+                  </span>
+                  <span className="font-medium">{r.targetName}</span>
+                  {r.backfill && <span className="text-muted-foreground">(دفعة قديمة)</span>}
+                  <span className="text-muted-foreground">{fmt(r.sentAt ?? r.createdAt)}</span>
+                  {r.postUrl && <a href={r.postUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sidebar-primary hover:underline">الأصل <ExternalLink className="h-3 w-3" /></a>}
+                  <span className="w-full truncate text-muted-foreground">{r.caption}</span>
+                  {r.error && <span className="w-full text-red-500">{r.error}</span>}
+                </div>
+              ))}
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 function StatusBadge({ status }: { status: string }) {
   const s = STATUS[status] ?? { label: status, className: "bg-muted text-muted-foreground border-border" };
   return <span className={cn("inline-flex rounded-full border px-1.5 py-0.5 text-[10px] font-semibold", s.className)}>{s.label}</span>;
@@ -502,6 +553,8 @@ export default function TelegramMonitorPage() {
           </CardContent>
         </Card>
       )}
+
+      {channel && isDesigns && <DesignRelayCard />}
 
       {channel && (
         <Card>

@@ -26,6 +26,7 @@ import { documentTaskAutomatically } from "./auto-documentation";
 import { normalizeName } from "./weekly-schedule-template";
 import { ensureTelegramMonitorSchema } from "./telegram-monitor-schema";
 import { processDesignPost, recheckDesignPosts } from "./telegram-designs-monitor";
+import { runDesignRelay } from "./telegram-design-relay";
 
 export type Side = "telegram" | "app";
 export const PUBLISH_WINDOW_HOURS = 72;
@@ -512,6 +513,8 @@ export async function runTelegramMonitorTick(): Promise<{ processed: number }> {
       .orderBy(telegramChannelPostsTable.id)
       .limit(200);
     for (const row of due) await processTelegramPost(row.id).catch(() => {});
+    // تحويل التصاميم لقنوات القرّاء: إعادة محاولة ما فات + الدفعة القديمة لمرة واحدة (الإصدار 64).
+    if (enabledChannels.some((c) => c.kind === "designs")) await runDesignRelay().catch(() => {});
     return { processed: due.length };
   } finally {
     tickRunning = false;

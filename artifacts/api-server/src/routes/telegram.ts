@@ -17,6 +17,7 @@ import {
 } from "../services/telegram-notification-engine";
 import { ensureTelegramSchema } from "../services/telegram-schema";
 import { handleMyChatMemberUpdate, processTelegramPost, storeChannelUpdate } from "../services/telegram-channel-monitor";
+import { captureDesignEntities, runDesignRelay } from "../services/telegram-design-relay";
 import { handleInstagramAttributionCallback } from "../services/instagram-attribution";
 
 const router = Router();
@@ -54,6 +55,15 @@ router.post("/telegram/webhook/:secret", async (req, res) => {
     res.json({ ok: true });
     if (postId) {
       processTelegramPost(postId).catch((err) => (req as any).log?.error?.({ err, postId }, "telegram_channel_post_process_failed"));
+      // تحويل تصاميم «تصاميم الحرمين» لقنوات القرّاء (الإصدار 64) — المنشورات الجديدة فقط، مستقل عن التوثيق.
+      const id = postId;
+      if (req.body?.channel_post) {
+        captureDesignEntities(id, req.body)
+          .then(() => runDesignRelay(id))
+          .catch((err) => (req as any).log?.error?.({ err, postId: id }, "telegram_design_relay_failed"));
+      } else {
+        captureDesignEntities(id, req.body).catch(() => {});
+      }
     }
     return;
   }

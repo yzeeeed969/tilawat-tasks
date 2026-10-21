@@ -5,6 +5,7 @@ import { db, platformsTable, platformPagesTable, recitersTable, telegramChannelP
 import { requireAdmin } from "../middlewares/auth";
 import { callTelegramApi } from "../services/telegram";
 import { ensureTelegramMonitorSchema } from "../services/telegram-monitor-schema";
+import { listDesignRelays, listRelayTargets } from "../services/telegram-design-relay";
 import {
   addHashtagAlias,
   getMonitorSettings,
@@ -170,6 +171,16 @@ router.post("/telegram-monitor/webhook/allowed-updates", async (_req, res) => {
     return;
   }
   res.json({ ok: true, allowedUpdates: REQUIRED_UPDATES });
+});
+
+// تحويل التصاميم لقنوات القرّاء (الإصدار 64): القنوات الهدف وحالة البوت فيها + آخر عمليات التحويل.
+router.get("/telegram-monitor/design-relay", async (_req, res) => {
+  try {
+    const [targets, relays] = await Promise.all([listRelayTargets(), listDesignRelays(40)]);
+    res.json({ targets, relays });
+  } catch (err) {
+    res.status(500).json({ message: (err as Error).message });
+  }
 });
 
 router.get("/telegram-monitor/posts", async (req, res) => {
