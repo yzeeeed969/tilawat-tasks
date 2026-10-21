@@ -91,7 +91,7 @@ export async function computeMappings(): Promise<ChannelMapping[]> {
     SELECT DISTINCT a.reciter_id, fp.fb_page_id, fp.name AS page_name, fp.status
     FROM instagram_accounts a JOIN facebook_pages fp ON fp.fb_page_id = a.fb_page_id
     WHERE a.fb_page_id IS NOT NULL`));
-  return [...merged.values()].map((source) => {
+  const reciterBased: ChannelMapping[] = [...merged.values()].map((source): ChannelMapping => {
     const reciterId = source.reciterIds.size === 1 ? [...source.reciterIds][0] : null;
     const base = { channelId: source.channelId, youtubeChannelRowId: source.youtubeChannelRowId, displayName: source.displayName, reciterId, reciterName: reciterId != null ? source.reciterNames.get(reciterId) ?? null : null };
     const disabled = (reason: string): ChannelMapping => ({ ...base, fbPageId: null, fbPageName: null, status: "disabled", reason });
@@ -106,6 +106,62 @@ export async function computeMappings(): Promise<ChannelMapping[]> {
     if (page.status !== "connected") return { ...disabled(`صفحة فيسبوك «${page.page_name}» تحتاج إعادة ربط`), fbPageId: String(page.fb_page_id), fbPageName: String(page.page_name) };
     return { ...base, fbPageId: String(page.fb_page_id), fbPageName: String(page.page_name), status: "mapped", reason: null };
   });
+
+  // (ج) الربط اليدوي يتقدّم على الربط عبر القارئ: قناة عامة ← صفحة يختارها المدير.
+  const manual = rowsOf(await db.execute(sql`
+    SELECT m.channel_id, m.channel_title, m.fb_page_id, fp.name AS page_name, fp.status
+    FROM yt_fb_manual_links m LEFT JOIN facebook_pages fp ON fp.fb_page_id = m.fb_page_id`));
+  const manualIds = new Set(manual.map((m) => String(m.channel_id)));
+  const manualMappings: ChannelMapping[] = manual.map((m) => {
+    const prior = merged.get(String(m.channel_id));
+    const base = { channelId: String(m.channel_id), youtubeChannelRowId: prior?.youtubeChannelRowId ?? null, displayName: String(m.channel_title), reciterId: null, reciterName: null };
+    if (!m.page_name) return { ...base, fbPageId: String(m.fb_page_id), fbPageName: null, status: "disabled", reason: "صفحة فيسبوك المختارة غير موجودة في الربط — أعد «ربط فيسبوك برمز»" };
+    if (m.status !== "connected") return { ...base, fbPageId: String(m.fb_page_id), fbPageName: String(m.page_name), status: "disabled", reason: `صفحة فيسبوك «${m.page_name}» تحتاج إعادة ربط` };
+    return { ...base, fbPageId: String(m.fb_page_id), fbPageName: String(m.page_name), status: "mapped", reason: null };
+  });
+  return [...reciterBased.filter((m) => !manualIds.has(m.channelId)), ...manualMappings];
+}
+
+// ── الربط اليدوي (المدير) ──────────────────────────────────────────────────────────────────
+async function resolveChannelInput(input: string): Promise<{ channelId: string; title: string; handle: string | null }> {
+  const raw = input.trim();
+  const id = raw.match(/(UC[\w-]{22})/)?.[1];
+  const handle = id ? null : raw.match(/@([\w.\-\u0600-\u06FF]+)/)?.[1] ?? (/^[\w.\-]+$/.test(raw) ? raw : null);
+  if (!id && !handle) throw new Error("اكتب رابط القناة أو اسمها بعد @ (مثل @Haramayn)");
+  const data = await callYoutubeApi<{ items?: any[] }>("channels", id ? { part: "snippet", id } : { part: "snippet", forHandle: `@${handle}` });
+  const item = data.items?.[0];
+  if (!item?.id) throw new Error("لم يُعثر على القناة في يوتيوب");
+  return { channelId: String(item.id), title: String(item.snippet?.title ?? handle ?? item.id), handle: handle ? `@${handle}` : (item.snippet?.customUrl ? String(item.snippet.customUrl) : null) };
+}
+
+export async function listManualLinks() {
+  await ensureCrosspostSchema();
+  const links = rowsOf(await db.execute(sql`
+    SELECT m.channel_id, m.channel_title, m.channel_handle, m.fb_page_id, fp.name AS page_name, fp.status, m.created_at
+    FROM yt_fb_manual_links m LEFT JOIN facebook_pages fp ON fp.fb_page_id = m.fb_page_id ORDER BY m.created_at`));
+  const pages = rowsOf(await db.execute(sql`SELECT DISTINCT ON (fb_page_id) fb_page_id, name, status FROM facebook_pages ORDER BY fb_page_id, name`));
+  return {
+    links: links.map((l) => ({ channelId: String(l.channel_id), channelTitle: String(l.channel_title), channelHandle: l.channel_handle ?? null, fbPageId: String(l.fb_page_id), pageName: l.page_name ?? null, pageStatus: l.status ?? null })),
+    pages: pages.filter((p) => p.status === "connected").map((p) => ({ fbPageId: String(p.fb_page_id), name: String(p.name) })).sort((a, b) => a.name.localeCompare(b.name, "ar")),
+  };
+}
+
+export async function addManualLink(channelInput: string, fbPageId: string) {
+  await ensureCrosspostSchema();
+  const [page] = rowsOf(await db.execute(sql`SELECT name, status FROM facebook_pages WHERE fb_page_id = ${fbPageId} LIMIT 1`));
+  if (!page) throw new Error("صفحة فيسبوك غير موجودة في الربط");
+  const ch = await resolveChannelInput(channelInput);
+  await db.execute(sql`
+    INSERT INTO yt_fb_manual_links (channel_id, channel_title, channel_handle, fb_page_id) VALUES (${ch.channelId}, ${ch.title}, ${ch.handle}, ${fbPageId})
+    ON CONFLICT (channel_id) DO UPDATE SET channel_title = EXCLUDED.channel_title, channel_handle = EXCLUDED.channel_handle, fb_page_id = EXCLUDED.fb_page_id`);
+  await syncMappings();
+  return { channelId: ch.channelId, channelTitle: ch.title, pageName: String(page.name) };
+}
+
+export async function removeManualLink(channelId: string) {
+  await ensureCrosspostSchema();
+  await db.execute(sql`DELETE FROM yt_fb_manual_links WHERE channel_id = ${channelId}`);
+  await syncMappings();
 }
 
 // يحفظ الربط الحالي في yt_fb_channels (مع إبقاء خط الأساس كما هو).

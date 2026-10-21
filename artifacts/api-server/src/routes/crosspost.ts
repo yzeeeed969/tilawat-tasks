@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
-import { attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
+import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
 export const crosspostMachineRouter = Router();
@@ -63,6 +63,28 @@ router.use("/crosspost", requireAdmin, (_req, _res, next) => { ensureCrosspostSc
 
 router.get("/crosspost/overview", async (_req, res) => {
   res.json(await crosspostOverview());
+});
+
+// الربط اليدوي قناة ← صفحة (الإصدار 64): للقنوات العامة التي لا قارئ لها.
+router.get("/crosspost/manual-links", async (_req, res) => {
+  res.json(await listManualLinks());
+});
+router.post("/crosspost/manual-links", async (req, res) => {
+  const channel = String(req.body?.channel ?? "").trim();
+  const fbPageId = String(req.body?.fbPageId ?? "").trim();
+  if (!channel || !/^\d+$/.test(fbPageId)) {
+    res.status(400).json({ message: "اكتب رابط القناة واختر صفحة فيسبوك" });
+    return;
+  }
+  try {
+    res.json(await addManualLink(channel, fbPageId));
+  } catch (err) {
+    res.status(400).json({ message: (err as Error).message });
+  }
+});
+router.delete("/crosspost/manual-links/:channelId", async (req, res) => {
+  await removeManualLink(String(req.params.channelId));
+  res.json({ ok: true });
 });
 
 router.patch("/crosspost/settings", async (req, res) => {

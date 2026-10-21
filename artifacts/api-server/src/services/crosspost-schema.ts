@@ -56,6 +56,24 @@ async function runEnsure() {
   await db.execute(sql`ALTER TABLE yt_fb_uploads ADD COLUMN IF NOT EXISTS proof_task_id integer`);
   await db.execute(sql`ALTER TABLE yt_fb_uploads ADD COLUMN IF NOT EXISTS proof_id integer`);
   await db.execute(sql`ALTER TABLE yt_fb_uploads ADD COLUMN IF NOT EXISTS proof_attached_at timestamp`);
+  // ربط يدوي قناة ← صفحة (الإصدار 64): لقنوات عامة لا قارئ لها (مثل @Haramayn ← «تطبيق تلاوات الحرمين»).
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS yt_fb_manual_links (
+      channel_id text PRIMARY KEY,
+      channel_title text NOT NULL,
+      channel_handle text,
+      fb_page_id text NOT NULL,
+      created_at timestamp NOT NULL DEFAULT now()
+    )`);
+  await db.execute(sql`CREATE TABLE IF NOT EXISTS app_one_time_migrations (name text PRIMARY KEY, ran_at timestamp NOT NULL DEFAULT now(), details jsonb)`);
+  // أول ربط بطلب المدير، لمرة واحدة فقط (إن حذفه لاحقًا لا يعود).
+  const seeded = await db.execute(sql`INSERT INTO app_one_time_migrations (name) VALUES ('yt_fb_manual_link_haramayn_v64') ON CONFLICT (name) DO NOTHING RETURNING name`);
+  if (((seeded as any)?.rows ?? seeded ?? []).length > 0) {
+    await db.execute(sql`
+      INSERT INTO yt_fb_manual_links (channel_id, channel_title, channel_handle, fb_page_id)
+      VALUES ('UCBc5f-MDWCEzjYD_w4F9CVw', 'الحرمين', '@Haramayn', '112084043986952')
+      ON CONFLICT (channel_id) DO NOTHING`);
+  }
 }
 
 export async function ensureCrosspostSchema() {

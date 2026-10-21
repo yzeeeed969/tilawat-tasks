@@ -4,6 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useIsAdmin } from "@/lib/roles";
+import { useState } from "react";
+import { Input } from "@/components/ui/input";
 
 // لوحة متابعة الرفع التلقائي يوتيوب ← فيسبوك (للمدير): مفتاح التشغيل، والربط قناة↔صفحة، وآخر ما رُفع والإخفاقات.
 type Overview = {
@@ -27,6 +29,67 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const body = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(body?.message ?? body?.error ?? "فشلت العملية");
   return body as T;
+}
+
+type ManualLinks = { links: Array<{ channelId: string; channelTitle: string; channelHandle: string | null; fbPageId: string; pageName: string | null; pageStatus: string | null }>; pages: Array<{ fbPageId: string; name: string }> };
+
+// ربط يدوي قناة ← صفحة (الإصدار 64): لقنوات عامة لا قارئ لها، مثل @Haramayn ← «تطبيق تلاوات الحرمين».
+function ManualLinksCard() {
+  const { toast } = useToast();
+  const queryClient = useQueryClient();
+  const [channel, setChannel] = useState("");
+  const [pageId, setPageId] = useState("");
+  const q = useQuery({ queryKey: ["crosspost-manual-links"], queryFn: () => api<ManualLinks>("/api/crosspost/manual-links") });
+  const refresh = () => { queryClient.invalidateQueries({ queryKey: ["crosspost-manual-links"] }); queryClient.invalidateQueries({ queryKey: ["crosspost-overview"] }); };
+  const add = useMutation({
+    mutationFn: () => api<{ channelTitle: string; pageName: string }>("/api/crosspost/manual-links", { method: "POST", body: JSON.stringify({ channel, fbPageId: pageId }) }),
+    onSuccess: (r) => { toast({ title: "تم الربط", description: `«${r.channelTitle}» ← «${r.pageName}». يُرفع الجديد فقط من الآن.` }); setChannel(""); refresh(); },
+    onError: (e: Error) => toast({ title: "تعذّر الربط", description: e.message, variant: "destructive" }),
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => api(`/api/crosspost/manual-links/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: () => { toast({ title: "أُلغي الربط" }); refresh(); },
+    onError: (e: Error) => toast({ title: "تعذّر الإلغاء", description: e.message, variant: "destructive" }),
+  });
+  return (
+    <Card>
+      <CardHeader className="pb-3">
+        <CardTitle className="text-lg">ربط يدوي: قناة عامة ← صفحة</CardTitle>
+        <CardDescription>لقناة يوتيوب لا تخص قارئًا واحدًا (مثل @Haramayn). كل مقطع جديد فيها يُرفع إلى الصفحة المختارة. الجديد فقط، ولا يُرفع البث المباشر.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4 text-sm">
+        {q.isLoading ? <p className="text-muted-foreground">جارٍ التحميل…</p> : q.error ? <p className="text-destructive">{(q.error as Error).message}</p> : (
+          <>
+            {(q.data?.links ?? []).length === 0 ? <p className="text-muted-foreground">لا يوجد ربط يدوي بعد.</p> : (
+              <ul className="space-y-2">
+                {q.data!.links.map((l) => (
+                  <li key={l.channelId} className="flex flex-wrap items-center justify-between gap-2 rounded-md border p-2">
+                    <span><b>{l.channelTitle}</b> {l.channelHandle && <span className="text-muted-foreground">({l.channelHandle})</span>} ← <b>{l.pageName ?? l.fbPageId}</b>
+                      {l.pageStatus !== "connected" && <Badge variant="outline" className="ms-2 border-amber-300 text-amber-700">الصفحة تحتاج ربطًا</Badge>}</span>
+                    <Button variant="outline" size="sm" disabled={remove.isPending} onClick={() => remove.mutate(l.channelId)}>إلغاء الربط</Button>
+                  </li>
+                ))}
+              </ul>
+            )}
+            <div className="flex flex-wrap items-end gap-2">
+              <label className="flex min-w-[14rem] flex-1 flex-col gap-1">
+                <span className="text-xs text-muted-foreground">رابط قناة يوتيوب أو اسمها</span>
+                <Input dir="ltr" placeholder="https://www.youtube.com/@Haramayn" value={channel} onChange={(e) => setChannel(e.target.value)} />
+              </label>
+              <label className="flex min-w-[12rem] flex-col gap-1">
+                <span className="text-xs text-muted-foreground">صفحة فيسبوك</span>
+                <select className="h-9 rounded-md border bg-background px-2" value={pageId} onChange={(e) => setPageId(e.target.value)}>
+                  <option value="">اختر الصفحة</option>
+                  {(q.data?.pages ?? []).map((p) => <option key={p.fbPageId} value={p.fbPageId}>{p.name}</option>)}
+                </select>
+              </label>
+              <Button disabled={!channel.trim() || !pageId || add.isPending} onClick={() => add.mutate()}>{add.isPending ? "جارٍ الربط…" : "ربط"}</Button>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
 }
 
 export default function CrosspostMonitor() {
@@ -103,6 +166,8 @@ export default function CrosspostMonitor() {
           </table>
         </CardContent>
       </Card>
+
+      <ManualLinksCard />
 
       <Card>
         <CardHeader className="pb-3">
