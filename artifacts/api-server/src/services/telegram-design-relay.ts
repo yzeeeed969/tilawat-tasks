@@ -158,7 +158,7 @@ async function claim(postId: number, target: Target, backfill: boolean): Promise
 
 function friendlyError(error: string) {
   if (/chat not found/i.test(error)) return "لم يُعثر على القناة — تأكد من رابطها في «المنصات والصفحات»";
-  if (/not enough rights|need administrator|not a member|bot is not a member|CHAT_WRITE_FORBIDDEN|have no rights/i.test(error)) return "البوت ليس مشرفًا في القناة (أضفه مشرفًا بصلاحية النشر)";
+  if (/not enough rights|need administrator|member list is inaccessible|not a member|bot is not a member|CHAT_WRITE_FORBIDDEN|have no rights/i.test(error)) return "البوت ليس مشرفًا في القناة (أضفه مشرفًا بصلاحية النشر)";
   return error;
 }
 
