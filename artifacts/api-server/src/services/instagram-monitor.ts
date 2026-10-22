@@ -57,6 +57,8 @@ function dateOfKey(dateKey: string) {
 
 // قفل لكل حساب داخل العملية: الفحص الدوري و«افحص الآن» لا يعالجان نفس الحساب معًا.
 const accountLocks = new Map<number, Promise<unknown>>();
+const rowsOf = (result: any): any[] => result?.rows ?? result ?? [];
+
 async function withAccountLock<T>(accountId: number, fn: () => Promise<T>): Promise<T> {
   const previous = accountLocks.get(accountId) ?? Promise.resolve();
   const run = previous.catch(() => {}).then(fn);
@@ -216,6 +218,18 @@ async function createWeeklyTask(account: InstagramAccount, weekStart: string): P
 async function ensureWeeklyTask(account: InstagramAccount, weekStart: string): Promise<{ taskId: number; created: boolean } | null> {
   const existing = await weeklyTaskFor(account.id, weekStart);
   if (existing) return { taskId: existing.taskId, created: false };
+  // مهمة الأسبوع أُعيدت من السلة (ربطها أُزيل عند إنشاء بديل لها): نعيد ربطها بدل إنشاء مهمة جديدة مكررة.
+  const [restored] = rowsOf(await db.execute(sql`
+    SELECT t.id FROM tasks t
+    WHERE t.deleted_at IS NULL AND t.page_id = ${account.pageId} AND t.reciter_id = ${account.reciterId}
+      AND t.weekly_quota_period_start = ${dateOfKey(weekStart)} AND t.title = ${`إنستقرام — ${await reciterNameOf(account.reciterId)} — أسبوع ${weekStart}`}
+    ORDER BY t.id LIMIT 1`));
+  if (restored) {
+    await db.execute(sql`DELETE FROM instagram_weekly_tasks w USING tasks t WHERE w.task_id = t.id AND w.account_id = ${account.id} AND w.week_start = ${weekStart} AND t.deleted_at IS NOT NULL`);
+    await db.execute(sql`INSERT INTO instagram_weekly_tasks (account_id, week_start, task_id) VALUES (${account.id}, ${weekStart}, ${Number(restored.id)}) ON CONFLICT DO NOTHING`);
+    const relinked = await weeklyTaskFor(account.id, weekStart);
+    if (relinked) return { taskId: relinked.taskId, created: false };
+  }
   try {
     return { taskId: await createWeeklyTask(account, weekStart), created: true };
   } catch {
