@@ -121,7 +121,7 @@ function AppAutopostCard() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["app-autopost"] }),
   });
   const fmt = (v: string | null) => v ? new Date(v).toLocaleString("ar-SA", { timeZone: "Asia/Riyadh", day: "numeric", month: "numeric", hour: "numeric", minute: "2-digit" }) : "";
-  const label: Record<string, string> = { posted: "نُشر", failed: "لم يُنشر", skipped: "تُجوهل", posting: "جارٍ" };
+  const label: Record<string, string> = { posted: "نُشر", failed: "لم يُنشر", skipped: "تُجوهل", posting: "جارٍ", waiting: "ينتظر المكي" };
   return (
     <Card>
       <CardHeader className="pb-2">

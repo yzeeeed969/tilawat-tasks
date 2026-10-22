@@ -1,6 +1,6 @@
 // ملاحظة نشر: خدمة الموقع الحي على Railway (api-server) تبني الواجهة أيضًا وتخدمها، لكنها لا تُعاد
 // إلا عند تغيّر ملفات api-server. فأي تحديث للواجهة وحدها يحتاج لمس ملف هنا (أو إضافة
-// سطر هنا). آخر لمس: الإصدار 64 — نشر بعد عودة البناء لباقة Pro.
+// سطر هنا). آخر لمس: الإصدار 66 — المكي قبل النبوي.
 import express, { type Express } from "express";
 import cors from "cors";
 import pinoHttp from "pino-http";

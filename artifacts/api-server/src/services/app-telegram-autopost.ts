@@ -55,6 +55,10 @@ function ensureSchema() {
           created_at timestamp NOT NULL DEFAULT now(),
           posted_at timestamp
         )`);
+      // ترتيب المكي قبل النبوي (الإصدار 66): المسجد والصلاة والتاريخ الهجري لكل تلاوة.
+      await db.execute(sql`ALTER TABLE app_tg_autopost ADD COLUMN IF NOT EXISTS mosque text`);
+      await db.execute(sql`ALTER TABLE app_tg_autopost ADD COLUMN IF NOT EXISTS prayer text`);
+      await db.execute(sql`ALTER TABLE app_tg_autopost ADD COLUMN IF NOT EXISTS hijri_key text`);
     })().catch((err) => { schemaReady = null; throw err; });
   }
   return schemaReady;
@@ -184,8 +188,10 @@ async function recitationsChannel() {
 async function claim(id: number): Promise<boolean> {
   const rows = rowsOf(await db.execute(sql`
     INSERT INTO app_tg_autopost (post_id, status, attempts) VALUES (${id}, 'posting', 1)
-    ON CONFLICT (post_id) DO UPDATE SET status = 'posting', attempts = app_tg_autopost.attempts + 1, reason = NULL
-    WHERE app_tg_autopost.status = 'failed' AND app_tg_autopost.attempts < ${MAX_ATTEMPTS}
+    ON CONFLICT (post_id) DO UPDATE SET status = 'posting', reason = NULL,
+      attempts = CASE WHEN app_tg_autopost.status = 'waiting' THEN app_tg_autopost.attempts ELSE app_tg_autopost.attempts + 1 END
+    WHERE app_tg_autopost.status = 'waiting'
+      OR app_tg_autopost.status = 'failed' AND app_tg_autopost.attempts < ${MAX_ATTEMPTS}
       OR (app_tg_autopost.status = 'posting' AND app_tg_autopost.created_at < now() - interval '20 minutes')
     RETURNING post_id`));
   return rows.length > 0;
@@ -202,6 +208,39 @@ async function alertAdmin(id: number, title: string, reason: string) {
     lines: [`التلاوة: ${title || `رقم ${id}`}`, `الرابط: ${SITE}/p/${id}`, `السبب: ${reason}`, "", "انشرها يدويًا في القناة."],
     alertKey: `app_autopost:${id}`,
   }).catch(() => {});
+}
+
+// ── المكي قبل النبوي (قرار المدير: انتظار مفتوح) ─────────────────────────────────────────────
+// تلاوة المسجد النبوي لا تُنشر قبل تلاوة المسجد الحرام لنفس الصلاة ونفس اليوم الهجري. تبقى «بانتظار المكي»
+// مهما طال، وبعد ساعة يصل المدير تنبيه واحد ليقرر بنفسه.
+const PRAYER_CODE: Record<string, string> = { "فجر": "fajr", "مغرب": "maghrib", "عشاء": "isha", "جمعة": "jumuah" };
+
+function prayerAndHijri(title: string) {
+  const prayer = PRAYERS.find((p) => title.startsWith(p) || title.startsWith(`صلاة ${p}`) || title.split(" ")[0] === p) ?? null;
+  const h = title.match(/(\d{1,2})-(\d{1,2})-(14\d\d)/);
+  return { prayer, hijriKey: h ? `${Number(h[1])}-${Number(h[2])}-${h[3]}` : null, day: h ? Number(h[1]) : null, month: h ? Number(h[2]) : null };
+}
+
+async function makkahAlreadyPosted(prayer: string, hijriKey: string, day: number, month: number): Promise<boolean> {
+  const [own] = rowsOf(await db.execute(sql`SELECT 1 FROM app_tg_autopost WHERE mosque = 'makkah' AND prayer = ${prayer} AND hijri_key = ${hijriKey} AND status = 'posted' LIMIT 1`));
+  if (own) return true;
+  // أو نُشرت يدويًا في القناة (يقرؤها نظام مراقبة تلقرام).
+  const [manual] = rowsOf(await db.execute(sql`
+    SELECT 1 FROM telegram_channel_posts WHERE kind = 'recitation' AND mosque = 'haram' AND extracted_prayer = ${PRAYER_CODE[prayer] ?? prayer}
+      AND hijri_day = ${day} AND hijri_month = ${month} AND published_at > now() - interval '3 days' LIMIT 1`));
+  return Boolean(manual);
+}
+
+async function holdForMakkah(id: number, title: string, reciter: string, prayer: string, hijriKey: string) {
+  await db.execute(sql`UPDATE app_tg_autopost SET status = 'waiting', reason = 'بانتظار تلاوة المسجد الحرام لنفس الصلاة', title = ${title}, reciter = ${reciter} WHERE post_id = ${id}`);
+  const [row] = rowsOf(await db.execute(sql`SELECT created_at < now() - interval '60 minutes' AS late FROM app_tg_autopost WHERE post_id = ${id}`));
+  if (row?.late) {
+    await notifyTelegramAdminsGeneric({
+      title: "تلاوة المسجد النبوي تنتظر تلاوة المسجد الحرام",
+      lines: [`التلاوة: ${title}`, `الرابط: ${SITE}/p/${id}`, `مضت ساعة ولم تُنشر تلاوة المسجد الحرام لنفس الصلاة (${prayer} ${hijriKey}).`, "", "ستُنشر النبوية تلقائيًا فور نشر المكية. وإن أردت نشرها الآن فانشرها يدويًا في القناة."],
+      alertKey: `app_autopost_order:${id}`,
+    }).catch(() => {});
+  }
 }
 
 // معالجة تلاوة واحدة موجودة في الموقع.
@@ -221,6 +260,12 @@ async function handlePost(id: number, html: string, channel: { id: number; chatI
   if (!reciterRaw) return fail("تعذّر تحديد اسم الشيخ من قائمة التلاوات", false);
   const post = buildPost(id, parsed.title, reciterRaw);
   if (!post.ok) return fail(post.reason);
+  const ph = prayerAndHijri(parsed.title);
+  await db.execute(sql`UPDATE app_tg_autopost SET mosque = ${mosque}, prayer = ${ph.prayer}, hijri_key = ${ph.hijriKey} WHERE post_id = ${id}`);
+  if (mosque === "madinah" && ph.prayer && ph.hijriKey && ph.day && ph.month && !(await makkahAlreadyPosted(ph.prayer, ph.hijriKey, ph.day, ph.month))) {
+    await holdForMakkah(id, parsed.title, post.reciter, ph.prayer, ph.hijriKey);
+    return;
+  }
 
   const audio = await fetch(parsed.mp3).catch(() => null);
   if (!audio || !audio.ok) return fail(`تعذّر تنزيل الملف الصوتي (${audio?.status ?? "خطأ اتصال"})`, false);
@@ -271,14 +316,23 @@ export async function runAppTelegramAutopost(): Promise<{ posted: number }> {
     const handled = new Set(rowsOf(await db.execute(sql`SELECT post_id FROM app_tg_autopost WHERE post_id >= ${lastId - LOOKBACK} AND (status IN ('posted','skipped') OR (status = 'failed' AND attempts >= ${MAX_ATTEMPTS}))`)).map((r) => Number(r.post_id)));
     let posted = 0;
     let maxSeen = lastId;
-    for (let id = lastId - LOOKBACK; id <= lastId + LOOKAHEAD; id++) {
+    const pages: Array<{ id: number; text: string; madinah: boolean }> = [];
+    // النبوية المنتظرة التي خرجت من نافذة الفحص تُعاد أيضًا (انتظار مفتوح، آخر 7 أيام).
+    const oldWaiting = rowsOf(await db.execute(sql`SELECT post_id FROM app_tg_autopost WHERE status = 'waiting' AND post_id < ${lastId - LOOKBACK} AND created_at > now() - interval '7 days'`)).map((r) => Number(r.post_id));
+    const ids = [...oldWaiting];
+    for (let id = lastId - LOOKBACK; id <= lastId + LOOKAHEAD; id++) ids.push(id);
+    for (const id of ids) {
       if (handled.has(id) || id <= (s.baselineId ?? 0) - LOOKBACK) continue;
       const { status, text } = await fetchText(`${SITE}/p/${id}`).catch(() => ({ status: 0, text: "" }));
       if (status !== 200) continue;
       maxSeen = Math.max(maxSeen, id);
-      const before = rowsOf(await db.execute(sql`SELECT status FROM app_tg_autopost WHERE post_id = ${id}`))[0]?.status;
-      await handlePost(id, text, channel).catch(() => {});
-      const after = rowsOf(await db.execute(sql`SELECT status FROM app_tg_autopost WHERE post_id = ${id}`))[0]?.status;
+      pages.push({ id, text, madinah: /🕌|\/madani\//.test(`${text.match(/<title>[\s\S]*?<\/title>/i)?.[0] ?? ""} ${text.match(/href="(https?:\/\/[^"]+\.mp3)"/i)?.[1] ?? ""}`) });
+    }
+    // المكي أولًا ثم النبوي (فإن ظهرا معًا يُنشر المكي ثم النبوي في نفس الفحص).
+    for (const page of [...pages.filter((p) => !p.madinah), ...pages.filter((p) => p.madinah)]) {
+      const before = rowsOf(await db.execute(sql`SELECT status FROM app_tg_autopost WHERE post_id = ${page.id}`))[0]?.status;
+      await handlePost(page.id, page.text, channel).catch(() => {});
+      const after = rowsOf(await db.execute(sql`SELECT status FROM app_tg_autopost WHERE post_id = ${page.id}`))[0]?.status;
       if (after === "posted" && before !== "posted") posted += 1;
     }
     await db.execute(sql`UPDATE app_tg_autopost_settings SET last_id = ${maxSeen}, last_run_at = now() WHERE id = 1`);
