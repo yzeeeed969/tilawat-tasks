@@ -4,6 +4,7 @@ import { startTelegramScheduler } from "./services/telegram-scheduler";
 import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { startInstagramScheduler } from "./services/instagram-scheduler";
 import { startTelegramMonitorScheduler } from "./services/telegram-channel-monitor";
+import { startAppTelegramAutopostScheduler } from "./services/app-telegram-autopost";
 import { ensureTaskPrayerSchema } from "./services/task-prayer-schema";
 import { ensureReciterSubstitutionSchema } from "./services/reciter-substitution-schema";
 import { ensureWeeklyScheduleSchema } from "./services/weekly-schedule-schema";
@@ -175,6 +176,7 @@ const server = app.listen(port, (err) => {
   startTelegramScheduler(logger);
   startYoutubeScheduler(logger);
   startTelegramMonitorScheduler(logger);
+  startAppTelegramAutopostScheduler(logger);
   startInstagramScheduler(logger);
 });
 

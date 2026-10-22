@@ -1,0 +1,313 @@
+// النشر التلقائي: كل تلاوة «فرض» جديدة تُنشر في التطبيق (موقع tilawatalharamain.com) تُرسل ملفًا صوتيًا إلى
+// قناة تيليجرام «تطبيق تلاوات الحرمين» بنفس صيغة الفريق، ثم تُوثَّق مهمتا تيليجرام والتطبيق كالمعتاد
+// (الإصدار 65، قرار المدير: نشر تلقائي مباشر).
+//
+// الضمانات (قاعدة «الأمن فوق كل شيء»):
+//  • الجديد فقط: عند أول تشغيل يُسجَّل «خط أساس» (أحدث رقم تلاوة موجود)، ولا يُنشر ما قبله.
+//  • لا تكرار: سجل app_tg_autopost بمفتاح فريد لكل تلاوة.
+//  • لا نشر ناقص: إن تعذّر تحديد الشيخ أو الصلاة أو التاريخ أو الملف ⇐ لا نشر + تنبيه للمدير.
+//  • الفروض فقط (الفجر، المغرب، العشاء، الجمعة).
+
+import { sql } from "drizzle-orm";
+import { db } from "@workspace/db";
+import { sendTelegramAudioUpload } from "./telegram";
+import { ensureTelegramMonitorSchema } from "./telegram-monitor-schema";
+import { processTelegramPost, storeChannelUpdate } from "./telegram-channel-monitor";
+import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
+
+const SITE = "https://tilawatalharamain.com";
+const SEED_ID = 35880; // أحدث رقم معروف عند البرمجة — يُستخدم فقط لبدء البحث عن خط الأساس
+const LOOKAHEAD = 15;
+const LOOKBACK = 40;
+const MAX_ATTEMPTS = 3;
+const MAX_BYTES = 49 * 1024 * 1024;
+const PRAYERS = ["فجر", "مغرب", "عشاء", "جمعة"];
+
+function rowsOf<T = any>(result: any): T[] {
+  return (Array.isArray(result) ? result : result?.rows ?? []) as T[];
+}
+
+let schemaReady: Promise<void> | null = null;
+function ensureSchema() {
+  if (!schemaReady) {
+    schemaReady = (async () => {
+      await ensureTelegramMonitorSchema();
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS app_tg_autopost_settings (
+          id integer PRIMARY KEY DEFAULT 1,
+          enabled boolean NOT NULL DEFAULT true,
+          baseline_id integer,
+          last_id integer,
+          last_run_at timestamp,
+          updated_at timestamp NOT NULL DEFAULT now(),
+          CONSTRAINT app_tg_autopost_settings_single CHECK (id = 1)
+        )`);
+      await db.execute(sql`INSERT INTO app_tg_autopost_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+      await db.execute(sql`
+        CREATE TABLE IF NOT EXISTS app_tg_autopost (
+          post_id integer PRIMARY KEY,
+          status text NOT NULL,
+          reason text,
+          title text,
+          reciter text,
+          message_id bigint,
+          attempts integer NOT NULL DEFAULT 1,
+          created_at timestamp NOT NULL DEFAULT now(),
+          posted_at timestamp
+        )`);
+    })().catch((err) => { schemaReady = null; throw err; });
+  }
+  return schemaReady;
+}
+
+async function settings() {
+  await ensureSchema();
+  const [row] = rowsOf(await db.execute(sql`SELECT enabled, baseline_id, last_id, last_run_at FROM app_tg_autopost_settings WHERE id = 1`));
+  return { enabled: row?.enabled !== false, baselineId: row?.baseline_id != null ? Number(row.baseline_id) : null, lastId: row?.last_id != null ? Number(row.last_id) : null, lastRunAt: row?.last_run_at ?? null };
+}
+
+async function fetchText(url: string): Promise<{ status: number; text: string }> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20_000);
+  try {
+    const res = await fetch(url, { signal: controller.signal, headers: { "User-Agent": "TilawatTasksBot/1.0" } });
+    return { status: res.status, text: res.status === 200 ? await res.text() : "" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+function decodeHtml(s: string) {
+  return s.replace(/&amp;/g, "&").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&nbsp;/g, " ");
+}
+
+type Parsed = { title: string; section: string; mp3: string; categoryId: number | null };
+
+function parsePage(html: string): Parsed | null {
+  const rawTitle = decodeHtml((html.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim()).replace(/\s*-\s*تلاوات الحرمين\s*$/, "");
+  const parts = rawTitle.split(" > ").map((p) => p.trim());
+  if (parts.length < 2) return null;
+  const mp3 = decodeHtml(html.match(/href="(https?:\/\/[^"]+\.mp3)"/i)?.[1] ?? "");
+  const categoryId = Number(html.match(/\/prayers\/c\/(\d+)/)?.[1] ?? NaN);
+  return { title: parts[0], section: parts[parts.length - 1], mp3, categoryId: Number.isFinite(categoryId) ? categoryId : null };
+}
+
+// صفحة قائمة القسم تعرض اسم الشيخ بجانب كل تلاوة. الموقع يعرض قوائم مسجد واحد بحسب «الجلسة»
+// (اختيار المكي/النبوي يُحفظ بطلب POST إلى /change-mosque)، فلقوائم المسجد النبوي نفتح جلسة خاصة به.
+type Mosque = "makkah" | "madinah";
+const sessions = new Map<Mosque, { at: number; cookie: string }>();
+
+function mergeCookies(current: string, res: Response) {
+  const jar = new Map(current.split(/;\s*/).filter(Boolean).map((c) => [c.split("=")[0], c] as const));
+  for (const raw of (res.headers as any).getSetCookie?.() ?? []) {
+    const pair = String(raw).split(";")[0];
+    jar.set(pair.split("=")[0], pair);
+  }
+  return [...jar.values()].join("; ");
+}
+
+async function mosqueSession(mosque: Mosque): Promise<string> {
+  const hit = sessions.get(mosque);
+  if (hit && Date.now() - hit.at < 30 * 60_000) return hit.cookie;
+  const home = await fetch(`${SITE}/`, { headers: { "User-Agent": "TilawatTasksBot/1.0" } });
+  let cookie = mergeCookies("", home);
+  const html = await home.text();
+  const token = html.match(/'X-CSRF-TOKEN':\s*'([^']+)'/)?.[1] ?? html.match(/name="csrf-token" content="([^"]+)"/)?.[1] ?? "";
+  const change = await fetch(`${SITE}/change-mosque`, {
+    method: "POST",
+    headers: { "User-Agent": "TilawatTasksBot/1.0", "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8", "X-CSRF-TOKEN": token, "X-Requested-With": "XMLHttpRequest", Cookie: cookie },
+    body: `mosque=${mosque}`,
+  });
+  cookie = mergeCookies(cookie, change);
+  sessions.set(mosque, { at: Date.now(), cookie });
+  return cookie;
+}
+
+const listingCache = new Map<string, { at: number; html: string }>();
+async function fetchListing(categoryId: number, mosque: Mosque, postId: number): Promise<string | null> {
+  const key = `${mosque}:${categoryId}`;
+  const hit = listingCache.get(key);
+  if (hit && Date.now() - hit.at < 2 * 60_000 && hit.html.includes(`/prayers/${postId}"`)) return hit.html;
+  const cookie = await mosqueSession(mosque);
+  const res = await fetch(`${SITE}/prayers/c/${categoryId}`, { headers: { "User-Agent": "TilawatTasksBot/1.0", Cookie: cookie } });
+  if (res.status !== 200) return null;
+  const html = await res.text();
+  if (!html.includes(`/prayers/${postId}"`)) sessions.delete(mosque); // جلسة منتهية؟ تُجدَّد في المحاولة القادمة
+  listingCache.set(key, { at: Date.now(), html });
+  return html;
+}
+
+async function reciterFromListing(categoryId: number, mosque: Mosque, postId: number, title: string): Promise<string | null> {
+  const html = await fetchListing(categoryId, mosque, postId);
+  if (!html) return null;
+  const i = html.indexOf(`/prayers/${postId}"`);
+  if (i < 0) return null;
+  const chunk = html.slice(i, i + 3000).replace(/<[^>]*>/g, "\n");
+  const texts = chunk.split("\n").map((t) => decodeHtml(t).replace(/\s+/g, " ").trim()).filter((t) => t && !/^\/prayers\//.test(t) && !t.startsWith('"'));
+  // أول نص = عنوان التلاوة، والثاني = اسم الشيخ.
+  const norm = (t: string) => t.replace(/\s+/g, " ").trim();
+  const idx = texts.findIndex((t) => norm(t) === norm(title) || norm(title).startsWith(norm(t)) || norm(t).startsWith(norm(title).slice(0, 20)));
+  const name = idx >= 0 ? texts[idx + 1] : texts[1];
+  return name && name.length <= 40 ? name : null;
+}
+
+const toArabicDigits = (n: number | string) => String(n).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
+
+function buildPost(id: number, title: string, reciterRaw: string) {
+  const prayer = PRAYERS.find((p) => title.startsWith(p) || title.startsWith(`صلاة ${p}`) || title.split(" ")[0] === p);
+  const hijri = title.match(/(\d{1,2})-(\d{1,2})-(14\d\d)/);
+  const reciter = reciterRaw.replace(/\(.*?\)/g, "").replace(/\s+/g, " ").trim();
+  if (!prayer) return { ok: false as const, reason: "تعذّر تحديد الصلاة من العنوان" };
+  if (!hijri) return { ok: false as const, reason: "تعذّر تحديد التاريخ الهجري من العنوان" };
+  if (!reciter) return { ok: false as const, reason: "تعذّر تحديد اسم الشيخ" };
+  const tag = `#${reciter.replace(/\s+/g, "_")}`;
+  const caption = [
+    `تلاوةٌ للشيخ ${tag}`,
+    "",
+    title,
+    "",
+    `${SITE}/p/${id}`,
+    "",
+    "تمت المشاركة من 📱| #تطبيق_تلاوات_الحرمين",
+    SITE,
+  ].join("\n");
+  const lastName = reciter.split(" ").pop() ?? reciter;
+  const fileName = `${prayer} ${lastName} ${toArabicDigits(Number(hijri[1]))}-${toArabicDigits(Number(hijri[2]))}.mp3`;
+  return { ok: true as const, caption, fileName, reciter };
+}
+
+async function recitationsChannel() {
+  const [row] = rowsOf(await db.execute(sql`SELECT id, chat_id FROM telegram_channels WHERE kind = 'recitations' AND enabled = true ORDER BY id LIMIT 1`));
+  return row ? { id: Number(row.id), chatId: String(row.chat_id) } : null;
+}
+
+async function claim(id: number): Promise<boolean> {
+  const rows = rowsOf(await db.execute(sql`
+    INSERT INTO app_tg_autopost (post_id, status, attempts) VALUES (${id}, 'posting', 1)
+    ON CONFLICT (post_id) DO UPDATE SET status = 'posting', attempts = app_tg_autopost.attempts + 1, reason = NULL
+    WHERE app_tg_autopost.status = 'failed' AND app_tg_autopost.attempts < ${MAX_ATTEMPTS}
+      OR (app_tg_autopost.status = 'posting' AND app_tg_autopost.created_at < now() - interval '20 minutes')
+    RETURNING post_id`));
+  return rows.length > 0;
+}
+
+async function finish(id: number, values: { status: string; reason?: string | null; title?: string | null; reciter?: string | null; messageId?: number | null }) {
+  await db.execute(sql`UPDATE app_tg_autopost SET status = ${values.status}, reason = ${values.reason ?? null}, title = coalesce(${values.title ?? null}, title),
+    reciter = coalesce(${values.reciter ?? null}, reciter), message_id = ${values.messageId ?? null}, posted_at = ${values.status === "posted" ? new Date() : null} WHERE post_id = ${id}`);
+}
+
+async function alertAdmin(id: number, title: string, reason: string) {
+  await notifyTelegramAdminsGeneric({
+    title: "تلاوة لم تُنشر تلقائيًا في قناة التطبيق",
+    lines: [`التلاوة: ${title || `رقم ${id}`}`, `الرابط: ${SITE}/p/${id}`, `السبب: ${reason}`, "", "انشرها يدويًا في القناة."],
+    alertKey: `app_autopost:${id}`,
+  }).catch(() => {});
+}
+
+// معالجة تلاوة واحدة موجودة في الموقع.
+async function handlePost(id: number, html: string, channel: { id: number; chatId: string }) {
+  if (!(await claim(id))) return;
+  const parsed = parsePage(html);
+  if (!parsed) { await finish(id, { status: "failed", reason: "تعذّرت قراءة صفحة التلاوة" }); return; }
+  if (parsed.section !== "الفروض") { await finish(id, { status: "skipped", reason: `ليست من الفروض (${parsed.section})`, title: parsed.title }); return; }
+  const fail = async (reason: string, final = true) => {
+    await finish(id, { status: "failed", reason, title: parsed.title });
+    if (final) await alertAdmin(id, parsed.title, reason);
+  };
+  if (!parsed.mp3) return fail("لا يوجد رابط ملف صوتي في الصفحة");
+  if (!parsed.categoryId) return fail("تعذّر تحديد قسم التلاوة");
+  const mosque: Mosque = /🕌|\/madani\//.test(`${html.match(/<title>[\s\S]*?<\/title>/i)?.[0] ?? ""} ${parsed.mp3}`) ? "madinah" : "makkah";
+  const reciterRaw = await reciterFromListing(parsed.categoryId, mosque, id, parsed.title);
+  if (!reciterRaw) return fail("تعذّر تحديد اسم الشيخ من قائمة التلاوات", false);
+  const post = buildPost(id, parsed.title, reciterRaw);
+  if (!post.ok) return fail(post.reason);
+
+  const audio = await fetch(parsed.mp3).catch(() => null);
+  if (!audio || !audio.ok) return fail(`تعذّر تنزيل الملف الصوتي (${audio?.status ?? "خطأ اتصال"})`, false);
+  const size = Number(audio.headers.get("content-length") ?? 0);
+  if (size > MAX_BYTES) return fail(`الملف أكبر من حد تيليجرام للبوت (${Math.round(size / 1048576)}MB)`);
+  const blob = await audio.blob();
+  if (blob.size > MAX_BYTES) return fail(`الملف أكبر من حد تيليجرام للبوت (${Math.round(blob.size / 1048576)}MB)`);
+  if (blob.size < 10_000) return fail("الملف الصوتي فارغ أو تالف", false);
+
+  const sent = await sendTelegramAudioUpload({ chatId: channel.chatId, file: blob, fileName: post.fileName, caption: post.caption });
+  if (!sent.ok) return fail(`رفض تيليجرام النشر: ${sent.error}`, false);
+  await finish(id, { status: "posted", title: parsed.title, reciter: post.reciter, messageId: Number(sent.result?.message_id ?? 0) || null });
+  // توثيق المهمتين كما لو نُشرت يدويًا (البوت لا يستقبل منشوراته عبر الـ webhook).
+  try {
+    const stored = await storeChannelUpdate({ channel_post: sent.result });
+    if (stored) await processTelegramPost(stored);
+  } catch { /* التوثيق يُعاد في الفحص الدوري لمراقبة تلقرام */ }
+}
+
+// خط الأساس: أحدث رقم موجود الآن (لا يُنشر ما قبله)، وما حوله من الموجود يُعلَّم «قبل التفعيل».
+async function establishBaseline(): Promise<number> {
+  let id = SEED_ID;
+  let last = SEED_ID;
+  let misses = 0;
+  while (misses < 12 && id < SEED_ID + 5000) {
+    id += 1;
+    const { status } = await fetchText(`${SITE}/p/${id}`);
+    if (status === 200) { last = id; misses = 0; } else misses += 1;
+  }
+  for (let k = last - LOOKBACK; k <= last; k++) {
+    const { status } = await fetchText(`${SITE}/p/${k}`);
+    if (status === 200) await db.execute(sql`INSERT INTO app_tg_autopost (post_id, status, reason) VALUES (${k}, 'skipped', 'قبل التفعيل') ON CONFLICT DO NOTHING`);
+  }
+  await db.execute(sql`UPDATE app_tg_autopost_settings SET baseline_id = ${last}, last_id = ${last}, updated_at = now() WHERE id = 1`);
+  return last;
+}
+
+let running = false;
+export async function runAppTelegramAutopost(): Promise<{ posted: number }> {
+  if (running) return { posted: 0 };
+  running = true;
+  try {
+    const s = await settings();
+    if (!s.enabled) return { posted: 0 };
+    const channel = await recitationsChannel();
+    if (!channel) return { posted: 0 };
+    let lastId = s.lastId ?? (await establishBaseline());
+    const handled = new Set(rowsOf(await db.execute(sql`SELECT post_id FROM app_tg_autopost WHERE post_id >= ${lastId - LOOKBACK} AND (status IN ('posted','skipped') OR (status = 'failed' AND attempts >= ${MAX_ATTEMPTS}))`)).map((r) => Number(r.post_id)));
+    let posted = 0;
+    let maxSeen = lastId;
+    for (let id = lastId - LOOKBACK; id <= lastId + LOOKAHEAD; id++) {
+      if (handled.has(id) || id <= (s.baselineId ?? 0) - LOOKBACK) continue;
+      const { status, text } = await fetchText(`${SITE}/p/${id}`).catch(() => ({ status: 0, text: "" }));
+      if (status !== 200) continue;
+      maxSeen = Math.max(maxSeen, id);
+      const before = rowsOf(await db.execute(sql`SELECT status FROM app_tg_autopost WHERE post_id = ${id}`))[0]?.status;
+      await handlePost(id, text, channel).catch(() => {});
+      const after = rowsOf(await db.execute(sql`SELECT status FROM app_tg_autopost WHERE post_id = ${id}`))[0]?.status;
+      if (after === "posted" && before !== "posted") posted += 1;
+    }
+    await db.execute(sql`UPDATE app_tg_autopost_settings SET last_id = ${maxSeen}, last_run_at = now() WHERE id = 1`);
+    return { posted };
+  } finally {
+    running = false;
+  }
+}
+
+export function startAppTelegramAutopostScheduler(logger: { info: (...a: any[]) => void; error: (...a: any[]) => void }) {
+  const run = () => runAppTelegramAutopost().catch((err) => logger.error({ err }, "app telegram autopost failed"));
+  setTimeout(run, 60_000).unref?.();
+  setInterval(run, 3 * 60_000).unref?.();
+  logger.info("app → telegram autopost scheduler started");
+}
+
+export async function appAutopostOverview() {
+  const s = await settings();
+  const items = rowsOf(await db.execute(sql`SELECT post_id, status, reason, title, reciter, attempts, created_at, posted_at FROM app_tg_autopost WHERE coalesce(reason, '') <> 'قبل التفعيل' ORDER BY post_id DESC LIMIT 30`));
+  const iso = (v: any) => (v == null ? null : v instanceof Date ? v.toISOString() : new Date(`${String(v).replace(" ", "T")}Z`).toISOString());
+  return {
+    enabled: s.enabled, baselineId: s.baselineId, lastId: s.lastId, lastRunAt: iso(s.lastRunAt),
+    items: items.map((r) => ({ postId: Number(r.post_id), status: String(r.status), reason: r.reason ?? null, title: r.title ?? null, reciter: r.reciter ?? null, attempts: Number(r.attempts), postedAt: iso(r.posted_at), createdAt: iso(r.created_at) })),
+  };
+}
+
+export async function setAppAutopostEnabled(enabled: boolean) {
+  await ensureSchema();
+  // إعادة التشغيل تبدأ من جديد (خط أساس جديد): لا يُنشر ما صدر أثناء الإيقاف.
+  if (enabled) await db.execute(sql`UPDATE app_tg_autopost_settings SET enabled = true, baseline_id = NULL, last_id = NULL, updated_at = now() WHERE id = 1`);
+  else await db.execute(sql`UPDATE app_tg_autopost_settings SET enabled = false, updated_at = now() WHERE id = 1`);
+}

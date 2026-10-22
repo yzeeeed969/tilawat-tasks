@@ -110,6 +110,52 @@ async function api<T>(url: string, init?: RequestInit): Promise<T> {
   return payload as T;
 }
 
+type AutopostItem = { postId: number; status: string; reason: string | null; title: string | null; reciter: string | null; attempts: number; postedAt: string | null; createdAt: string | null };
+
+// النشر التلقائي من التطبيق إلى هذه القناة (الإصدار 65).
+function AppAutopostCard() {
+  const qc = useQueryClient();
+  const q = useQuery({ queryKey: ["app-autopost"], queryFn: () => api<{ enabled: boolean; baselineId: number | null; lastId: number | null; lastRunAt: string | null; items: AutopostItem[] }>("/api/telegram-monitor/app-autopost"), refetchInterval: 60_000 });
+  const toggle = useMutation({
+    mutationFn: (enabled: boolean) => api("/api/telegram-monitor/app-autopost", { method: "POST", body: JSON.stringify({ enabled }) }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["app-autopost"] }),
+  });
+  const fmt = (v: string | null) => v ? new Date(v).toLocaleString("ar-SA", { timeZone: "Asia/Riyadh", day: "numeric", month: "numeric", hour: "numeric", minute: "2-digit" }) : "";
+  const label: Record<string, string> = { posted: "نُشر", failed: "لم يُنشر", skipped: "تُجوهل", posting: "جارٍ" };
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="flex items-center justify-between gap-2 text-base">
+          <span className="flex items-center gap-2"><Send className="h-4 w-4" /> النشر التلقائي من التطبيق</span>
+          {q.data && <label className="flex items-center gap-2 text-sm font-normal"><Switch checked={q.data.enabled} disabled={toggle.isPending} onCheckedChange={(v) => {
+            if (!v && !confirm("إيقاف النشر التلقائي؟ عند إعادة التشغيل يبدأ من التلاوات الجديدة فقط.")) return;
+            toggle.mutate(v);
+          }} />{q.data.enabled ? "يعمل" : "متوقف"}</label>}
+        </CardTitle>
+        <CardDescription>كل تلاوة فرض جديدة في التطبيق تُنشر هنا ملفًا صوتيًا بنفس صيغة الفريق خلال دقائق، وتُوثَّق مهمتاها تلقائيًا. ما لا يكتمل (اسم الشيخ، الصلاة، التاريخ) لا يُنشر ويصلك تنبيه.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2 text-xs">
+        {q.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : q.error ? <p className="text-destructive">{(q.error as Error).message}</p> : (
+          <>
+            <p className="text-muted-foreground">آخر فحص: {fmt(q.data!.lastRunAt) || "—"}{q.data!.baselineId ? ` · يبدأ بعد التلاوة رقم ${q.data!.baselineId}` : ""}</p>
+            {q.data!.items.length === 0 && <p className="text-muted-foreground">لم تُنشر تلاوة جديدة بعد التفعيل.</p>}
+            {q.data!.items.map((it) => (
+              <div key={it.postId} className="flex flex-wrap items-center gap-2 rounded-md border border-border/60 p-2">
+                <span className={cn("rounded-full border px-1.5 py-0.5 font-semibold", it.status === "posted" ? "border-emerald-500/40 text-emerald-500" : it.status === "failed" ? "border-red-500/40 text-red-500" : "border-border text-muted-foreground")}>{label[it.status] ?? it.status}</span>
+                {it.reciter && <span className="font-medium">{it.reciter}</span>}
+                <span className="text-muted-foreground">{fmt(it.postedAt ?? it.createdAt)}</span>
+                <a href={`https://tilawatalharamain.com/p/${it.postId}`} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 text-sidebar-primary hover:underline">التطبيق <ExternalLink className="h-3 w-3" /></a>
+                {it.title && <span className="w-full text-muted-foreground">{it.title}</span>}
+                {it.reason && it.status !== "posted" && <span className="w-full text-red-500">{it.reason}</span>}
+              </div>
+            ))}
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 type RelayTarget = { reciterName: string; pageName: string; chat: string; ready: boolean; note: string };
 type Relay = { id: number; status: string; error: string | null; attempts: number; backfill: boolean; targetName: string; createdAt: string; sentAt: string | null; postUrl: string | null; caption: string };
 
@@ -555,6 +601,7 @@ export default function TelegramMonitorPage() {
       )}
 
       {channel && isDesigns && <DesignRelayCard />}
+      {channel && !isDesigns && <AppAutopostCard />}
 
       {channel && (
         <Card>

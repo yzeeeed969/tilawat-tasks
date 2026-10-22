@@ -537,6 +537,13 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 65, date: "2026-10-22",
+    items: [
+      { text: "كل تلاوة فرض جديدة في التطبيق تُنشر تلقائيًا ملفًا صوتيًا في قناة «تطبيق تلاوات الحرمين» وتُوثَّق مهمتاها — لا حاجة لنشرها يدويًا." },
+      { text: "إصلاح: مهمة إنستقرام الأسبوعية المستعادة من السلة لا تُنشئ مهمة مكررة.", adminOnly: true },
+    ],
+  },
+  {
     version: 64, date: "2026-10-21",
     items: [
       { text: "تصاميم «تصاميم الحرمين» تُنشر تلقائيًا في قناة القارئ الخاصة (كمنشور أصلي + سطر «قناة تصاميم الحرمين» يفتح الأصل). الحالة في «مراقبة تلقرام».", adminOnly: true },

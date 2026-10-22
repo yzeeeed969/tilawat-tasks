@@ -6,6 +6,7 @@ import { requireAdmin } from "../middlewares/auth";
 import { callTelegramApi } from "../services/telegram";
 import { ensureTelegramMonitorSchema } from "../services/telegram-monitor-schema";
 import { listDesignRelays, listRelayTargets } from "../services/telegram-design-relay";
+import { appAutopostOverview, setAppAutopostEnabled } from "../services/app-telegram-autopost";
 import {
   addHashtagAlias,
   getMonitorSettings,
@@ -174,6 +175,14 @@ router.post("/telegram-monitor/webhook/allowed-updates", async (_req, res) => {
 });
 
 // تحويل التصاميم لقنوات القرّاء (الإصدار 64): القنوات الهدف وحالة البوت فيها + آخر عمليات التحويل.
+// النشر التلقائي من التطبيق إلى قناة «تطبيق تلاوات الحرمين» (الإصدار 65).
+router.get("/telegram-monitor/app-autopost", async (_req, res) => {
+  try { res.json(await appAutopostOverview()); } catch (err) { res.status(500).json({ message: (err as Error).message }); }
+});
+router.post("/telegram-monitor/app-autopost", async (req, res) => {
+  try { await setAppAutopostEnabled(req.body?.enabled === true); res.json(await appAutopostOverview()); } catch (err) { res.status(500).json({ message: (err as Error).message }); }
+});
+
 router.get("/telegram-monitor/design-relay", async (_req, res) => {
   try {
     const [targets, relays] = await Promise.all([listRelayTargets(), listDesignRelays(40)]);

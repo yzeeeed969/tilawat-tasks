@@ -50,6 +50,7 @@ type NotificationType =
   | "telegram_personal_reminder"
   | "telegram_password_reset"
   | "telegram_instagram_reconnect"
+  | "telegram_admin_alert"
   | "telegram_facebook_reconnect"
   | "telegram_test";
 
@@ -2014,6 +2015,27 @@ export async function notifyTelegramAdminsFacebookReconnect(input: { reason: str
     const result = await sendLoggedTelegram({
       type: "telegram_facebook_reconnect",
       dedupeKey: `telegram:facebook_reconnect:${input.alertKey}:admin:${admin.userId}`,
+      chatId: admin.chatId,
+      text,
+      recipientUserId: admin.userId,
+      recipientMemberId: admin.memberId,
+    });
+    if (result.sent) sent += 1;
+  }
+  return { sent };
+}
+
+// تنبيه عام للمدير (مرة واحدة لكل مفتاح): يُستخدم للنشر التلقائي من التطبيق إلى قناة تيليجرام.
+export async function notifyTelegramAdminsGeneric(input: { title: string; lines: string[]; alertKey: string }) {
+  const settings = await getTelegramSettings();
+  if (!settings.enabled) return { sent: 0 };
+  const admins = await getAdminRecipients();
+  let sent = 0;
+  for (const admin of admins) {
+    const text = [`⚠️ <b>${escapeHtml(input.title)}</b>`, "", ...input.lines.map((line) => escapeHtml(line))].join("\n");
+    const result = await sendLoggedTelegram({
+      type: "telegram_admin_alert",
+      dedupeKey: `telegram:admin_alert:${input.alertKey}:admin:${admin.userId}`,
       chatId: admin.chatId,
       text,
       recipientUserId: admin.userId,

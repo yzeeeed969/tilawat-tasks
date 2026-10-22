@@ -79,3 +79,26 @@ export async function callTelegramApi<T = unknown>(method: string, params: Recor
     clearTimeout(timeout);
   }
 }
+
+// إرسال ملف صوتي برفعه (multipart) — حتى 50MB — باسم ملف ونص مرافق.
+export async function sendTelegramAudioUpload(input: { chatId: string; file: Blob; fileName: string; caption: string; captionEntities?: unknown[] }): Promise<{ ok: boolean; result?: any; error?: string }> {
+  const token = getTelegramToken();
+  if (!token) return { ok: false, error: "TELEGRAM_BOT_TOKEN is not configured" };
+  const form = new FormData();
+  form.append("chat_id", input.chatId);
+  form.append("caption", input.caption);
+  if (input.captionEntities?.length) form.append("caption_entities", JSON.stringify(input.captionEntities));
+  form.append("audio", input.file, input.fileName);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5 * 60_000);
+  try {
+    const res = await fetch(`https://api.telegram.org/bot${token}/sendAudio`, { method: "POST", body: form, signal: controller.signal });
+    const body = await res.json().catch(() => ({})) as { ok?: boolean; result?: any; description?: string };
+    if (!res.ok || body?.ok === false) return { ok: false, error: body?.description ?? `Telegram HTTP ${res.status}` };
+    return { ok: true, result: body.result };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : "Telegram request failed" };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
