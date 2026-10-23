@@ -254,6 +254,19 @@ async function holdForMakkah(id: number, title: string, reciter: string, prayer:
   }
 }
 
+// ── التلاوات القديمة (الإصدار 68) ─────────────────────────────────────────────────────────────
+// يُنشر فقط ما تاريخه الهجري في العنوان هو اليوم أو الأمس (تقويم أم القرى بتوقيت الرياض)، مع سماحية يوم
+// بعده لاحتمال فرق رؤية الهلال. الأقدم يُتجاهل بلا تنبيه (قرار المدير).
+const UMM_AL_QURA = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura-nu-latn", { timeZone: "Asia/Riyadh", day: "numeric", month: "numeric", year: "numeric" });
+function hijriKeyOf(date: Date): string {
+  const parts = Object.fromEntries(UMM_AL_QURA.formatToParts(date).map((p) => [p.type, p.value]));
+  return `${Number(parts.day)}-${Number(parts.month)}-${Number(parts.year)}`;
+}
+function isRecentHijri(hijriKey: string): boolean {
+  const now = Date.now();
+  return [-2, -1, 0, 1].some((d) => hijriKeyOf(new Date(now + d * 86_400_000)) === hijriKey);
+}
+
 // معالجة تلاوة واحدة موجودة في الموقع.
 async function handlePost(id: number, html: string, channel: { id: number; chatId: string }) {
   if (!(await claim(id))) return;
@@ -272,6 +285,10 @@ async function handlePost(id: number, html: string, channel: { id: number; chatI
   const post = buildPost(id, parsed.title, reciterRaw);
   if (!post.ok) return fail(post.reason);
   const ph = prayerAndHijri(parsed.title);
+  if (ph.hijriKey && !isRecentHijri(ph.hijriKey)) {
+    await finish(id, { status: "skipped", reason: "تلاوة قديمة — لم تُنشر", title: parsed.title });
+    return;
+  }
   await db.execute(sql`UPDATE app_tg_autopost SET mosque = ${mosque}, prayer = ${ph.prayer}, hijri_key = ${ph.hijriKey} WHERE post_id = ${id}`);
   if (mosque === "madinah" && ph.prayer && ph.hijriKey && ph.day && ph.month && !(await makkahAlreadyPosted(ph.prayer, ph.hijriKey, ph.day, ph.month))) {
     await holdForMakkah(id, parsed.title, post.reciter, ph.prayer, ph.hijriKey);
