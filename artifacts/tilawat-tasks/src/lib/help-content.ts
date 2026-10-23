@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 67, date: "2026-10-23",
+    items: [
+      { text: "النشر التلقائي في قناة التطبيق يتعرّف الآن على العناوين التي تبدأ بـ«صلاة الفجر» و«صلاة المغرب» و«صلاة العشاء» و«صلاة الجمعة» (مع «ال»).", adminOnly: true },
+    ],
+  },
+  {
     version: 66, date: "2026-10-22",
     items: [
       { text: "النشر التلقائي في قناة «تطبيق تلاوات الحرمين»: تلاوة المسجد الحرام تُنشر دائمًا قبل تلاوة المسجد النبوي لنفس الصلاة ونفس اليوم. إن نزلت النبوية أولًا تنتظر المكية، وبعد ساعة يصل المدير تنبيه في تيليجرام.", adminOnly: true },

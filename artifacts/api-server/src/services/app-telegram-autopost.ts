@@ -59,6 +59,10 @@ function ensureSchema() {
       await db.execute(sql`ALTER TABLE app_tg_autopost ADD COLUMN IF NOT EXISTS mosque text`);
       await db.execute(sql`ALTER TABLE app_tg_autopost ADD COLUMN IF NOT EXISTS prayer text`);
       await db.execute(sql`ALTER TABLE app_tg_autopost ADD COLUMN IF NOT EXISTS hijri_key text`);
+      // الإصدار 67: إعادة محاولة تلاوة فجر بندر بليلة 12-5-1448 (35887) بعد إصلاح «صلاة الفجر» — مرة واحدة، وإن لم تُنشر.
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS app_one_time_migrations (name text PRIMARY KEY, ran_at timestamp NOT NULL DEFAULT now(), details jsonb)`);
+      const fresh = rowsOf(await db.execute(sql`INSERT INTO app_one_time_migrations (name) VALUES ('app_tg_autopost_retry_35887_v67') ON CONFLICT (name) DO NOTHING RETURNING name`));
+      if (fresh.length) await db.execute(sql`DELETE FROM app_tg_autopost WHERE post_id = 35887 AND status <> 'posted'`);
     })().catch((err) => { schemaReady = null; throw err; });
   }
   return schemaReady;
@@ -155,10 +159,17 @@ async function reciterFromListing(categoryId: number, mosque: Mosque, postId: nu
   return name && name.length <= 40 ? name : null;
 }
 
+// الصلاة من أول العنوان فقط: «فجر» «الفجر» «صلاة فجر» «صلاة الفجر» (ومثلها المغرب والعشاء والجمعة).
+// البحث في أول العنوان فقط حتى لا تُفهم «سورة الجمعة» على أنها صلاة الجمعة.
+function detectPrayer(title: string): string | undefined {
+  const m = title.trim().match(/^(?:صلاة\s+)?(?:ال)?(فجر|مغرب|عشاء|جمعة)(?=\s|$|[0-9٠-٩\-|:،,])/);
+  return m && PRAYERS.includes(m[1]) ? m[1] : undefined;
+}
+
 const toArabicDigits = (n: number | string) => String(n).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
 
 function buildPost(id: number, title: string, reciterRaw: string) {
-  const prayer = PRAYERS.find((p) => title.startsWith(p) || title.startsWith(`صلاة ${p}`) || title.split(" ")[0] === p);
+  const prayer = detectPrayer(title);
   const hijri = title.match(/(\d{1,2})-(\d{1,2})-(14\d\d)/);
   const reciter = reciterRaw.replace(/\(.*?\)/g, "").replace(/\s+/g, " ").trim();
   if (!prayer) return { ok: false as const, reason: "تعذّر تحديد الصلاة من العنوان" };
@@ -216,7 +227,7 @@ async function alertAdmin(id: number, title: string, reason: string) {
 const PRAYER_CODE: Record<string, string> = { "فجر": "fajr", "مغرب": "maghrib", "عشاء": "isha", "جمعة": "jumuah" };
 
 function prayerAndHijri(title: string) {
-  const prayer = PRAYERS.find((p) => title.startsWith(p) || title.startsWith(`صلاة ${p}`) || title.split(" ")[0] === p) ?? null;
+  const prayer = detectPrayer(title) ?? null;
   const h = title.match(/(\d{1,2})-(\d{1,2})-(14\d\d)/);
   return { prayer, hijriKey: h ? `${Number(h[1])}-${Number(h[2])}-${h[3]}` : null, day: h ? Number(h[1]) : null, month: h ? Number(h[2]) : null };
 }
