@@ -63,6 +63,9 @@ function ensureSchema() {
       await db.execute(sql`CREATE TABLE IF NOT EXISTS app_one_time_migrations (name text PRIMARY KEY, ran_at timestamp NOT NULL DEFAULT now(), details jsonb)`);
       const fresh = rowsOf(await db.execute(sql`INSERT INTO app_one_time_migrations (name) VALUES ('app_tg_autopost_retry_35887_v67') ON CONFLICT (name) DO NOTHING RETURNING name`));
       if (fresh.length) await db.execute(sql`DELETE FROM app_tg_autopost WHERE post_id = 35887 AND status <> 'posted'`);
+      // الإصدار 69: إعادة محاولة عشاء المسجد النبوي 14-5-1448 (35906، ملف M4A) — مرة واحدة، وإن لم تُنشر.
+      const fresh69 = rowsOf(await db.execute(sql`INSERT INTO app_one_time_migrations (name) VALUES ('app_tg_autopost_retry_35906_v69') ON CONFLICT (name) DO NOTHING RETURNING name`));
+      if (fresh69.length) await db.execute(sql`DELETE FROM app_tg_autopost WHERE post_id = 35906 AND status <> 'posted'`);
     })().catch((err) => { schemaReady = null; throw err; });
   }
   return schemaReady;
@@ -91,11 +94,21 @@ function decodeHtml(s: string) {
 
 type Parsed = { title: string; section: string; mp3: string; categoryId: number | null };
 
+// رابط الملف الصوتي في صفحة التلاوة: MP3 أو M4A (الإصدار 69 — بعض التلاوات تُرفع M4A من media.altilawat.com).
+// تيليجرام يقبل الصيغتين في sendAudio.
+const AUDIO_HREF = /(?:href|src)="(https?:\/\/[^"]+\.(?:mp3|m4a))(?:\?[^"]*)?"/i;
+function audioUrlOf(html: string): string {
+  return decodeHtml(html.match(AUDIO_HREF)?.[1] ?? "");
+}
+function audioExt(url: string): "mp3" | "m4a" {
+  return /\.m4a$/i.test(url) ? "m4a" : "mp3";
+}
+
 function parsePage(html: string): Parsed | null {
   const rawTitle = decodeHtml((html.match(/<title>([\s\S]*?)<\/title>/i)?.[1] ?? "").trim()).replace(/\s*-\s*تلاوات الحرمين\s*$/, "");
   const parts = rawTitle.split(" > ").map((p) => p.trim());
   if (parts.length < 2) return null;
-  const mp3 = decodeHtml(html.match(/href="(https?:\/\/[^"]+\.mp3)"/i)?.[1] ?? "");
+  const mp3 = audioUrlOf(html);
   const categoryId = Number(html.match(/\/prayers\/c\/(\d+)/)?.[1] ?? NaN);
   return { title: parts[0], section: parts[parts.length - 1], mp3, categoryId: Number.isFinite(categoryId) ? categoryId : null };
 }
@@ -168,7 +181,7 @@ function detectPrayer(title: string): string | undefined {
 
 const toArabicDigits = (n: number | string) => String(n).replace(/\d/g, (d) => "٠١٢٣٤٥٦٧٨٩"[Number(d)]);
 
-function buildPost(id: number, title: string, reciterRaw: string) {
+function buildPost(id: number, title: string, reciterRaw: string, ext: "mp3" | "m4a" = "mp3") {
   const prayer = detectPrayer(title);
   const hijri = title.match(/(\d{1,2})-(\d{1,2})-(14\d\d)/);
   const reciter = reciterRaw.replace(/\(.*?\)/g, "").replace(/\s+/g, " ").trim();
@@ -187,7 +200,7 @@ function buildPost(id: number, title: string, reciterRaw: string) {
     SITE,
   ].join("\n");
   const lastName = reciter.split(" ").pop() ?? reciter;
-  const fileName = `${prayer} ${lastName} ${toArabicDigits(Number(hijri[1]))}-${toArabicDigits(Number(hijri[2]))}.mp3`;
+  const fileName = `${prayer} ${lastName} ${toArabicDigits(Number(hijri[1]))}-${toArabicDigits(Number(hijri[2]))}.${ext}`;
   return { ok: true as const, caption, fileName, reciter };
 }
 
@@ -282,7 +295,7 @@ async function handlePost(id: number, html: string, channel: { id: number; chatI
   const mosque: Mosque = /🕌|\/madani\//.test(`${html.match(/<title>[\s\S]*?<\/title>/i)?.[0] ?? ""} ${parsed.mp3}`) ? "madinah" : "makkah";
   const reciterRaw = await reciterFromListing(parsed.categoryId, mosque, id, parsed.title);
   if (!reciterRaw) return fail("تعذّر تحديد اسم الشيخ من قائمة التلاوات", false);
-  const post = buildPost(id, parsed.title, reciterRaw);
+  const post = buildPost(id, parsed.title, reciterRaw, audioExt(parsed.mp3));
   if (!post.ok) return fail(post.reason);
   const ph = prayerAndHijri(parsed.title);
   if (ph.hijriKey && !isRecentHijri(ph.hijriKey)) {
@@ -354,7 +367,7 @@ export async function runAppTelegramAutopost(): Promise<{ posted: number }> {
       const { status, text } = await fetchText(`${SITE}/p/${id}`).catch(() => ({ status: 0, text: "" }));
       if (status !== 200) continue;
       maxSeen = Math.max(maxSeen, id);
-      pages.push({ id, text, madinah: /🕌|\/madani\//.test(`${text.match(/<title>[\s\S]*?<\/title>/i)?.[0] ?? ""} ${text.match(/href="(https?:\/\/[^"]+\.mp3)"/i)?.[1] ?? ""}`) });
+      pages.push({ id, text, madinah: /🕌|\/madani\//.test(`${text.match(/<title>[\s\S]*?<\/title>/i)?.[0] ?? ""} ${audioUrlOf(text)}`) });
     }
     // المكي أولًا ثم النبوي (فإن ظهرا معًا يُنشر المكي ثم النبوي في نفس الفحص).
     for (const page of [...pages.filter((p) => !p.madinah), ...pages.filter((p) => p.madinah)]) {
