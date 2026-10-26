@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 70, date: "2026-10-27",
+    items: [
+      { text: "صفحة جديدة «أداء مقاطع يوتيوب» في قسم المراقبة: أي المقاطع انتشرت أكثر من المعتاد في قناتها، حسب نوع المقطع والعنوان ووقت النشر. الأرقام من واجهة يوتيوب الرسمية وتتحدث كل 6 ساعات.", adminOnly: true },
+    ],
+  },
+  {
     version: 69, date: "2026-10-25",
     items: [
       { text: "النشر التلقائي في قناة التطبيق يقبل الآن ملفات M4A مع MP3، فلا تتوقف التلاوة المرفوعة بصيغة M4A.", adminOnly: true },

@@ -30,6 +30,7 @@ import {
   ShieldCheck,
   Radar,
   Upload,
+  TrendingUp,
 } from "lucide-react";
 import { NotificationsPanel } from "@/components/notifications-panel";
 import { HelpButton } from "@/components/help-button";
@@ -319,6 +320,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
       icon: Radar,
       items: [
         { href: "/youtube-monitor", label: "مراقبة يوتيوب", icon: RefreshCw, show: canManageSettings },
+        { href: "/youtube-performance", label: "أداء مقاطع يوتيوب", icon: TrendingUp, show: isAdmin },
         { href: "/telegram-monitor", label: "مراقبة تلقرام", icon: Send, show: isAdmin },
         { href: "/instagram-monitor", label: "مراقبة إنستقرام", icon: Camera, show: isAdmin },
         { href: "/crosspost-monitor", label: "رفع يوتيوب ← فيسبوك", icon: Upload, show: isAdmin },

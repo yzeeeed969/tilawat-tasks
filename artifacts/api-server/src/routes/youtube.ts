@@ -14,6 +14,7 @@ import { getYoutubeSettings, updateYoutubeSettings } from "../services/youtube-s
 import { runYoutubeMonitorTick, reprocessChannelNeedsAttentionVideos } from "../services/youtube-monitor";
 import { ensureYoutubeMonitorSchema } from "../services/youtube-monitor-schema";
 import { riyadhDayKey } from "../lib/hijri";
+import { youtubePerformance } from "../services/youtube-performance";
 
 // يزيل المسافات الطرفية وعلامات الاقتباس الطرفية بكل أشكالها الشائعة (مستقيمة أو منحنية/ذكية) —
 // خطأ شائع عند اللصق من الهاتف أو Word، وقد سبّب هذا تحديدًا خللًا حقيقيًا (قناة الوليد الشمسان).
@@ -60,6 +61,15 @@ router.post("/youtube/scan-now", async (_req, res) => {
 });
 
 // ── القنوات ──────────────────────────────────────────────────────────────
+// أداء مقاطع آخر N يومًا وأسباب انتشارها (الإصدار 70) — قراءة فقط من واجهة يوتيوب الرسمية.
+router.get("/youtube/performance", async (req, res) => {
+  try {
+    res.json(await youtubePerformance(Number(req.query.days) || 30, req.query.refresh === "1"));
+  } catch (error) {
+    res.status(500).json({ message: (error as Error).message });
+  }
+});
+
 router.get("/youtube/channels", async (_req, res) => {
   const channels = await db
     .select({
