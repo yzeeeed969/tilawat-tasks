@@ -1,7 +1,7 @@
 import { sql } from "drizzle-orm";
 import type { Logger } from "pino";
 import { db } from "@workspace/db";
-import { riyadhDayKey } from "../lib/hijri";
+import { hijriPartsOf, riyadhDayKey } from "../lib/hijri";
 import { ensureMuezzinSchema } from "./muezzin-schema";
 import { sendTelegramMessage } from "./telegram";
 
@@ -10,7 +10,13 @@ import { sendTelegramMessage } from "./telegram";
 
 export const DAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"] as const;
 export const SLOTS = ["fajr1", "fajr2", "dhuhr", "asr", "maghrib", "isha"] as const;
-export type Slot = (typeof SLOTS)[number];
+// أذانا الجمعة — يوم الجمعة فقط، بلا ملازم.
+export const JUMUAH_SLOTS = ["jumuah1", "jumuah2"] as const;
+export const ALL_SLOTS = [...SLOTS, ...JUMUAH_SLOTS] as const;
+export type Slot = (typeof ALL_SLOTS)[number];
+export const ROLES = ["muezzin", "mulazim"] as const;
+export type Role = (typeof ROLES)[number];
+const FRIDAY_INDEX = 5;
 export const SLOT_LABELS: Record<Slot, string> = {
   fajr1: "الفجر 1",
   fajr2: "الفجر 2",
@@ -18,6 +24,8 @@ export const SLOT_LABELS: Record<Slot, string> = {
   asr: "العصر",
   maghrib: "المغرب",
   isha: "العشاء",
+  jumuah1: "الجمعة — الأذان الأول",
+  jumuah2: "الجمعة — الأذان الثاني",
 };
 const SLOT_MESSAGE: Record<Slot, string> = {
   fajr1: "الأذان الأول للفجر",
@@ -26,7 +34,12 @@ const SLOT_MESSAGE: Record<Slot, string> = {
   asr: "أذان العصر",
   maghrib: "أذان المغرب",
   isha: "أذان العشاء",
+  jumuah1: "الأذان الأول للجمعة",
+  jumuah2: "الأذان الثاني للجمعة",
 };
+const ROLE_LABEL: Record<Role, string> = { muezzin: "مؤذن", mulazim: "ملازم" };
+// ترتيب زمني: الجمعة مكان الظهر.
+const ALL_SLOT_ORDER: Record<Slot, number> = { fajr1: 0, fajr2: 1, jumuah1: 2, jumuah2: 3, dhuhr: 4, asr: 5, maghrib: 6, isha: 7 };
 
 export class MuezzinError extends Error {
   constructor(public status: number, message: string) {
@@ -44,6 +57,7 @@ function rowsOf<T = any>(result: any): T[] {
 export function normalizeName(input: string): string {
   return String(input ?? "")
     .replace(/[ً-ْـ]/g, "")
+    .replace(/\([^)]*\)/g, " ") // مثل «(ط)»
     .replace(/الشيخ|فضيلة/g, "")
     .replace(/أ\s*\.\s*د\s*\./g, "")
     .replace(/(^|\s)د\s*\./g, " ")
@@ -112,33 +126,73 @@ export async function updateMuezzin(id: number, input: { name?: string; phone?: 
 /* ───────────────────────── قراءة الصورة ───────────────────────── */
 
 export type PreviewCell = { raw: string; muezzinId: number | null };
-export type PreviewDay = { day: string; date: string; slots: Record<Slot, PreviewCell> };
+export type PreviewSlot = { muezzin: PreviewCell; mulazim: PreviewCell };
+export type PreviewDay = { day: string; date: string; slots: Record<Slot, PreviewSlot> };
+export type ReadResult = { title: string; days: PreviewDay[]; hasMulazim: boolean; suggestedWeekStart: string | null };
 
 export function isVisionConfigured() {
   return Boolean(process.env.ANTHROPIC_API_KEY?.trim());
 }
 
+/**
+ * يطابق اسمًا مقروءًا (كاملًا أو مختصرًا مثل «خوجة» أو «د. العباس») بمؤذن واحد فقط.
+ * إن احتمل أكثر من مؤذن أو لم يطابق أحدًا ← null (تظهر الخانة حمراء ويختار المدير بنفسه — لا تخمين).
+ */
+export function matchMuezzin(raw: string, muezzins: Array<{ id: number; name: string }>): number | null {
+  const n = normalizeName(raw);
+  if (!n) return null;
+  const exact = muezzins.filter((m) => normalizeName(m.name) === n);
+  if (exact.length) return exact.length === 1 ? exact[0].id : null;
+  const words = n.split(" ");
+  const partial = muezzins.filter((m) => {
+    const tokens = normalizeName(m.name).split(" ");
+    return words.every((w) => tokens.includes(w));
+  });
+  return partial.length === 1 ? partial[0].id : null;
+}
+
 const READ_PROMPT = [
-  'هذه صورة "الجدول الأسبوعي لرفع الأذان بالمسجد الحرام".',
-  "استخرج الجدول بدقة تامة حرفًا بحرف، دون أي تخمين.",
+  'هذا "الجدول الأسبوعي لرفع الأذان بالمسجد الحرام" (صورة أو ملف PDF). قد يأتي بأحد شكلين:',
+  "(أ) لكل صلاة اسم واحد فقط، أو (ب) لكل يوم صفّان: «مؤذن» و«ملازم».",
+  "استخرج الجدول بدقة تامة حرفًا بحرف كما هو مكتوب، دون أي تخمين، ودون إكمال الأسماء المختصرة.",
   "أعد JSON فقط بلا أي نص آخر، بهذا الشكل:",
-  '{"title":"نص سطر التاريخ أعلى الجدول","days":[{"day":"الأحد","date":"23/4","slots":{"fajr1":"...","fajr2":"...","dhuhr":"...","asr":"...","maghrib":"...","isha":"..."}}]}',
+  '{"title":"عنوان الجدول كما هو","sundayHijri":{"day":21,"month":5,"year":1448},"days":[{"day":"الأحد","date":"21/5","slots":{"fajr1":{"muezzin":"...","mulazim":"..."},"fajr2":{...},"dhuhr":{...},"asr":{...},"maghrib":{...},"isha":{...}}}],"jumuah":{"first":"...","second":"..."}}',
   "القواعد:",
   "- الأيام السبعة بالترتيب: الأحد، الاثنين، الثلاثاء، الأربعاء، الخميس، الجمعة، السبت.",
-  '- fajr1 = "الفجر ١"، fajr2 = "الفجر ٢".',
+  '- fajr1 = "الفجر الأول" أو "الفجر ١"، fajr2 = "الفجر الثاني" أو "الفجر ٢".',
+  '- في الشكل (أ) ضع الاسم في muezzin واكتب mulazim = null.',
   '- اكتب الاسم بدون كلمة "الشيخ"، واحتفظ بـ "د." أو "أ.د." إن وُجدت.',
-  '- يوم الجمعة: خانة "الجمعة" مكان الظهر؛ إن لم يكن فيها اسم مؤذن فاكتب null في dhuhr.',
-  "- أي خانة غير واضحة أو بلا اسم اكتب فيها null.",
+  "- ظهر الجمعة: إن كانت خانته فارغة أو مكتوب فيها «الجمعة» فاكتب null.",
+  '- jumuah: اسما الأذان الأول والثاني لصلاة الجمعة لهذا الأسبوع إن ذُكرا صراحة (مثل مربع "الأذان الأول فضيلة الشيخ"). تجاهل أي جدول دوري لأسابيع أخرى. إن لم يُذكرا فاكتب null.',
+  "- sundayHijri: التاريخ الهجري ليوم الأحد كما يظهر في الجدول (اليوم/الشهر/السنة) أرقامًا، أو null إن لم يتضح.",
+  "- لا تعتمد على لون الخط. أي خانة غير واضحة أو بلا اسم اكتب فيها null.",
 ].join("\n");
 
-export async function readScheduleImage(image: Buffer, mime: string): Promise<{ title: string; days: PreviewDay[] }> {
-  const key = process.env.ANTHROPIC_API_KEY?.trim();
-  if (!key) throw new MuezzinError(503, "قراءة الصور غير مفعّلة: أضف ANTHROPIC_API_KEY في إعدادات Railway.");
-  if (!image?.length) throw new MuezzinError(400, "لم تصل صورة");
-  if (!/^image\/(jpeg|png|webp|gif)$/.test(mime)) throw new MuezzinError(400, "نوع الصورة غير مدعوم");
+/** يحوّل تاريخًا هجريًا (أم القرى) ليوم أحد إلى مفتاح ميلادي، بالبحث في نافذة حول اليوم. */
+function gregorianSundayFromHijri(h: any): string | null {
+  const day = Number(h?.day), month = Number(h?.month), year = Number(h?.year);
+  if (!day || !month || !year) return null;
+  const today = new Date(`${riyadhDayKey(new Date())}T12:00:00Z`);
+  for (let offset = -120; offset <= 120; offset++) {
+    const d = new Date(today);
+    d.setUTCDate(d.getUTCDate() + offset);
+    if (d.getUTCDay() !== 0) continue;
+    const p = hijriPartsOf(d);
+    if (p.day === day && p.month === month && p.year === year) return d.toISOString().slice(0, 10);
+  }
+  return null;
+}
 
+export async function readScheduleImage(file: Buffer, mime: string): Promise<ReadResult> {
+  const key = process.env.ANTHROPIC_API_KEY?.trim();
+  if (!key) throw new MuezzinError(503, "قراءة الجداول غير مفعّلة: أضف ANTHROPIC_API_KEY في إعدادات Railway.");
+  if (!file?.length) throw new MuezzinError(400, "لم يصل الملف");
+  const isPdf = mime === "application/pdf";
+  if (!isPdf && !/^image\/(jpeg|png|webp|gif)$/.test(mime)) throw new MuezzinError(400, "نوع الملف غير مدعوم — ارفع صورة أو PDF");
+
+  const source = { type: "base64", media_type: mime, data: file.toString("base64") };
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 90_000);
+  const timeout = setTimeout(() => controller.abort(), 120_000);
   let res: Response;
   try {
     res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -147,48 +201,64 @@ export async function readScheduleImage(image: Buffer, mime: string): Promise<{ 
       headers: { "content-type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
       body: JSON.stringify({
         model: process.env.MUEZZIN_VISION_MODEL?.trim() || "claude-sonnet-5-5",
-        max_tokens: 4000,
+        max_tokens: 6000,
         messages: [{
           role: "user",
           content: [
-            { type: "image", source: { type: "base64", media_type: mime, data: image.toString("base64") } },
+            isPdf ? { type: "document", source } : { type: "image", source },
             { type: "text", text: READ_PROMPT },
           ],
         }],
       }),
     });
   } catch {
-    throw new MuezzinError(504, "تعذّر الاتصال بخدمة قراءة الصور. حاول مرة أخرى.");
+    throw new MuezzinError(504, "تعذّر الاتصال بخدمة القراءة. حاول مرة أخرى.");
   } finally {
     clearTimeout(timeout);
   }
   const body = (await res.json().catch(() => null)) as any;
-  if (!res.ok) throw new MuezzinError(502, `فشلت قراءة الصورة: ${body?.error?.message ?? res.status}`);
+  if (!res.ok) throw new MuezzinError(502, `فشلت القراءة: ${body?.error?.message ?? res.status}`);
 
   const text = (body?.content ?? []).filter((c: any) => c.type === "text").map((c: any) => c.text).join("");
   const start = text.indexOf("{");
   const end = text.lastIndexOf("}");
-  if (start < 0 || end < 0) throw new MuezzinError(422, "لم أستطع فهم الجدول من الصورة. جرّب صورة أوضح.");
+  if (start < 0 || end < 0) throw new MuezzinError(422, "لم أستطع فهم الجدول. جرّب ملفًا أوضح.");
   let parsed: any;
   try {
     parsed = JSON.parse(text.slice(start, end + 1));
   } catch {
-    throw new MuezzinError(422, "لم أستطع فهم الجدول من الصورة. جرّب صورة أوضح.");
+    throw new MuezzinError(422, "لم أستطع فهم الجدول. جرّب ملفًا أوضح.");
   }
 
   const muezzins = await listMuezzins();
-  const byNorm = new Map(muezzins.map((m) => [normalizeName(m.name), m.id]));
+  const cell = (v: unknown): PreviewCell => {
+    const raw = v == null ? "" : String(v).trim();
+    return { raw, muezzinId: raw ? matchMuezzin(raw, muezzins) : null };
+  };
   const srcDays: any[] = Array.isArray(parsed?.days) ? parsed.days : [];
+  let hasMulazim = false;
   const days: PreviewDay[] = DAYS.map((day, i) => {
     const src = srcDays.find((d) => String(d?.day ?? "").trim() === day) ?? srcDays[i] ?? {};
-    const slots = {} as Record<Slot, PreviewCell>;
+    const slots = {} as Record<Slot, PreviewSlot>;
     for (const slot of SLOTS) {
-      const raw = src?.slots?.[slot] ? String(src.slots[slot]).trim() : "";
-      slots[slot] = { raw, muezzinId: raw ? byNorm.get(normalizeName(raw)) ?? null : null };
+      const v = src?.slots?.[slot];
+      // يقبل أيضًا الشكل القديم: اسم مباشر بدل كائن.
+      const m = v && typeof v === "object" ? v.muezzin : v;
+      const z = v && typeof v === "object" ? v.mulazim : null;
+      slots[slot] = { muezzin: cell(m), mulazim: cell(z) };
+      if (slots[slot].mulazim.raw) hasMulazim = true;
     }
+    const empty = { muezzin: cell(null), mulazim: cell(null) };
+    slots.jumuah1 = i === FRIDAY_INDEX ? { muezzin: cell(parsed?.jumuah?.first), mulazim: cell(null) } : empty;
+    slots.jumuah2 = i === FRIDAY_INDEX ? { muezzin: cell(parsed?.jumuah?.second), mulazim: cell(null) } : empty;
     return { day, date: String(src?.date ?? ""), slots };
   });
-  return { title: String(parsed?.title ?? ""), days };
+  return {
+    title: String(parsed?.title ?? ""),
+    days,
+    hasMulazim,
+    suggestedWeekStart: gregorianSundayFromHijri(parsed?.sundayHijri),
+  };
 }
 
 /* ───────────────────────── الإنشاء ───────────────────────── */
@@ -199,10 +269,12 @@ function addDays(key: string, n: number) {
   return d.toISOString().slice(0, 10);
 }
 
+type SlotInput = { muezzin?: number | null; mulazim?: number | null } | number | null | undefined;
+
 export async function saveWeek(input: {
   weekStart: string;
   title?: string;
-  days: Array<{ slots: Partial<Record<Slot, number | null>> }>;
+  days: Array<{ slots: Partial<Record<Slot, SlotInput>> }>;
   userId?: number | null;
 }) {
   await ensureMuezzinSchema();
@@ -212,13 +284,20 @@ export async function saveWeek(input: {
   if (!Array.isArray(input.days) || input.days.length !== 7) throw new MuezzinError(400, "الجدول يجب أن يحتوي ٧ أيام");
 
   const valid = new Set((await listMuezzins()).map((m) => m.id));
-  const rows: Array<{ dateKey: string; slot: Slot; muezzinId: number }> = [];
+  const rows: Array<{ dateKey: string; slot: Slot; role: Role; muezzinId: number }> = [];
   input.days.forEach((d, i) => {
-    for (const slot of SLOTS) {
-      const id = d?.slots?.[slot];
-      if (id == null) continue;
-      if (!valid.has(Number(id))) throw new MuezzinError(400, `مؤذن غير معروف في ${DAYS[i]} / ${SLOT_LABELS[slot]}`);
-      rows.push({ dateKey: addDays(weekStart, i), slot, muezzinId: Number(id) });
+    for (const slot of ALL_SLOTS) {
+      const isJumuah = (JUMUAH_SLOTS as readonly string[]).includes(slot);
+      const v = d?.slots?.[slot];
+      const ids: Record<Role, number | null | undefined> =
+        v && typeof v === "object" ? { muezzin: v.muezzin, mulazim: v.mulazim } : { muezzin: v as number | null | undefined, mulazim: null };
+      for (const role of ROLES) {
+        const id = ids[role];
+        if (id == null) continue;
+        if (isJumuah && (i !== FRIDAY_INDEX || role === "mulazim")) throw new MuezzinError(400, "أذانا الجمعة ليوم الجمعة فقط وبلا ملازم");
+        if (!valid.has(Number(id))) throw new MuezzinError(400, `مؤذن غير معروف في ${DAYS[i]} / ${SLOT_LABELS[slot]} / ${ROLE_LABEL[role]}`);
+        rows.push({ dateKey: addDays(weekStart, i), slot, role, muezzinId: Number(id) });
+      }
     }
   });
   if (!rows.length) throw new MuezzinError(400, "الجدول فارغ");
@@ -232,8 +311,8 @@ export async function saveWeek(input: {
     for (const key of dateKeys) await tx.execute(sql`DELETE FROM muezzin_schedule WHERE date_key = ${key}`);
     for (const r of rows) {
       await tx.execute(sql`
-        INSERT INTO muezzin_schedule (date_key, slot, muezzin_id, batch_id)
-        VALUES (${r.dateKey}, ${r.slot}, ${r.muezzinId}, ${batch.id})`);
+        INSERT INTO muezzin_schedule (date_key, slot, role, muezzin_id, batch_id)
+        VALUES (${r.dateKey}, ${r.slot}, ${r.role}, ${r.muezzinId}, ${batch.id})`);
     }
   });
   return { entries: rows.length, weekStart, weekEnd: addDays(weekStart, 6) };
@@ -243,10 +322,15 @@ export async function getScheduleRange(fromKey: string, days: number) {
   await ensureMuezzinSchema();
   const toKey = addDays(fromKey, days - 1);
   return rowsOf(await db.execute(sql`
-    SELECT s.date_key, s.slot, m.name
+    SELECT s.date_key, s.slot, s.role, m.name
     FROM muezzin_schedule s JOIN muezzins m ON m.id = s.muezzin_id
     WHERE s.date_key BETWEEN ${fromKey} AND ${toKey}
-    ORDER BY s.date_key`)).map((r) => ({ dateKey: String(r.date_key), slot: String(r.slot) as Slot, name: String(r.name) }));
+    ORDER BY s.date_key`)).map((r) => ({
+    dateKey: String(r.date_key),
+    slot: String(r.slot) as Slot,
+    role: (String(r.role ?? "muezzin") as Role),
+    name: String(r.name),
+  }));
 }
 
 /* ───────────────────────── الإعدادات ───────────────────────── */
@@ -352,8 +436,8 @@ export async function sendForDate(dateKey: string) {
   }
 
   const muezzins = await listMuezzins();
-  const duties = new Map<string, Slot[]>();
-  for (const e of entries) duties.set(e.name, [...(duties.get(e.name) ?? []), e.slot]);
+  const duties = new Map<string, Array<{ slot: Slot; role: Role }>>();
+  for (const e of entries) duties.set(e.name, [...(duties.get(e.name) ?? []), { slot: e.slot, role: e.role }]);
 
   const already = new Set(rowsOf(await db.execute(sql`
     SELECT muezzin_name FROM muezzin_send_log WHERE date_key = ${dateKey} AND ok = true AND test_mode = ${testMode}`))
@@ -372,8 +456,12 @@ export async function sendForDate(dateKey: string) {
         VALUES (${dateKey}, ${m.id}, ${name}, NULL, ${testMode}, false, 'لا يوجد رقم')`);
       continue;
     }
-    const order = SLOTS.filter((s) => slots.includes(s));
-    const result = await sendWhatsAppTemplate(to, [name, `${weekdayOf(dateKey)} ${dateKey}`, order.map((s) => SLOT_MESSAGE[s]).join(" ، ")]);
+    // ترتيب المهام حسب وقت الصلاة، مع بيان الدور (مؤذن/ملازم). أذانا الجمعة بلا وصف دور.
+    const ordered = [...slots].sort((a, b) => ALL_SLOT_ORDER[a.slot] - ALL_SLOT_ORDER[b.slot] || ROLES.indexOf(a.role) - ROLES.indexOf(b.role));
+    const dutyText = ordered
+      .map((d) => ((JUMUAH_SLOTS as readonly string[]).includes(d.slot) ? SLOT_MESSAGE[d.slot] : `${SLOT_MESSAGE[d.slot]} (${ROLE_LABEL[d.role]})`))
+      .join(" ، ");
+    const result = await sendWhatsAppTemplate(to, [name, `${weekdayOf(dateKey)} ${dateKey}`, dutyText]);
     await db.execute(sql`INSERT INTO muezzin_send_log (date_key, muezzin_id, muezzin_name, phone, test_mode, ok, detail)
       VALUES (${dateKey}, ${m.id}, ${name}, ${to}, ${testMode}, ${result.ok}, ${result.detail})`);
     if (result.ok) sent++;

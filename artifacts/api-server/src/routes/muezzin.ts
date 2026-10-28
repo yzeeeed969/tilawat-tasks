@@ -69,11 +69,11 @@ router.patch("/muezzin-schedule/muezzins/:id", requireAdmin, handle(async (req, 
   res.json({ ok: true });
 }));
 
-// الصورة تُرسل خامًا (image/*) لا JSON — محلّل JSON العام محدود بـ 100KB.
+// الملف (صورة أو PDF) يُرسل خامًا لا JSON — محلّل JSON العام محدود بـ 100KB.
 router.post(
   "/muezzin-schedule/read",
   requireAdmin,
-  express.raw({ type: "image/*", limit: "12mb" }),
+  express.raw({ type: ["image/*", "application/pdf"], limit: "20mb" }),
   handle(async (req, res) => {
     const mime = String(req.headers["content-type"] ?? "").split(";")[0].trim();
     res.json(await readScheduleImage(Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0), mime));

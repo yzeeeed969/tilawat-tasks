@@ -45,7 +45,11 @@ async function runMuezzinSchemaEnsure() {
       created_at timestamp NOT NULL DEFAULT now()
     )
   `);
-  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_muezzin_schedule_slot ON muezzin_schedule(date_key, slot)`);
+  // الدور: مؤذن أو ملازم (إضافة فقط — الصفوف القائمة تصبح «مؤذن»).
+  await db.execute(sql`ALTER TABLE muezzin_schedule ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'muezzin'`);
+  // الفهرس الفريد صار (اليوم، الصلاة، الدور) بدل (اليوم، الصلاة) ليتسع للملازم.
+  await db.execute(sql`DROP INDEX IF EXISTS uq_muezzin_schedule_slot`);
+  await db.execute(sql`CREATE UNIQUE INDEX IF NOT EXISTS uq_muezzin_schedule_slot_role ON muezzin_schedule(date_key, slot, role)`);
 
   await db.execute(sql`
     CREATE TABLE IF NOT EXISTS muezzin_send_log (
