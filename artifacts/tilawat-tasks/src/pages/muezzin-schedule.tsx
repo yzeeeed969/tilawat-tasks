@@ -13,7 +13,8 @@ import { cn } from "@/lib/utils";
 // «جدول المؤذنين» (للمدير): رفع صورة الجدول الأسبوعي الرسمي ← قراءة آلية ← معاينة بجانب الصورة ← إنشاء.
 // الإرسال اليومي لكل مؤذن بمهامه فقط عبر واتساب الرسمي — وضع التجربة مفعّل افتراضيًا.
 
-type Slot = "fajr1" | "fajr2" | "dhuhr" | "asr" | "maghrib" | "isha";
+type Slot = "fajr1" | "fajr2" | "dhuhr" | "asr" | "maghrib" | "isha" | "jumuah1" | "jumuah2";
+type Role = "muezzin" | "mulazim";
 const SLOTS: Array<{ key: Slot; label: string }> = [
   { key: "fajr1", label: "الفجر 1" },
   { key: "fajr2", label: "الفجر 2" },
@@ -22,7 +23,11 @@ const SLOTS: Array<{ key: Slot; label: string }> = [
   { key: "maghrib", label: "المغرب" },
   { key: "isha", label: "العشاء" },
 ];
-const SLOT_LABEL = Object.fromEntries(SLOTS.map((s) => [s.key, s.label])) as Record<Slot, string>;
+const ROLES: Array<{ key: Role; label: string }> = [
+  { key: "muezzin", label: "مؤذن" },
+  { key: "mulazim", label: "ملازم" },
+];
+const FRIDAY = 5;
 
 type Muezzin = { id: number; name: string; phone: string | null; isActive: boolean };
 type Settings = { sendHour: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null };
@@ -31,12 +36,14 @@ type Setup = {
   settings: Settings;
   status: { vision: boolean; whatsapp: boolean };
   muezzins: Muezzin[];
-  upcoming: Array<{ dateKey: string; slot: Slot; name: string }>;
+  upcoming: Array<{ dateKey: string; slot: Slot; role: Role; name: string }>;
   log: Array<{ id: number; dateKey: string; name: string; phone: string | null; testMode: boolean; ok: boolean; detail: string; createdAt: string }>;
 };
-type PreviewDay = { day: string; date: string; slots: Record<Slot, { raw: string; muezzinId: number | null }> };
-type Preview = { title: string; days: PreviewDay[] };
-type Grid = Array<Record<Slot, string>>; // قيمة الخانة: معرّف المؤذن كنص، أو "" للفارغ
+type Cell = { raw: string; muezzinId: number | null };
+type PreviewDay = { day: string; date: string; slots: Record<Slot, Record<Role, Cell>> };
+type Preview = { title: string; days: PreviewDay[]; hasMulazim: boolean; suggestedWeekStart: string | null };
+type Grid = Array<Record<Slot, Record<Role, string>>>; // قيمة الخانة: معرّف المؤذن كنص، أو "" للفارغ
+const ALL_SLOT_KEYS: Slot[] = ["fajr1", "fajr2", "dhuhr", "asr", "maghrib", "isha", "jumuah1", "jumuah2"];
 
 const BASE = "/api/muezzin-schedule";
 
@@ -108,7 +115,7 @@ export default function MuezzinSchedulePage() {
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
         <h2 className="text-3xl font-bold text-foreground tracking-tight">جدول المؤذنين</h2>
-        <p className="text-muted-foreground mt-2">ارفع صورة الجدول الأسبوعي، راجع القراءة بجانب الصورة، ثم «إنشاء». يصل كل مؤذن مهامه يوميًا على واتساب.</p>
+        <p className="text-muted-foreground mt-2">ارفع الجدول الأسبوعي (صورة أو PDF)، راجع القراءة بجانبه، ثم «إنشاء». يصل كل مؤذن مهامه يوميًا على واتساب.</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <StatusPill ok={data.status.vision} on="قراءة الصور جاهزة" off="قراءة الصور غير مفعّلة" />
           <StatusPill ok={data.status.whatsapp} on="واتساب مربوط" off="واتساب غير مربوط" />
@@ -133,20 +140,47 @@ export default function MuezzinSchedulePage() {
 
 /* ───────────────────────── الإدخال الأسبوعي ───────────────────────── */
 
+function NameSelect({ value, options, bad, raw, onChange }: { value: string; options: Muezzin[]; bad: boolean; raw: string; onChange: (v: string) => void }) {
+  return (
+    <div>
+      <select
+        className={cn(
+          "w-full min-w-0 appearance-none rounded border bg-background px-1.5 py-1 text-center text-xs leading-tight",
+          bad && "border-red-400 bg-red-50 text-red-700",
+          !value && !bad && "text-muted-foreground",
+        )}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        title={raw ? `المقروء: ${raw}` : undefined}
+      >
+        <option value="">—</option>
+        {options.map((m) => <option key={m.id} value={String(m.id)}>{m.name}{m.isActive ? "" : " (موقوف)"}</option>)}
+      </select>
+      {bad && <div className="mt-0.5 truncate text-[10px] text-red-700" title={raw}>المقروء: {raw}</div>}
+    </div>
+  );
+}
+
 function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void; toast: any }) {
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
-  const [blob, setBlob] = useState<Blob | null>(null);
+  const [fileUrl, setFileUrl] = useState<string | null>(null);
+  const [isPdf, setIsPdf] = useState(false);
+  const [upload, setUpload] = useState<{ blob: Blob; type: string } | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [grid, setGrid] = useState<Grid | null>(null);
   const [weekStart, setWeekStart] = useState(() => nextSunday(data.today));
+  const [autoDate, setAutoDate] = useState(false);
   // كل المؤذنين في القائمة (الموقوف يظهر بعلامة) — كي لا تختفي خانة مطابَقة لمؤذن موقوف.
   const options = [...data.muezzins].sort((a, b) => Number(b.isActive) - Number(a.isActive));
 
   const read = useMutation({
-    mutationFn: () => api<Preview>(`${BASE}/read`, { method: "POST", body: blob!, headers: { "Content-Type": "image/jpeg" } }),
+    mutationFn: () => api<Preview>(`${BASE}/read`, { method: "POST", body: upload!.blob, headers: { "Content-Type": upload!.type } }),
     onSuccess: (p) => {
       setPreview(p);
-      setGrid(p.days.map((d) => Object.fromEntries(SLOTS.map((s) => [s.key, d.slots[s.key].muezzinId ? String(d.slots[s.key].muezzinId) : ""])) as Record<Slot, string>));
+      setGrid(p.days.map((d) => Object.fromEntries(ALL_SLOT_KEYS.map((s) => [s, {
+        muezzin: d.slots[s]?.muezzin?.muezzinId ? String(d.slots[s].muezzin.muezzinId) : "",
+        mulazim: d.slots[s]?.mulazim?.muezzinId ? String(d.slots[s].mulazim.muezzinId) : "",
+      }])) as Grid[number]));
+      if (p.suggestedWeekStart) { setWeekStart(p.suggestedWeekStart); setAutoDate(true); } else setAutoDate(false);
     },
     onError: (e: Error) => toast({ title: "تعذّرت القراءة", description: e.message, variant: "destructive" }),
   });
@@ -157,33 +191,50 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
       body: JSON.stringify({
         weekStart,
         title: preview?.title ?? null,
-        days: grid!.map((row) => ({ slots: Object.fromEntries(SLOTS.map((s) => [s.key, row[s.key] ? Number(row[s.key]) : null])) })),
+        days: grid!.map((row, i) => ({
+          slots: Object.fromEntries(ALL_SLOT_KEYS
+            .filter((s) => i === FRIDAY || (s !== "jumuah1" && s !== "jumuah2"))
+            .map((s) => [s, {
+              muezzin: row[s].muezzin ? Number(row[s].muezzin) : null,
+              mulazim: s.startsWith("jumuah") ? null : row[s].mulazim ? Number(row[s].mulazim) : null,
+            }])),
+        })),
       }),
     }),
     onSuccess: (r) => {
-      toast({ title: "تم إنشاء الجدول ✓", description: `${r.entries} أذانًا من ${r.weekStart} إلى ${r.weekEnd}` });
-      setPreview(null); setGrid(null); setBlob(null); setImageUrl(null);
+      toast({ title: "تم إنشاء الجدول ✓", description: `${r.entries} خانة من ${r.weekStart} إلى ${r.weekEnd}` });
+      setPreview(null); setGrid(null); setUpload(null); setFileUrl(null); setAutoDate(false);
       onSaved();
     },
     onError: (e: Error) => toast({ title: "تعذّر الإنشاء", description: e.message, variant: "destructive" }),
   });
 
-  // خانة «تحتاج تصحيح»: الصورة فيها اسم لكن لم يُختر مؤذن.
+  const roles = preview?.hasMulazim ? ROLES : ROLES.slice(0, 1);
+  // خانة «تحتاج تصحيح»: الملف فيه اسم لكن لم يُختر مؤذن.
+  const isBad = (i: number, s: Slot, r: Role) => Boolean(preview?.days[i]?.slots[s]?.[r]?.raw) && !grid?.[i]?.[s]?.[r];
   const problems = useMemo(() => {
     if (!preview || !grid) return 0;
     let n = 0;
-    preview.days.forEach((d, i) => SLOTS.forEach((s) => { if (d.slots[s.key].raw && !grid[i][s.key]) n++; }));
+    preview.days.forEach((_, i) => ALL_SLOT_KEYS.forEach((s) => ROLES.forEach((r) => { if (isBad(i, s, r.key)) n++; })));
     return n;
   }, [preview, grid]);
   const isSunday = new Date(`${weekStart}T12:00:00Z`).getUTCDay() === 0;
+  const setCell = (i: number, s: Slot, r: Role, v: string) =>
+    setGrid((g) => g!.map((row, ri) => (ri === i ? { ...row, [s]: { ...row[s], [r]: v } } : row)));
 
   async function onFile(file?: File) {
     if (!file) return;
     try {
-      const r = await shrinkImage(file);
-      setBlob(r.blob); setImageUrl(r.url); setPreview(null); setGrid(null);
+      setPreview(null); setGrid(null); setAutoDate(false);
+      if (file.type === "application/pdf") {
+        if (file.size > 18 * 1024 * 1024) throw new Error("ملف PDF أكبر من 18MB");
+        setUpload({ blob: file, type: "application/pdf" }); setFileUrl(URL.createObjectURL(file)); setIsPdf(true);
+      } else {
+        const r = await shrinkImage(file);
+        setUpload({ blob: r.blob, type: "image/jpeg" }); setFileUrl(r.url); setIsPdf(false);
+      }
     } catch (e) {
-      toast({ title: "تعذّر فتح الصورة", description: (e as Error).message, variant: "destructive" });
+      toast({ title: "تعذّر فتح الملف", description: (e as Error).message, variant: "destructive" });
     }
   }
 
@@ -191,12 +242,12 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
     <div className="space-y-4">
       <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><ImageUp className="h-5 w-5 text-sidebar-primary" />١) صورة الجدول الأسبوعي</CardTitle>
-          <CardDescription>الصورة الرسمية كما تُنشر (من الأحد إلى السبت).</CardDescription>
+          <CardTitle className="flex items-center gap-2"><ImageUp className="h-5 w-5 text-sidebar-primary" />١) ملف الجدول الأسبوعي</CardTitle>
+          <CardDescription>صورة أو PDF — بالمؤذن فقط، أو بالمؤذن والملازم. الأسماء المختصرة («خوجة»، «الدغريري») تُطابَق تلقائيًا.</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
-          <Input type="file" accept="image/*" className="max-w-xs" onChange={(e) => onFile(e.target.files?.[0])} />
-          <Button disabled={!blob || read.isPending || !data.status.vision} onClick={() => read.mutate()}>
+          <Input type="file" accept="image/*,application/pdf" className="max-w-xs" onChange={(e) => onFile(e.target.files?.[0])} />
+          <Button disabled={!upload || read.isPending || !data.status.vision} onClick={() => read.mutate()}>
             {read.isPending ? <><Loader2 className="ml-2 h-4 w-4 animate-spin" />جارٍ القراءة…</> : "قراءة ومعاينة"}
           </Button>
           {!data.status.vision && <span className="text-sm text-amber-700">أضف مفتاح ANTHROPIC_API_KEY في Railway لتفعيل القراءة.</span>}
@@ -206,60 +257,91 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
       {preview && grid && (
         <Card>
           <CardHeader>
-            <CardTitle>٢) المعاينة — قارن بالصورة وصحّح أي خانة</CardTitle>
+            <CardTitle>٢) المعاينة — قارن بالملف وصحّح أي خانة</CardTitle>
             <CardDescription>
               {preview.title && <span className="block">المقروء: {preview.title}</span>}
-              الخانة الحمراء: اسم في الصورة لم يُطابَق مع قائمة المؤذنين — اختر الاسم الصحيح.
+              الخانة الحمراء: اسم لم يُطابَق مع مؤذن واحد بعينه (غير موجود أو يحتمل أكثر من مؤذن) — اختر الاسم الصحيح.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(0,3fr)]">
-              {imageUrl && <img src={imageUrl} alt="صورة الجدول" className="w-full rounded-md border" />}
-              <div className="overflow-x-auto">
-                <table className="w-full border-collapse text-sm">
+            <div className="grid gap-4 xl:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
+              {fileUrl && (
+                <div className="xl:sticky xl:top-4 xl:self-start">
+                  {isPdf
+                    ? <iframe src={fileUrl} title="ملف الجدول" className="h-[640px] w-full rounded-md border" />
+                    : <img src={fileUrl} alt="صورة الجدول" className="w-full rounded-md border" />}
+                </div>
+              )}
+              <div>
+                <table className="w-full table-fixed border-collapse text-xs">
+                  <colgroup>
+                    <col className="w-[64px]" />
+                    {preview.hasMulazim && <col className="w-[44px]" />}
+                    {SLOTS.map((s) => <col key={s.key} />)}
+                  </colgroup>
                   <thead>
                     <tr className="bg-muted/40">
-                      <th className="border p-1.5">اليوم</th>
-                      {SLOTS.map((s) => <th key={s.key} className="border p-1.5">{s.label}</th>)}
+                      <th className="border p-1">اليوم</th>
+                      {preview.hasMulazim && <th className="border p-1">الدور</th>}
+                      {SLOTS.map((s) => <th key={s.key} className="border p-1">{s.label}</th>)}
                     </tr>
                   </thead>
                   <tbody>
-                    {preview.days.map((d, i) => (
-                      <tr key={d.day}>
-                        <th className="border bg-muted/20 p-1.5 whitespace-nowrap">{d.day}<div className="text-xs font-normal text-muted-foreground">{addDays(weekStart, i)}</div></th>
-                        {SLOTS.map((s) => {
-                          const cell = d.slots[s.key];
-                          const bad = Boolean(cell.raw) && !grid[i][s.key];
-                          return (
-                            <td key={s.key} className={cn("border p-1", bad && "bg-red-50")}>
-                              <select
-                                className={cn("w-full min-w-[104px] rounded border bg-background px-1 py-1 text-sm", bad && "border-red-400 text-red-700")}
-                                value={grid[i][s.key]}
-                                onChange={(e) => setGrid((g) => g!.map((row, ri) => (ri === i ? { ...row, [s.key]: e.target.value } : row)))}
-                              >
-                                <option value="">— فارغ —</option>
-                                {options.map((m) => <option key={m.id} value={String(m.id)}>{m.name}{m.isActive ? "" : " (موقوف)"}</option>)}
-                              </select>
-                              {bad && <div className="mt-0.5 text-[11px] text-red-700">المقروء: {cell.raw}</div>}
-                            </td>
-                          );
-                        })}
+                    {preview.days.map((d, i) => roles.map((r, ri) => (
+                      <tr key={`${d.day}-${r.key}`} className={cn(ri === roles.length - 1 && "border-b-2")}>
+                        {ri === 0 && (
+                          <th rowSpan={roles.length} className="border bg-muted/20 p-1 font-semibold">
+                            {d.day}<div className="text-[10px] font-normal text-muted-foreground">{addDays(weekStart, i)}</div>
+                          </th>
+                        )}
+                        {preview.hasMulazim && <td className={cn("border p-1 text-center", r.key === "mulazim" && "text-muted-foreground")}>{r.label}</td>}
+                        {SLOTS.map((s) => (
+                          <td key={s.key} className={cn("border p-0.5", isBad(i, s.key, r.key) && "bg-red-50")}>
+                            <NameSelect
+                              value={grid[i][s.key][r.key]}
+                              options={options}
+                              bad={isBad(i, s.key, r.key)}
+                              raw={d.slots[s.key][r.key].raw}
+                              onChange={(v) => setCell(i, s.key, r.key, v)}
+                            />
+                          </td>
+                        ))}
                       </tr>
-                    ))}
+                    )))}
                   </tbody>
                 </table>
+
+                <div className="mt-3 flex flex-wrap items-center gap-3 rounded-md border p-2 text-xs">
+                  <span className="font-semibold">أذان الجمعة ({addDays(weekStart, FRIDAY)}):</span>
+                  {(["jumuah1", "jumuah2"] as const).map((s, k) => (
+                    <label key={s} className="flex items-center gap-1.5">
+                      {k === 0 ? "الأول" : "الثاني"}
+                      <div className="w-36">
+                        <NameSelect
+                          value={grid[FRIDAY][s].muezzin}
+                          options={options}
+                          bad={isBad(FRIDAY, s, "muezzin")}
+                          raw={preview.days[FRIDAY].slots[s].muezzin.raw}
+                          onChange={(v) => setCell(FRIDAY, s, "muezzin", v)}
+                        />
+                      </div>
+                    </label>
+                  ))}
+                </div>
               </div>
             </div>
 
             <div className="flex flex-wrap items-center gap-3 border-t pt-4">
               <label className="text-sm font-medium">تاريخ يوم الأحد (بداية الأسبوع):</label>
-              <Input type="date" className="w-44" value={weekStart} onChange={(e) => setWeekStart(e.target.value)} />
+              <Input type="date" className="w-44" value={weekStart} onChange={(e) => { setWeekStart(e.target.value); setAutoDate(false); }} />
               {!isSunday && <span className="text-sm text-red-700">التاريخ المختار ليس يوم أحد</span>}
+              {autoDate && isSunday && <span className="text-sm text-emerald-700">حُدِّد تلقائيًا من التاريخ الهجري المكتوب في الجدول ✓</span>}
+              {!autoDate && isSunday && <span className="text-sm text-amber-700">تأكد أن هذا هو أحد الأسبوع المكتوب في الجدول</span>}
               <Button
                 className="bg-amber-600 hover:bg-amber-700"
                 disabled={problems > 0 || !isSunday || save.isPending}
                 onClick={() => {
-                  if (window.confirm(`هل راجعت الجدول مع الصورة وتأكدت أنه صحيح؟\nسيُعتمد للأسبوع ${weekStart} ← ${addDays(weekStart, 6)}`)) save.mutate();
+                  if (window.confirm(`هل راجعت الجدول مع الملف وتأكدت أنه صحيح؟\nسيُعتمد للأسبوع ${weekStart} ← ${addDays(weekStart, 6)}`)) save.mutate();
                 }}
               >
                 {save.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : null}إنشاء
@@ -278,22 +360,35 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
 }
 
 function UpcomingCard({ data }: { data: Setup }) {
-  const byDate = new Map<string, Array<{ slot: Slot; name: string }>>();
-  data.upcoming.forEach((u) => byDate.set(u.dateKey, [...(byDate.get(u.dateKey) ?? []), { slot: u.slot, name: u.name }]));
+  const find = (d: string, s: Slot, r: Role) => data.upcoming.find((u) => u.dateKey === d && u.slot === s && u.role === r)?.name;
   const dates = Array.from({ length: 8 }, (_, i) => addDays(data.today, i));
   return (
     <Card>
       <CardHeader><CardTitle>الجدول المعتمد للأيام القادمة</CardTitle></CardHeader>
-      <CardContent className="overflow-x-auto">
-        <table className="w-full border-collapse text-sm">
+      <CardContent>
+        <table className="w-full table-fixed border-collapse text-xs">
+          <colgroup><col className="w-[84px]" />{SLOTS.map((s) => <col key={s.key} />)}</colgroup>
           <thead><tr className="bg-muted/40"><th className="border p-1.5">اليوم</th>{SLOTS.map((s) => <th key={s.key} className="border p-1.5">{s.label}</th>)}</tr></thead>
           <tbody>
             {dates.map((d) => {
-              const rows = byDate.get(d) ?? [];
+              const any = data.upcoming.some((u) => u.dateKey === d);
+              const isFriday = new Date(`${d}T12:00:00Z`).getUTCDay() === FRIDAY;
               return (
-                <tr key={d} className={cn(!rows.length && "text-muted-foreground")}>
-                  <th className="border p-1.5 whitespace-nowrap">{DAY_NAMES[new Date(`${d}T12:00:00Z`).getUTCDay()]}<div className="text-xs font-normal">{d}</div></th>
-                  {SLOTS.map((s) => <td key={s.key} className="border p-1.5 text-center">{rows.find((r) => r.slot === s.key)?.name ?? (rows.length ? "—" : "")}</td>)}
+                <tr key={d} className={cn(!any && "text-muted-foreground")}>
+                  <th className="border p-1.5">{DAY_NAMES[new Date(`${d}T12:00:00Z`).getUTCDay()]}<div className="text-[10px] font-normal">{d}</div></th>
+                  {SLOTS.map((s) => {
+                    const m = find(d, s.key, "muezzin");
+                    const z = find(d, s.key, "mulazim");
+                    const j1 = s.key === "dhuhr" && isFriday ? find(d, "jumuah1", "muezzin") : undefined;
+                    const j2 = s.key === "dhuhr" && isFriday ? find(d, "jumuah2", "muezzin") : undefined;
+                    return (
+                      <td key={s.key} className="border p-1.5 text-center">
+                        {m ?? (any && !j1 ? "—" : "")}
+                        {z && <div className="text-[10px] text-muted-foreground">ملازم: {z}</div>}
+                        {(j1 || j2) && <div className="text-[10px]">الجمعة: {j1 ?? "—"} / {j2 ?? "—"}</div>}
+                      </td>
+                    );
+                  })}
                 </tr>
               );
             })}
