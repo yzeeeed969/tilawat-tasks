@@ -31,6 +31,7 @@ import {
   Radar,
   Upload,
   TrendingUp,
+  Megaphone,
 } from "lucide-react";
 import { NotificationsPanel } from "@/components/notifications-panel";
 import { HelpButton } from "@/components/help-button";
@@ -310,6 +311,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
         { href: "/weekly-schedule", label: "إنشاء الجدول الأسبوعي", icon: CalendarPlus, show: isAdmin },
         { href: "/publishing-template", label: "قالب النشر", icon: ClipboardList, show: isAdmin },
+        { href: "/muezzin-schedule", label: "جدول المؤذنين", icon: Megaphone, show: isAdmin },
         { href: "/settings/telegram", label: "إشعارات Telegram", icon: Bell, show: canManageSettings },
         { href: "/settings/general", label: "المستخدمون والصلاحيات", icon: ShieldCheck, show: canManageSettings },
       ].filter((item) => item.show),

@@ -19,6 +19,7 @@ import YoutubeMonitorPage from "@/pages/youtube-monitor";
 import YoutubePerformancePage from "@/pages/youtube-performance";
 import PublishingTemplatePage from "@/pages/publishing-template";
 import WeeklySchedulePage from "@/pages/weekly-schedule";
+import MuezzinSchedulePage from "@/pages/muezzin-schedule";
 import TelegramMonitorPage from "@/pages/telegram-monitor";
 import InstagramMonitorPage from "@/pages/instagram-monitor";
 import CrosspostMonitorPage from "@/pages/crosspost-monitor";
@@ -169,6 +170,11 @@ function AppRouter() {
       <Route path="/weekly-schedule">
         <ProtectedRoute>
           <AppLayout><WeeklySchedulePage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/muezzin-schedule">
+        <ProtectedRoute>
+          <AppLayout><MuezzinSchedulePage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/publishing-template">
