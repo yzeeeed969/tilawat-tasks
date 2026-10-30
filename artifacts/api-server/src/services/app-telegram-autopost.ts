@@ -323,9 +323,10 @@ async function handlePost(id: number, html: string, channel: { id: number; chatI
     const g = parsed.title.match(/(\d{1,2})-(\d{1,2})-(20\d\d)\s*$/);
     const gregorianKey = g ? `${Number(g[1])}-${Number(g[2])}-${g[3]}` : null;
     const isFriday = gregorianKey ? isFridayGregorian(gregorianKey) : /^\S+\s+الجمعة/.test(parsed.title.trim());
-    const missing = await missingPreviousStage(ph.prayer, { hijriDay: ph.day, hijriMonth: ph.month, gregorianKey, isFriday });
+    const missing = await missingPreviousStage(ph.prayer, { hijriDay: ph.day, hijriMonth: ph.month, gregorianKey, isFriday, mosque });
     if (missing) {
-      await holdFor(id, parsed.title, post.reciter, `بانتظار نشر ${STAGE_LABEL[missing] ?? missing} للمسجدين`, `مضت ساعة ولم يُنشر ${STAGE_LABEL[missing] ?? missing} للمسجدين (الحرام والنبوي) في القناة.`);
+      const what = missing.startsWith("خطبة المسجد") ? missing : `${STAGE_LABEL[missing] ?? missing} للمسجدين`;
+      await holdFor(id, parsed.title, post.reciter, `بانتظار نشر ${what}`, `مضت ساعة ولم يُنشر ${what} في القناة.`);
       return;
     }
   }

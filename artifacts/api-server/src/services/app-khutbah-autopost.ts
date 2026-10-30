@@ -15,7 +15,7 @@
 //  • الحديث فقط: تاريخ الخطبة الميلادي في العنوان (مثل 30-10-2026) هو اليوم أو الأمس بتوقيت الرياض.
 //  • لا تكرار: سجل app_tg_khutbah_autopost بمفتاح فريد، وإن نُشرت الخطبة يدويًا في القناة (رابطها /m/<الرقم>)
 //    لا تُنشر مرة ثانية.
-//  • المكي قبل النبوي: خطبة المسجد النبوي تنتظر نشر خطبة المسجد الحرام لنفس اليوم، وبعد ساعة تنبيه واحد للمدير.
+//  • الترتيب (الإصدار 74): خطبة المكي ← صلاة جمعة المكي ← خطبة النبوي ← صلاة جمعة النبوي، وبعد ساعة انتظار تنبيه واحد للمدير.
 //  • لا نشر ناقص: إن تعذّر تحديد الخطيب أو الملف ⇐ لا نشر + تنبيه للمدير.
 
 import { sql } from "drizzle-orm";
@@ -23,7 +23,7 @@ import { db } from "@workspace/db";
 import { sendTelegramAudioUpload } from "./telegram";
 import { processTelegramPost, storeChannelUpdate } from "./telegram-channel-monitor";
 import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
-import { hijriOfGregorian, missingPreviousStage } from "./app-autopost-order";
+import { hijriOfGregorian, missingPreviousStage, prayerPostedFor } from "./app-autopost-order";
 
 const SITE = "https://tilawatalharamain.com";
 // القسمان الرئيسيان في «منوعات»؛ تحت كل منهما قسم لكل سنة هجرية (يُختار الأحدث تلقائيًا).
@@ -165,14 +165,7 @@ async function alertAdmin(e: Entry, reason: string) {
   }).catch(() => {});
 }
 
-async function makkahPostedFor(dateKey: string, makkahEntries: Entry[]): Promise<boolean> {
-  const [own] = rowsOf(await db.execute(sql`SELECT 1 FROM app_tg_khutbah_autopost WHERE mosque = 'makkah' AND date_key = ${dateKey} AND status = 'posted' LIMIT 1`));
-  if (own) return true;
-  for (const m of makkahEntries.filter((x) => x.dateKey === dateKey)) if (await postedInChannel(m.id)) return true;
-  return false;
-}
-
-async function handle(e: Entry, channel: { chatId: string }, makkahEntries: Entry[]) {
+async function handle(e: Entry, channel: { chatId: string }) {
   if (!(await claim(e.id))) return;
   if (await postedInChannel(e.id)) return finish(e, "skipped", "نُشرت في القناة يدويًا");
   const fail = async (reason: string, final = true) => { await finish(e, "failed", reason); if (final) await alertAdmin(e, reason); };
@@ -185,14 +178,15 @@ async function handle(e: Entry, channel: { chatId: string }, makkahEntries: Entr
       mosque = ${e.mosque}, date_key = ${e.dateKey} WHERE misc_id = ${e.id}`);
     return;
   }
-  if (e.mosque === "madinah" && !(await makkahPostedFor(e.dateKey, makkahEntries))) {
-    await db.execute(sql`UPDATE app_tg_khutbah_autopost SET status = 'waiting', reason = 'بانتظار خطبة المسجد الحرام', title = ${e.title}, reciter = ${e.reciter},
+  // خطبة النبوي بعد صلاة جمعة المسجد الحرام (الإصدار 74: خطبة المكي ← صلاته ← خطبة النبوي ← صلاته).
+  if (e.mosque === "madinah" && h && !(await prayerPostedFor("جمعة", "haram", h.day, h.month))) {
+    await db.execute(sql`UPDATE app_tg_khutbah_autopost SET status = 'waiting', reason = 'بانتظار صلاة الجمعة في المسجد الحرام', title = ${e.title}, reciter = ${e.reciter},
       mosque = ${e.mosque}, date_key = ${e.dateKey} WHERE misc_id = ${e.id}`);
     const [row] = rowsOf(await db.execute(sql`SELECT created_at < now() - interval '60 minutes' AS late FROM app_tg_khutbah_autopost WHERE misc_id = ${e.id}`));
     if (row?.late) {
       await notifyTelegramAdminsGeneric({
-        title: "خطبة المسجد النبوي تنتظر خطبة المسجد الحرام",
-        lines: [`الخطبة: ${e.title}`, `الرابط: ${SITE}/m/${e.id}`, "مضت ساعة ولم تُنشر خطبة المسجد الحرام لنفس اليوم.", "", "ستُنشر النبوية تلقائيًا فور نشر المكية. وإن أردت نشرها الآن فانشرها يدويًا في القناة."],
+        title: "خطبة المسجد النبوي تنتظر صلاة الجمعة في المسجد الحرام",
+        lines: [`الخطبة: ${e.title}`, `الرابط: ${SITE}/m/${e.id}`, "مضت ساعة ولم تُنشر صلاة الجمعة في المسجد الحرام.", "", "ستُنشر تلقائيًا فور نشرها (تلقائيًا أو يدويًا في القناة)."],
         alertKey: `app_khutbah_order:${e.id}`,
       }).catch(() => {});
     }
@@ -240,7 +234,7 @@ export async function runKhutbahAutopost(): Promise<{ posted: number }> {
     let posted = 0;
     for (const e of [...makkah, ...madinah]) {
       if (handled.has(e.id) || !isRecent(e.dateKey)) continue;
-      await handle(e, channel, makkah).catch(() => {});
+      await handle(e, channel).catch(() => {});
       const [row] = rowsOf(await db.execute(sql`SELECT status FROM app_tg_khutbah_autopost WHERE misc_id = ${e.id}`));
       if (row?.status === "posted") posted += 1;
     }

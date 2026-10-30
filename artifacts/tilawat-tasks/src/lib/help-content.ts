@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 74, date: "2026-10-30",
+    items: [
+      { text: "ترتيب الجمعة في قناة التطبيق: خطبة المسجد الحرام ثم صلاته، ثم خطبة المسجد النبوي ثم صلاته.", adminOnly: true },
+    ],
+  },
+  {
     version: 73, date: "2026-10-30",
     items: [
       { text: "ترتيب النشر التلقائي في قناة التطبيق: الفجر ثم (يوم الجمعة: الخطبة ثم الصلاة) ثم المغرب ثم العشاء، ولا تُنشر صلاة قبل نشر السابقة للمسجدين.", adminOnly: true },

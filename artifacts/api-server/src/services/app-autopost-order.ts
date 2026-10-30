@@ -1,6 +1,6 @@
 // ترتيب النشر التلقائي في قناة «تطبيق تلاوات الحرمين» خلال اليوم (الإصدار 73، قرار المدير 30-10-2026):
 //   الفجر (المكي ثم النبوي)
-//   ← يوم الجمعة: الخطبة (المكي ثم النبوي) ← صلاة الجمعة (المكي ثم النبوي)
+//   ← يوم الجمعة (الإصدار 74): خطبة المكي ← صلاة المكي ← خطبة النبوي ← صلاة النبوي
 //   ← المغرب (المكي ثم النبوي)
 //   ← العشاء (المكي ثم النبوي)
 // لا تُنشر مرحلة قبل أن تُنشر المرحلة السابقة للمسجدين معًا (تلقائيًا أو يدويًا في القناة).
@@ -14,7 +14,7 @@ function rowsOf<T = any>(result: any): T[] {
 }
 
 const PRAYER_CODE: Record<string, string> = { "فجر": "fajr", "مغرب": "maghrib", "عشاء": "isha", "جمعة": "jumuah" };
-export const STAGE_LABEL: Record<string, string> = { "فجر": "الفجر", "خطبة": "خطبة الجمعة", "جمعة": "صلاة الجمعة", "مغرب": "المغرب", "عشاء": "العشاء" };
+export const STAGE_LABEL: Record<string, string> = { "خطبة المسجد الحرام": "خطبة المسجد الحرام", "خطبة المسجد النبوي": "خطبة المسجد النبوي", "فجر": "الفجر", "خطبة": "خطبة الجمعة", "جمعة": "صلاة الجمعة", "مغرب": "المغرب", "عشاء": "العشاء" };
 
 // المرحلة السابقة لكل مرحلة. isFriday: هل اليوم جمعة.
 export function previousStage(stage: string, isFriday: boolean): string | null {
@@ -55,6 +55,27 @@ async function khutbahsPostedBoth(gregorianKey: string): Promise<boolean> {
   return Number(manual[0]?.n ?? 0) >= 2;
 }
 
+// هل نُشرت صلاة معيّنة لمسجد واحد؟
+export async function prayerPostedFor(prayer: string, mosque: "haram" | "nabawi", day: number, month: number): Promise<boolean> {
+  const code = PRAYER_CODE[prayer] ?? prayer;
+  const [row] = rowsOf(await db.execute(sql`
+    SELECT 1 FROM telegram_channel_posts WHERE kind = 'recitation' AND extracted_prayer = ${code} AND mosque = ${mosque}
+      AND hijri_day = ${day} AND hijri_month = ${month} AND published_at > now() - interval '3 days' LIMIT 1`));
+  if (row) return true;
+  const [own] = rowsOf(await db.execute(sql`
+    SELECT 1 FROM app_tg_autopost WHERE status = 'posted' AND prayer = ${prayer} AND mosque = ${mosque === "haram" ? "makkah" : "madinah"}
+      AND hijri_key LIKE ${`${day}-${month}-%`} AND posted_at > now() - interval '3 days' LIMIT 1`).catch(() => [] as any));
+  return Boolean(own);
+}
+
+// هل نُشرت خطبة مسجد واحد (تلقائيًا، أو اكتشف النظام أنها نُشرت يدويًا)؟
+export async function khutbahPostedFor(mosque: "makkah" | "madinah", gregorianKey: string): Promise<boolean> {
+  const [row] = rowsOf(await db.execute(sql`
+    SELECT 1 FROM app_tg_khutbah_autopost WHERE mosque = ${mosque} AND date_key = ${gregorianKey}
+      AND (status = 'posted' OR reason = 'نُشرت في القناة يدويًا') LIMIT 1`).catch(() => [] as any));
+  return Boolean(row);
+}
+
 // اليوم الهجري (أم القرى) لتاريخ ميلادي «يوم-شهر-سنة».
 const UMM_AL_QURA = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura-nu-latn", { timeZone: "Asia/Riyadh", day: "numeric", month: "numeric", year: "numeric" });
 export function hijriOfGregorian(gregorianKey: string): { day: number; month: number } | null {
@@ -71,7 +92,12 @@ export function isFridayGregorian(gregorianKey: string): boolean {
 }
 
 // هل اكتملت المرحلة السابقة؟ يُرجع اسم المرحلة الناقصة أو null إن لا مانع.
-export async function missingPreviousStage(stage: string, ctx: { hijriDay: number; hijriMonth: number; gregorianKey: string | null; isFriday: boolean }): Promise<string | null> {
+export async function missingPreviousStage(stage: string, ctx: { hijriDay: number; hijriMonth: number; gregorianKey: string | null; isFriday: boolean; mosque?: "makkah" | "madinah" }): Promise<string | null> {
+  // صلاة الجمعة بعد خطبة نفس المسجد (الإصدار 74).
+  if (stage === "جمعة" && ctx.mosque) {
+    if (!ctx.gregorianKey) return null;
+    return (await khutbahPostedFor(ctx.mosque, ctx.gregorianKey)) ? null : (ctx.mosque === "makkah" ? "خطبة المسجد الحرام" : "خطبة المسجد النبوي");
+  }
   const prev = previousStage(stage, ctx.isFriday);
   if (!prev) return null;
   if (prev === "خطبة") {
