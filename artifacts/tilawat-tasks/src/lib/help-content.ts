@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 72, date: "2026-10-30",
+    items: [
+      { text: "نشر تلقائي لخطب الجمعة في قناة تيليجرام «تطبيق تلاوات الحرمين» فور إضافتها في التطبيق (المسجد الحرام أولًا ثم النبوي).", adminOnly: true },
+    ],
+  },
+  {
     version: 71, date: "2026-10-27",
     items: [
       { text: "تبسيط صفحة «أداء مقاطع يوتيوب»: خلاصة بجمل واضحة، وأكثر 5 مقاطع انتشارًا، وقائمة المقاطع عند الطلب.", adminOnly: true },

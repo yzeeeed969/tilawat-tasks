@@ -14,6 +14,7 @@ import { sendTelegramAudioUpload } from "./telegram";
 import { ensureTelegramMonitorSchema } from "./telegram-monitor-schema";
 import { processTelegramPost, storeChannelUpdate } from "./telegram-channel-monitor";
 import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
+import { khutbahAutopostOverview, runKhutbahAutopost } from "./app-khutbah-autopost";
 
 const SITE = "https://tilawatalharamain.com";
 const SEED_ID = 35880; // أحدث رقم معروف عند البرمجة — يُستخدم فقط لبدء البحث عن خط الأساس
@@ -384,7 +385,11 @@ export async function runAppTelegramAutopost(): Promise<{ posted: number }> {
 }
 
 export function startAppTelegramAutopostScheduler(logger: { info: (...a: any[]) => void; error: (...a: any[]) => void }) {
-  const run = () => runAppTelegramAutopost().catch((err) => logger.error({ err }, "app telegram autopost failed"));
+  // التلاوات أولًا ثم خطب الجمعة (الإصدار 72).
+  const run = () => runAppTelegramAutopost()
+    .catch((err) => logger.error({ err }, "app telegram autopost failed"))
+    .then(() => runKhutbahAutopost())
+    .catch((err) => logger.error({ err }, "khutbah telegram autopost failed"));
   setTimeout(run, 60_000).unref?.();
   setInterval(run, 3 * 60_000).unref?.();
   logger.info("app → telegram autopost scheduler started");
@@ -394,7 +399,9 @@ export async function appAutopostOverview() {
   const s = await settings();
   const items = rowsOf(await db.execute(sql`SELECT post_id, status, reason, title, reciter, attempts, created_at, posted_at FROM app_tg_autopost WHERE coalesce(reason, '') <> 'قبل التفعيل' ORDER BY post_id DESC LIMIT 30`));
   const iso = (v: any) => (v == null ? null : v instanceof Date ? v.toISOString() : new Date(`${String(v).replace(" ", "T")}Z`).toISOString());
+  const khutbahs = await khutbahAutopostOverview().catch(() => []);
   return {
+    khutbahs: khutbahs.map((r: any) => ({ miscId: Number(r.misc_id), status: String(r.status), reason: r.reason ?? null, title: r.title ?? null, reciter: r.reciter ?? null, mosque: r.mosque ?? null, attempts: Number(r.attempts), postedAt: iso(r.posted_at) })),
     enabled: s.enabled, baselineId: s.baselineId, lastId: s.lastId, lastRunAt: iso(s.lastRunAt),
     items: items.map((r) => ({ postId: Number(r.post_id), status: String(r.status), reason: r.reason ?? null, title: r.title ?? null, reciter: r.reciter ?? null, attempts: Number(r.attempts), postedAt: iso(r.posted_at), createdAt: iso(r.created_at) })),
   };
