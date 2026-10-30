@@ -15,6 +15,7 @@ import { ensureTelegramMonitorSchema } from "./telegram-monitor-schema";
 import { processTelegramPost, storeChannelUpdate } from "./telegram-channel-monitor";
 import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
 import { khutbahAutopostOverview, runKhutbahAutopost } from "./app-khutbah-autopost";
+import { isFridayGregorian, missingPreviousStage, STAGE_LABEL } from "./app-autopost-order";
 
 const SITE = "https://tilawatalharamain.com";
 const SEED_ID = 35880; // أحدث رقم معروف عند البرمجة — يُستخدم فقط لبدء البحث عن خط الأساس
@@ -184,7 +185,7 @@ const toArabicDigits = (n: number | string) => String(n).replace(/\d/g, (d) => "
 
 function buildPost(id: number, title: string, reciterRaw: string, ext: "mp3" | "m4a" = "mp3") {
   const prayer = detectPrayer(title);
-  const hijri = title.match(/(\d{1,2})-(\d{1,2})-(14\d\d)/);
+  const hijri = title.match(/(\d{1,2})\s*-\s*(\d{1,2})\s*-\s*(14\d\d)/);
   const reciter = reciterRaw.replace(/\(.*?\)/g, "").replace(/\s+/g, " ").trim();
   if (!prayer) return { ok: false as const, reason: "تعذّر تحديد الصلاة من العنوان" };
   if (!hijri) return { ok: false as const, reason: "تعذّر تحديد التاريخ الهجري من العنوان" };
@@ -242,7 +243,7 @@ const PRAYER_CODE: Record<string, string> = { "فجر": "fajr", "مغرب": "mag
 
 function prayerAndHijri(title: string) {
   const prayer = detectPrayer(title) ?? null;
-  const h = title.match(/(\d{1,2})-(\d{1,2})-(14\d\d)/);
+  const h = title.match(/(\d{1,2})\s*-\s*(\d{1,2})\s*-\s*(14\d\d)/);
   return { prayer, hijriKey: h ? `${Number(h[1])}-${Number(h[2])}-${h[3]}` : null, day: h ? Number(h[1]) : null, month: h ? Number(h[2]) : null };
 }
 
@@ -254,6 +255,19 @@ async function makkahAlreadyPosted(prayer: string, hijriKey: string, day: number
     SELECT 1 FROM telegram_channel_posts WHERE kind = 'recitation' AND mosque = 'haram' AND extracted_prayer = ${PRAYER_CODE[prayer] ?? prayer}
       AND hijri_day = ${day} AND hijri_month = ${month} AND published_at > now() - interval '3 days' LIMIT 1`));
   return Boolean(manual);
+}
+
+// انتظار عام (ترتيب اليوم): تبقى التلاوة «منتظرة» وبعد ساعة تنبيه واحد للمدير.
+async function holdFor(id: number, title: string, reciter: string, reason: string, lateLine: string) {
+  await db.execute(sql`UPDATE app_tg_autopost SET status = 'waiting', reason = ${reason}, title = ${title}, reciter = ${reciter} WHERE post_id = ${id}`);
+  const [row] = rowsOf(await db.execute(sql`SELECT created_at < now() - interval '60 minutes' AS late FROM app_tg_autopost WHERE post_id = ${id}`));
+  if (row?.late) {
+    await notifyTelegramAdminsGeneric({
+      title: "تلاوة تنتظر ترتيب النشر في قناة التطبيق",
+      lines: [`التلاوة: ${title}`, `الرابط: ${SITE}/p/${id}`, lateLine, "", "ستُنشر تلقائيًا فور نشر الناقص (تلقائيًا أو يدويًا في القناة)."],
+      alertKey: `app_autopost_stage:${id}`,
+    }).catch(() => {});
+  }
 }
 
 async function holdForMakkah(id: number, title: string, reciter: string, prayer: string, hijriKey: string) {
@@ -304,6 +318,17 @@ async function handlePost(id: number, html: string, channel: { id: number; chatI
     return;
   }
   await db.execute(sql`UPDATE app_tg_autopost SET mosque = ${mosque}, prayer = ${ph.prayer}, hijri_key = ${ph.hijriKey} WHERE post_id = ${id}`);
+  // ترتيب اليوم (الإصدار 73): الفجر ← (الجمعة: الخطبة ← الصلاة) ← المغرب ← العشاء، والمرحلة السابقة للمسجدين معًا.
+  if (ph.prayer && ph.day && ph.month) {
+    const g = parsed.title.match(/(\d{1,2})-(\d{1,2})-(20\d\d)\s*$/);
+    const gregorianKey = g ? `${Number(g[1])}-${Number(g[2])}-${g[3]}` : null;
+    const isFriday = gregorianKey ? isFridayGregorian(gregorianKey) : /^\S+\s+الجمعة/.test(parsed.title.trim());
+    const missing = await missingPreviousStage(ph.prayer, { hijriDay: ph.day, hijriMonth: ph.month, gregorianKey, isFriday });
+    if (missing) {
+      await holdFor(id, parsed.title, post.reciter, `بانتظار نشر ${STAGE_LABEL[missing] ?? missing} للمسجدين`, `مضت ساعة ولم يُنشر ${STAGE_LABEL[missing] ?? missing} للمسجدين (الحرام والنبوي) في القناة.`);
+      return;
+    }
+  }
   if (mosque === "madinah" && ph.prayer && ph.hijriKey && ph.day && ph.month && !(await makkahAlreadyPosted(ph.prayer, ph.hijriKey, ph.day, ph.month))) {
     await holdForMakkah(id, parsed.title, post.reciter, ph.prayer, ph.hijriKey);
     return;

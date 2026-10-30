@@ -23,6 +23,7 @@ import { db } from "@workspace/db";
 import { sendTelegramAudioUpload } from "./telegram";
 import { processTelegramPost, storeChannelUpdate } from "./telegram-channel-monitor";
 import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
+import { hijriOfGregorian, missingPreviousStage } from "./app-autopost-order";
 
 const SITE = "https://tilawatalharamain.com";
 // القسمان الرئيسيان في «منوعات»؛ تحت كل منهما قسم لكل سنة هجرية (يُختار الأحدث تلقائيًا).
@@ -177,6 +178,13 @@ async function handle(e: Entry, channel: { chatId: string }, makkahEntries: Entr
   const fail = async (reason: string, final = true) => { await finish(e, "failed", reason); if (final) await alertAdmin(e, reason); };
   if (!e.reciter) return fail("تعذّر تحديد اسم الخطيب من قائمة الخطب");
 
+  // ترتيب اليوم (الإصدار 73): الخطبتان بعد نشر الفجر للمسجدين.
+  const h = hijriOfGregorian(e.dateKey);
+  if (h && (await missingPreviousStage("خطبة", { hijriDay: h.day, hijriMonth: h.month, gregorianKey: e.dateKey, isFriday: true }))) {
+    await db.execute(sql`UPDATE app_tg_khutbah_autopost SET status = 'waiting', reason = 'بانتظار نشر الفجر للمسجدين', title = ${e.title}, reciter = ${e.reciter},
+      mosque = ${e.mosque}, date_key = ${e.dateKey} WHERE misc_id = ${e.id}`);
+    return;
+  }
   if (e.mosque === "madinah" && !(await makkahPostedFor(e.dateKey, makkahEntries))) {
     await db.execute(sql`UPDATE app_tg_khutbah_autopost SET status = 'waiting', reason = 'بانتظار خطبة المسجد الحرام', title = ${e.title}, reciter = ${e.reciter},
       mosque = ${e.mosque}, date_key = ${e.dateKey} WHERE misc_id = ${e.id}`);
