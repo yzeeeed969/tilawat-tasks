@@ -11,6 +11,7 @@
 // إعدادات الخادم (يضعها المدير بنفسه في Railway): APP_ADMIN_EMAIL · APP_ADMIN_PASSWORD · FRIDAY_PUBLISH_KEY
 
 import crypto from "node:crypto";
+import { execFile } from "node:child_process";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
@@ -295,7 +296,7 @@ export async function fridayPublishOverview() {
   await ensureSchema();
   const items = rowsOf(await db.execute(sql`SELECT mosque, kind, friday, status, reason, title, reciter, audio_url, updated_at FROM app_friday_publish ORDER BY id DESC LIMIT 20`));
   return {
-    configured: { machineKey: fridayKeyConfigured(), appAccount: Boolean((process.env.APP_ADMIN_EMAIL ?? "").trim() && process.env.APP_ADMIN_PASSWORD) },
+    configured: { ffmpeg: await new Promise<boolean>((r) => execFile("ffmpeg", ["-version"], { timeout: 10_000 }, (err) => r(!err))), machineKey: fridayKeyConfigured(), appAccount: Boolean((process.env.APP_ADMIN_EMAIL ?? "").trim() && process.env.APP_ADMIN_PASSWORD) },
     items,
   };
 }
