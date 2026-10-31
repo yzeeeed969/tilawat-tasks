@@ -21,17 +21,18 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { sendTelegramAudioUpload } from "./telegram";
+import { compressAudioForTelegram } from "./audio-compress";
 import { processTelegramPost, storeChannelUpdate } from "./telegram-channel-monitor";
 import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
 import { hijriOfGregorian, missingPreviousStage, prayerPostedFor } from "./app-autopost-order";
 
 const SITE = "https://tilawatalharamain.com";
 // القسمان الرئيسيان في «منوعات»؛ تحت كل منهما قسم لكل سنة هجرية (يُختار الأحدث تلقائيًا).
-const PARENTS: Record<Mosque, number> = { makkah: 37, madinah: 38 };
+export const PARENTS: Record<Mosque, number> = { makkah: 37, madinah: 38 };
 const MAX_ATTEMPTS = 3;
 const MAX_BYTES = 49 * 1024 * 1024;
 
-type Mosque = "makkah" | "madinah";
+export type Mosque = "makkah" | "madinah";
 type Entry = { id: number; title: string; reciter: string; mosque: Mosque; dateKey: string };
 
 function rowsOf<T = any>(result: any): T[] {
@@ -94,7 +95,7 @@ function gregorianKeyOf(title: string): string | null {
 }
 
 // قسم السنة الأحدث تحت القسم الرئيسي (أكبر رقم «عام 14xx»).
-async function currentYearCategory(parentId: number): Promise<number | null> {
+export async function currentYearCategory(parentId: number): Promise<number | null> {
   const html = await fetchText(`${SITE}/miscellanies/c/${parentId}`);
   if (!html) return null;
   let best: { id: number; year: number } | null = null;
@@ -201,14 +202,17 @@ async function handle(e: Entry, channel: { chatId: string }) {
 
   const audio = await fetch(audioUrl).catch(() => null);
   if (!audio || !audio.ok) return fail(`تعذّر تنزيل الملف الصوتي (${audio?.status ?? "خطأ اتصال"})`, false);
-  const size = Number(audio.headers.get("content-length") ?? 0);
-  if (size > MAX_BYTES) return fail(`الملف أكبر من حد تيليجرام للبوت (${Math.round(size / 1048576)}MB)`);
-  const blob = await audio.blob();
-  if (blob.size > MAX_BYTES) return fail(`الملف أكبر من حد تيليجرام للبوت (${Math.round(blob.size / 1048576)}MB)`);
+  let blob = await audio.blob();
   if (blob.size < 10_000) return fail("الملف الصوتي فارغ أو تالف", false);
+  // الملف أكبر من حد تيليجرام ⇐ يُضغط ثم يُرسل (الإصدار 75، اعتماد المدير).
+  let compressed = false;
+  if (blob.size > MAX_BYTES) {
+    try { blob = await compressAudioForTelegram(blob, MAX_BYTES); compressed = true; }
+    catch (err) { return fail((err as Error).message); }
+  }
 
   const caption = [`خطبة الجمعة للشيخ #${e.reciter.replace(/\s+/g, "_")}`, "", e.title, "", `${SITE}/m/${e.id}`, "", "تمت المشاركة من 📱| #تطبيق_تلاوات_الحرمين", SITE].join("\n");
-  const fileName = `خطبة الجمعة ${e.reciter} ${e.dateKey}.${ext}`;
+  const fileName = `خطبة الجمعة ${e.reciter} ${e.dateKey}.${compressed ? "mp3" : ext}`;
   const sent = await sendTelegramAudioUpload({ chatId: channel.chatId, file: blob, fileName, caption });
   if (!sent.ok) return fail(`رفض تيليجرام النشر: ${sent.error}`, false);
   await finish(e, "posted", null, Number(sent.result?.message_id ?? 0) || null);

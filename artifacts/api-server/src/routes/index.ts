@@ -21,6 +21,7 @@ import youtubeRouter from "./youtube";
 import instagramRouter, { instagramOauthRouter } from "./instagram";
 import showcaseRouter, { showcasePublicRouter } from "./showcase";
 import crosspostRouter, { crosspostMachineRouter } from "./crosspost";
+import fridayPublishRouter, { fridayMachineRouter } from "./friday-publish";
 import { requireAuth } from "../middlewares/auth";
 
 const router: IRouter = Router();
@@ -36,6 +37,8 @@ router.use(instagramOauthRouter);
 router.use(showcasePublicRouter);
 // جهاز تنزيل الرفع التلقائي يوتيوب ← فيسبوك — محمي بمفتاح سري (CROSSPOST_API_KEY)، لا بالجلسة.
 router.use(crosspostMachineRouter);
+// أجهزة تسجيل الحرمين: نشر الجمعة آليًا في التطبيق — محمي بمفتاح سري (FRIDAY_PUBLISH_KEY).
+router.use(fridayMachineRouter);
 
 // Protected routes
 router.use(requireAuth);
@@ -49,6 +52,7 @@ router.use(telegramMonitorRouter);
 router.use(instagramRouter);
 router.use(showcaseRouter);
 router.use(crosspostRouter);
+router.use(fridayPublishRouter);
 router.use(commentsRouter);
 router.use(statsRouter);
 router.use(adminRouter);

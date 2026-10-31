@@ -537,6 +537,13 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 75, date: "2026-10-31",
+    items: [
+      { text: "ضغط الملفات الصوتية الأكبر من حد تيليجرام (50 ميجابايت) تلقائيًا قبل نشرها في قناة التطبيق.", adminOnly: true },
+      { text: "نشر الجمعة آليًا في التطبيق: جهاز التسجيل يرسل رابط الخطبة والصلاة، والموقع يكتب العنوان ويضيفها في لوحة التطبيق بحساب النظام.", adminOnly: true },
+    ],
+  },
+  {
     version: 74, date: "2026-10-30",
     items: [
       { text: "ترتيب الجمعة في قناة التطبيق: خطبة المسجد الحرام ثم صلاته، ثم خطبة المسجد النبوي ثم صلاته.", adminOnly: true },

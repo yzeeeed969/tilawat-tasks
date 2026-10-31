@@ -6,6 +6,10 @@ NIXPACKS_NODE_VERSION = "22"
 NPM_CONFIG_PRODUCTION = "false"
 BASE_PATH = "/"
 
+# ffmpeg: لضغط الملفات الصوتية الأكبر من حد تيليجرام (الإصدار 75).
+[phases.setup]
+nixPkgs = ["...", "ffmpeg"]
+
 [phases.install]
 dependsOn = ["setup"]
 cmds = [

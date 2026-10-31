@@ -11,6 +11,7 @@
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { sendTelegramAudioUpload } from "./telegram";
+import { compressAudioForTelegram } from "./audio-compress";
 import { ensureTelegramMonitorSchema } from "./telegram-monitor-schema";
 import { processTelegramPost, storeChannelUpdate } from "./telegram-channel-monitor";
 import { notifyTelegramAdminsGeneric } from "./telegram-notification-engine";
@@ -337,13 +338,16 @@ async function handlePost(id: number, html: string, channel: { id: number; chatI
 
   const audio = await fetch(parsed.mp3).catch(() => null);
   if (!audio || !audio.ok) return fail(`تعذّر تنزيل الملف الصوتي (${audio?.status ?? "خطأ اتصال"})`, false);
-  const size = Number(audio.headers.get("content-length") ?? 0);
-  if (size > MAX_BYTES) return fail(`الملف أكبر من حد تيليجرام للبوت (${Math.round(size / 1048576)}MB)`);
-  const blob = await audio.blob();
-  if (blob.size > MAX_BYTES) return fail(`الملف أكبر من حد تيليجرام للبوت (${Math.round(blob.size / 1048576)}MB)`);
+  let blob = await audio.blob();
   if (blob.size < 10_000) return fail("الملف الصوتي فارغ أو تالف", false);
+  // الملف أكبر من حد تيليجرام ⇐ يُضغط ثم يُرسل (الإصدار 75، اعتماد المدير).
+  let compressed = false;
+  if (blob.size > MAX_BYTES) {
+    try { blob = await compressAudioForTelegram(blob, MAX_BYTES); compressed = true; }
+    catch (err) { return fail((err as Error).message); }
+  }
 
-  const sent = await sendTelegramAudioUpload({ chatId: channel.chatId, file: blob, fileName: post.fileName, caption: post.caption });
+  const sent = await sendTelegramAudioUpload({ chatId: channel.chatId, file: blob, fileName: compressed ? post.fileName.replace(/\.m4a$/i, ".mp3") : post.fileName, caption: post.caption });
   if (!sent.ok) return fail(`رفض تيليجرام النشر: ${sent.error}`, false);
   await finish(id, { status: "posted", title: parsed.title, reciter: post.reciter, messageId: Number(sent.result?.message_id ?? 0) || null });
   // توثيق المهمتين كما لو نُشرت يدويًا (البوت لا يستقبل منشوراته عبر الـ webhook).
