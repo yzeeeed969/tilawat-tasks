@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 76, date: "2026-11-02",
+    items: [
+      { text: "مسار تيليجرام ← فيسبوك: كل فيديو أفقي يُنشر في قناة الشيخ على تيليجرام يُنشر تلقائيًا في صفحته على فيسبوك بنص المنشور نفسه — بلا أي تنزيل من يوتيوب.", adminOnly: true },
+    ],
+  },
+  {
     version: 75, date: "2026-10-31",
     items: [
       { text: "ضغط الملفات الصوتية الأكبر من حد تيليجرام (50 ميجابايت) تلقائيًا قبل نشرها في قناة التطبيق.", adminOnly: true },

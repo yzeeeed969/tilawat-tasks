@@ -1,0 +1,134 @@
+// عامل tg-bridge (الإصدار 76): يشغّل «خادم البوتات المحلي» الرسمي، ويستقبل منشورات قنوات المشايخ،
+// ولكل فيديو يسأل خادم الموقع «هل يُرفع؟» (القرار في الخادم)، ثم يمرّر الملف له لينشره في فيسبوك، ويحذف الملف.
+//
+// المتغيرات (يضعها المدير في Railway بنفسه، لا تُكتب في أي محادثة):
+//   TG_BRIDGE_BOT_TOKEN  رمز البوت الجديد (من BotFather)
+//   TELEGRAM_API_ID      من my.telegram.org
+//   TELEGRAM_API_HASH    من my.telegram.org
+//   CROSSPOST_API_KEY    نفس مفتاح خدمة الموقع (مرجع ${{api-server.CROSSPOST_API_KEY}})
+//   API_BASE             عنوان خادم الموقع (افتراضيًا العنوان العام)
+// القرص الدائم (Volume) على /data.
+
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
+
+const TOKEN = (process.env.TG_BRIDGE_BOT_TOKEN ?? "").trim();
+const API_ID = (process.env.TELEGRAM_API_ID ?? "").trim();
+const API_HASH = (process.env.TELEGRAM_API_HASH ?? "").trim();
+const KEY = (process.env.CROSSPOST_API_KEY ?? "").trim();
+const API_BASE = (process.env.API_BASE ?? "https://workspaceapi-server-production-c92c.up.railway.app").replace(/\/$/, "");
+const DATA = process.env.DATA_DIR ?? "/data";
+const LOCAL = "http://127.0.0.1:8081";
+
+const log = (...a) => console.log(new Date().toISOString(), ...a);
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+for (const [name, v] of [["TG_BRIDGE_BOT_TOKEN", TOKEN], ["TELEGRAM_API_ID", API_ID], ["TELEGRAM_API_HASH", API_HASH], ["CROSSPOST_API_KEY", KEY]]) {
+  if (!v) { log(`متغير ناقص: ${name} — توقف`); await sleep(60_000); process.exit(1); }
+}
+fs.mkdirSync(path.join(DATA, "bot-api"), { recursive: true });
+fs.mkdirSync(path.join(DATA, "tmp"), { recursive: true });
+
+// 1) نقل البوت من سحابة تيليجرام إلى الخادم المحلي (مرة واحدة فقط، شرط رسمي قبل التشغيل المحلي).
+const marker = path.join(DATA, "logged-out-from-cloud");
+if (!fs.existsSync(marker)) {
+  const r = await fetch(`https://api.telegram.org/bot${TOKEN}/logOut`).then((x) => x.json()).catch((e) => ({ ok: false, description: String(e) }));
+  log("logOut من السحابة:", r.ok ? "تم" : r.description);
+  if (r.ok || /logged out|Unauthorized/i.test(String(r.description))) fs.writeFileSync(marker, new Date().toISOString());
+}
+
+// 2) تشغيل خادم البوتات المحلي؛ إن توقف يخرج العامل فيعيد Railway التشغيل.
+const server = spawn("telegram-bot-api", [
+  `--api-id=${API_ID}`, `--api-hash=${API_HASH}`, "--local",
+  `--dir=${path.join(DATA, "bot-api")}`, `--temp-dir=${path.join(DATA, "tmp")}`,
+  "--http-port=8081", "--http-ip-address=127.0.0.1", "--verbosity=1",
+], { stdio: ["ignore", "inherit", "inherit"] });
+server.on("exit", (code) => { log("خادم البوتات المحلي توقف برمز", code); process.exit(1); });
+
+async function bot(method, params = {}) {
+  const res = await fetch(`${LOCAL}/bot${TOKEN}/${method}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(params) });
+  const body = await res.json().catch(() => ({}));
+  if (!body.ok) throw new Error(`${method}: ${body.description ?? res.status}`);
+  return body.result;
+}
+async function site(pathname, payload) {
+  const res = await fetch(`${API_BASE}/api${pathname}`, { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${KEY}` }, body: JSON.stringify(payload) });
+  const body = await res.json().catch(() => ({}));
+  if (res.status >= 500 || res.status === 401 || res.status === 503) throw new Error(`${pathname}: ${res.status} ${body.message ?? body.reason ?? ""}`);
+  return body;
+}
+
+for (let i = 0; ; i++) {
+  try { const me = await bot("getMe"); log("البوت يعمل محليًا:", `@${me.username}`); break; }
+  catch (e) { if (i > 60) { log("تعذّر تشغيل خادم البوتات المحلي:", e.message); process.exit(1); } await sleep(2000); }
+}
+await bot("deleteWebhook").catch(() => {});
+
+const offsetFile = path.join(DATA, "offset");
+let offset = Number(fs.existsSync(offsetFile) ? fs.readFileSync(offsetFile, "utf8") : 0) || 0;
+
+async function withRetry(fn, label, tries = 3) {
+  for (let i = 1; ; i++) {
+    try { return await fn(); }
+    catch (e) { if (i >= tries) throw e; log(`${label}: محاولة ${i} فشلت (${e.message}) — إعادة بعد 30 ثانية`); await sleep(30_000); }
+  }
+}
+
+async function handleVideo(post) {
+  const v = post.video;
+  const payload = {
+    chatId: String(post.chat.id), messageId: post.message_id, username: post.chat.username ?? null, chatTitle: post.chat.title ?? null,
+    caption: post.caption ?? "", width: v.width ?? 0, height: v.height ?? 0, duration: v.duration ?? 0, fileSize: v.file_size ?? 0,
+  };
+  for (let cycle = 1; cycle <= 3; cycle++) {
+    const check = await withRetry(() => site("/crosspost/tg/check", payload), "check");
+    if (!check.upload) { log(`لا رفع (${post.chat.title} #${post.message_id}):`, check.reason); return; }
+    let filePath = null;
+    try {
+      const file = await withRetry(() => bot("getFile", { file_id: v.file_id }), "getFile");
+      filePath = file.file_path; // في الوضع المحلي: مسار كامل على القرص
+      const size = fs.statSync(filePath).size;
+      log(`رفع إلى «${check.pageName}»: ${post.chat.title} #${post.message_id} (${Math.round(size / 1048576)}MB)`);
+      const res = await fetch(`${API_BASE}/api/crosspost/tg/upload?uploadId=${check.uploadId}`, {
+        method: "POST", duplex: "half", body: fs.createReadStream(filePath),
+        headers: { "Content-Type": "application/octet-stream", "Content-Length": String(size), Authorization: `Bearer ${KEY}` },
+      });
+      const body = await res.json().catch(() => ({}));
+      if (body.ok) { log("✅ نُشر في فيسبوك:", body.fbVideoId); return; }
+      log(`❌ فشل الرفع (دورة ${cycle}):`, body.message ?? res.status);
+    } catch (e) {
+      log(`❌ خطأ (دورة ${cycle}):`, e.message);
+    } finally {
+      if (filePath) fs.promises.unlink(filePath).catch(() => {});
+    }
+    await sleep(60_000);
+  }
+}
+
+log("بدء الاستماع لقنوات المشايخ…");
+for (;;) {
+  let updates = [];
+  try {
+    updates = await bot("getUpdates", { offset, timeout: 50, allowed_updates: ["channel_post", "my_chat_member"] });
+  } catch (e) {
+    log("getUpdates:", e.message);
+    await sleep(5000);
+    continue;
+  }
+  for (const u of updates) {
+    try {
+      if (u.my_chat_member && u.my_chat_member.chat?.type === "channel") {
+        const c = u.my_chat_member.chat;
+        await site("/crosspost/tg/channel", { chatId: String(c.id), title: c.title ?? null, username: c.username ?? null, botStatus: u.my_chat_member.new_chat_member?.status ?? null }).catch((e) => log("channel:", e.message));
+        log(`القناة «${c.title}»: حالة البوت ${u.my_chat_member.new_chat_member?.status}`);
+      } else if (u.channel_post?.video) {
+        await handleVideo(u.channel_post);
+      }
+    } catch (e) {
+      log("خطأ في معالجة منشور:", e.message);
+    }
+    offset = u.update_id + 1;
+    fs.writeFileSync(offsetFile, String(offset));
+  }
+}
