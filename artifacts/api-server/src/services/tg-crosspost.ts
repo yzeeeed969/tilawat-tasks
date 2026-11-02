@@ -110,6 +110,19 @@ export async function resolveTarget(username: string | null): Promise<{ ok: true
   return { ok: true, reciterId, reciterName, pageId: String(unique[0].fb_page_id), pageName: String(unique[0].name) };
 }
 
+// قنوات المشايخ المسجّلة في «المنصات والصفحات» (منصة تلقرام) — ليتحقق العامل من وجود البوت فيها.
+export async function reciterTelegramHandles(): Promise<string[]> {
+  const rows = rowsOf(await db.execute(sql`
+    SELECT pp.page_url FROM platform_pages pp JOIN platforms p ON p.id = pp.platform_id
+    WHERE pp.reciter_id IS NOT NULL AND (p.name ILIKE '%تلقرام%' OR p.name ILIKE '%تيليجرام%' OR p.name ILIKE '%telegram%')`));
+  return [...new Set(rows.map((r) => handleOf(r.page_url)).filter((h): h is string => Boolean(h)))];
+}
+
+export async function bridgeHeartbeat() {
+  await ensureTgCrosspostSchema();
+  await db.execute(sql`UPDATE tg_fb_settings SET last_bridge_at = now() WHERE id = 1`);
+}
+
 // ── من خدمة tg-bridge ─────────────────────────────────────────────────────────────────────────
 export async function registerChannel(input: { chatId: string; title?: string | null; username?: string | null; botStatus?: string | null }) {
   await ensureTgCrosspostSchema();

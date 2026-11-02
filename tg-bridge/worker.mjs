@@ -65,6 +65,29 @@ for (let i = 0; ; i++) {
 }
 await bot("deleteWebhook").catch(() => {});
 
+// نبض كل 6 ساعات + تحقق من وجود البوت في قنوات المشايخ المسجّلة في الموقع (getChat/getChatMember).
+const me = await bot("getMe");
+async function heartbeat() {
+  try {
+    const hb = await site("/crosspost/tg/heartbeat", {});
+    for (const handle of hb.handles ?? []) {
+      try {
+        const chat = await bot("getChat", { chat_id: `@${handle}` });
+        const member = await bot("getChatMember", { chat_id: chat.id, user_id: me.id }).catch(() => null);
+        await site("/crosspost/tg/channel", { chatId: String(chat.id), title: chat.title ?? null, username: chat.username ?? handle, botStatus: member?.status ?? "not_member" });
+        log(`@${handle}: البوت ${member?.status ?? "ليس عضوًا"}`);
+      } catch (e) {
+        log(`@${handle}: تعذّر الفحص (${e.message})`);
+      }
+      await sleep(1500);
+    }
+  } catch (e) {
+    log("heartbeat:", e.message);
+  }
+}
+heartbeat();
+setInterval(heartbeat, 6 * 60 * 60_000);
+
 const offsetFile = path.join(DATA, "offset");
 let offset = Number(fs.existsSync(offsetFile) ? fs.readFileSync(offsetFile, "utf8") : 0) || 0;
 

@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
-import { checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
+import { bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
@@ -64,6 +64,12 @@ function requireBridgeKey(req: Request, res: Response, next: NextFunction) {
   if (!checkMachineKey(req.headers.authorization)) { res.status(401).json({ ok: false, message: "Unauthorized" }); return; }
   ensureTgCrosspostSchema().then(() => next(), next);
 }
+
+// نبض العامل + قائمة قنوات المشايخ ليتحقق من وجود البوت فيها.
+crosspostMachineRouter.post("/crosspost/tg/heartbeat", requireBridgeKey, async (_req, res) => {
+  await bridgeHeartbeat();
+  res.json({ ok: true, handles: await reciterTelegramHandles() });
+});
 
 // البوت أُضيف لقناة/تغيّرت صلاحيته.
 crosspostMachineRouter.post("/crosspost/tg/channel", requireBridgeKey, async (req, res) => {
