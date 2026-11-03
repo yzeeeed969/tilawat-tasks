@@ -79,6 +79,56 @@ async function runMuezzinSchemaEnsure() {
     )
   `);
   await db.execute(sql`INSERT INTO muezzin_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
+  // التأكيد بالأزرار (عُلم / أعتذر) — إضافة فقط.
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS send_minute integer NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS supervisor_phone text`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS confirm_mode boolean NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS wording jsonb`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS meta jsonb`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS verify_token text`);
+  await db.execute(sql`UPDATE muezzin_settings SET verify_token = md5(random()::text || clock_timestamp()::text) WHERE id = 1 AND verify_token IS NULL`);
+
+  // كل مهمة = رسالة مستقلة لها ردّها (عُلم / اعتذار + السبب) وبديلها إن وُجد.
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS muezzin_duties (
+      id serial PRIMARY KEY,
+      date_key text NOT NULL,
+      slot text NOT NULL,
+      role text NOT NULL,
+      muezzin_id integer REFERENCES muezzins(id) ON DELETE SET NULL,
+      muezzin_name text NOT NULL,
+      phone text,
+      test_mode boolean NOT NULL,
+      wamid text,
+      send_ok boolean NOT NULL DEFAULT false,
+      send_detail text,
+      delivery_status text,
+      delivery_error text,
+      response text,
+      reason text,
+      responded_at timestamp,
+      substitute_for_duty_id integer,
+      replaced_by_duty_id integer,
+      created_at timestamp NOT NULL DEFAULT now()
+    )
+  `);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_muezzin_duties_date ON muezzin_duties(date_key)`);
+  await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_muezzin_duties_wamid ON muezzin_duties(wamid)`);
+
+  // كل ما يدخل ويخرج عبر واتساب (للعرض في الموقع والمرجع).
+  await db.execute(sql`
+    CREATE TABLE IF NOT EXISTS muezzin_wa_events (
+      id serial PRIMARY KEY,
+      direction text NOT NULL,
+      phone text,
+      muezzin_name text,
+      kind text NOT NULL,
+      text text,
+      duty_id integer,
+      wa_id text UNIQUE,
+      created_at timestamp NOT NULL DEFAULT now()
+    )
+  `);
 
   // بذرة لمرة واحدة: فقط إن كانت القائمة فارغة تمامًا.
   const existing = await db.execute(sql`SELECT count(*)::int AS n FROM muezzins`);

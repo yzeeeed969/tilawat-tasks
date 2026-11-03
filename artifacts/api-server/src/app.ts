@@ -44,7 +44,12 @@ app.use(
 );
 
 app.use(cors({ credentials: true, origin: true }));
-app.use(express.json());
+// نحتفظ بالنص الخام لطلبات Webhook واتساب فقط، للتحقق من توقيع ميتا.
+app.use(express.json({
+  verify(req, _res, buf) {
+    if ((req as any).url?.startsWith("/api/whatsapp/webhook")) (req as any).rawBody = Buffer.from(buf);
+  },
+}));
 app.use(express.urlencoded({ extended: true }));
 
 app.get("/", (req, res, next) => {

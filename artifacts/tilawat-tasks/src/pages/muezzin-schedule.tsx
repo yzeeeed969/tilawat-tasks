@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, ImageUp, Loader2, Megaphone, Plus, Send, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, ImageUp, Loader2, Megaphone, MessageSquareReply, Plus, RefreshCw, Send, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -30,11 +30,16 @@ const ROLES: Array<{ key: Role; label: string }> = [
 const FRIDAY = 5;
 
 type Muezzin = { id: number; name: string; phone: string | null; isActive: boolean };
-type Settings = { sendHour: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null };
+type Wording = { duty: "a" | "b" | "c"; buttons: "a" | "b" | "c"; form: "a" | "b"; substitute: "a" | "b" };
+type Settings = {
+  sendHour: number; sendMinute: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null;
+  supervisorPhone: string | null; confirmMode: boolean; wording: Wording; verifyToken: string | null;
+  meta: { rev?: number; templates?: Record<string, string>; preparedAt?: string; wording?: Wording };
+};
 type Setup = {
   today: string;
   settings: Settings;
-  status: { vision: boolean; whatsapp: boolean };
+  status: { vision: boolean; whatsapp: boolean; appSecret: boolean; webhookUrl: string };
   muezzins: Muezzin[];
   upcoming: Array<{ dateKey: string; slot: Slot; role: Role; name: string }>;
   log: Array<{ id: number; dateKey: string; name: string; phone: string | null; testMode: boolean; ok: boolean; detail: string; createdAt: string }>;
@@ -68,6 +73,12 @@ function nextSunday(today: string) {
   return addDays(today, (7 - dow) % 7 || 7);
 }
 const DAY_NAMES = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+/** 15:00 ← «3:00 م» */
+function hhmm(h: number, m: number) {
+  const suffix = h < 12 ? "ص" : "م";
+  const h12 = h % 12 === 0 ? 12 : h % 12;
+  return `${h12}:${String(m).padStart(2, "0")} ${suffix}`;
+}
 
 /** يصغّر الصورة في المتصفح (أسرع وأرخص قراءة) ويعيدها JPEG. */
 async function shrinkImage(file: File): Promise<{ blob: Blob; url: string }> {
@@ -120,7 +131,8 @@ export default function MuezzinSchedulePage() {
           <StatusPill ok={data.status.vision} on="قراءة الصور جاهزة" off="قراءة الصور غير مفعّلة" />
           <StatusPill ok={data.status.whatsapp} on="واتساب مربوط" off="واتساب غير مربوط" />
           <StatusPill ok={!data.settings.testMode} on="التشغيل الفعلي" off="وضع التجربة" />
-          <StatusPill ok={data.settings.autoSendEnabled} on={`الإرسال اليومي مفعّل — ${data.settings.sendHour}:00`} off="الإرسال اليومي متوقف" />
+          <StatusPill ok={data.settings.autoSendEnabled} on={`الإرسال اليومي مفعّل — ${hhmm(data.settings.sendHour, data.settings.sendMinute)}`} off="الإرسال اليومي متوقف" />
+          <StatusPill ok={data.settings.confirmMode} on="التأكيد بالأزرار مفعّل" off="التأكيد بالأزرار غير مفعّل" />
         </div>
       </div>
 
@@ -129,10 +141,14 @@ export default function MuezzinSchedulePage() {
           <TabsTrigger value="upload">الإدخال الأسبوعي</TabsTrigger>
           <TabsTrigger value="muezzins">المؤذنون ({data.muezzins.length})</TabsTrigger>
           <TabsTrigger value="send">الإرسال والسجل</TabsTrigger>
+          <TabsTrigger value="replies">الردود</TabsTrigger>
+          <TabsTrigger value="confirm">الأزرار والمشرف</TabsTrigger>
         </TabsList>
         <TabsContent value="upload"><UploadTab data={data} onSaved={refresh} toast={toast} /></TabsContent>
         <TabsContent value="muezzins"><MuezzinsTab data={data} onChange={refresh} toast={toast} /></TabsContent>
         <TabsContent value="send"><SendTab data={data} onChange={refresh} toast={toast} /></TabsContent>
+        <TabsContent value="replies"><RepliesTab data={data} toast={toast} /></TabsContent>
+        <TabsContent value="confirm"><ConfirmTab data={data} onChange={refresh} toast={toast} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -456,7 +472,8 @@ function MuezzinRow({ m, onChange, toast }: { m: Muezzin; onChange: () => void; 
 
 function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void; toast: any }) {
   const s = data.settings;
-  const [hour, setHour] = useState(String(s.sendHour));
+  const [time, setTime] = useState(`${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`);
+  const savedTime = `${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`;
   const [testPhone, setTestPhone] = useState(s.testPhone ?? "");
   const [sendDate, setSendDate] = useState(addDays(data.today, 1));
 
@@ -481,12 +498,14 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader><CardTitle>إعدادات الإرسال</CardTitle><CardDescription>كل يوم في الساعة المحددة (بتوقيت الرياض) يُرسل جدول اليوم التالي.</CardDescription></CardHeader>
+        <CardHeader><CardTitle>إعدادات الإرسال</CardTitle><CardDescription>كل يوم في الوقت المحدد يُرسل جدول اليوم التالي. مثال: الاثنين 3:00 م تُرسل مهام الثلاثاء.</CardDescription></CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
-            <label className="w-40 text-sm font-medium">ساعة الإرسال (0–23)</label>
-            <Input type="number" min={0} max={23} className="w-24" value={hour} onChange={(e) => setHour(e.target.value)} />
-            <Button size="sm" variant="outline" disabled={hour === String(s.sendHour)} onClick={() => saveSettings.mutate({ sendHour: Number(hour) })}>حفظ</Button>
+            <label className="w-40 text-sm font-medium">وقت الإرسال اليومي</label>
+            <Input type="time" className="w-36" dir="ltr" value={time} onChange={(e) => setTime(e.target.value)} />
+            <Button size="sm" variant="outline" disabled={!time || time === savedTime}
+              onClick={() => { const [h, m] = time.split(":").map(Number); saveSettings.mutate({ sendHour: h, sendMinute: m }); }}>حفظ</Button>
+            <span className="text-sm text-muted-foreground">يُرسل فيه جدول <b>اليوم التالي</b> ({hhmm(s.sendHour, s.sendMinute)} بتوقيت مكة)</span>
           </div>
           <div className="flex flex-wrap items-center gap-3">
             <label className="w-40 text-sm font-medium">رقم التجربة (رقمك)</label>
@@ -550,6 +569,286 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
               </tbody>
             </table>
           )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ───────────────────────── الردود ───────────────────────── */
+
+type DutyRow = {
+  id: number; dateKey: string; slot: Slot; role: Role; muezzinId: number | null; name: string; phone: string | null; testMode: boolean;
+  sendOk: boolean; sendDetail: string | null; deliveryStatus: string | null; deliveryError: string | null;
+  response: string | null; reason: string | null; respondedAt: string | null; substituteForDutyId: number | null; replacedByDutyId: number | null;
+};
+type RepliesData = {
+  duties: DutyRow[];
+  stats: Array<{ name: string; total: number; ack: number; apology: number; noReply: number; asSubstitute: number }>;
+  events: Array<{ id: number; direction: string; phone: string | null; name: string | null; kind: string; text: string; createdAt: string }>;
+};
+const SLOT_NAME: Record<Slot, string> = {
+  fajr1: "الأذان الأول للفجر", fajr2: "الأذان الثاني للفجر", dhuhr: "الظهر", asr: "العصر", maghrib: "المغرب", isha: "العشاء",
+  jumuah1: "الأذان الأول للجمعة", jumuah2: "الأذان الثاني للجمعة",
+};
+const EVENT_KIND: Record<string, string> = {
+  duty: "رسالة مهمة", substitute_duty: "رسالة مهمة (بديل)", ack: "ضغط «عُلم»", apology_tap: "ضغط «أعتذر»", apology_form: "نموذج السبب",
+  apology_reason: "سبب الاعتذار", supervisor_ack: "تنبيه المشرف (علم)", supervisor_apology: "تنبيه المشرف (اعتذار)",
+  substitute_pick: "اختيار البديل", message: "رسالة نصية", button_unknown: "زر غير معروف", form_unknown: "نموذج غير معروف", error: "خطأ",
+};
+
+function DutyStatus({ d }: { d: DutyRow }) {
+  if (!d.sendOk) return <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">لم تُرسل</span>;
+  if (d.replacedByDutyId) return <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-700">اعتذر ← استُبدل</span>;
+  if (d.response === "ack") return <span className="rounded-full bg-emerald-50 px-2 py-0.5 text-xs text-emerald-700">✓ عُلم</span>;
+  if (d.response === "apology") return <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">اعتذر</span>;
+  if (d.response === "apology_pending") return <span className="rounded-full bg-amber-50 px-2 py-0.5 text-xs text-amber-800">ضغط «أعتذر» — لم يكتب السبب</span>;
+  if (d.deliveryStatus === "failed") return <span className="rounded-full bg-red-50 px-2 py-0.5 text-xs text-red-700">لم تصل</span>;
+  return <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">لم يرد{d.deliveryStatus === "read" ? " (قرأها)" : d.deliveryStatus === "delivered" ? " (وصلت)" : ""}</span>;
+}
+
+function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
+  const [date, setDate] = useState(addDays(data.today, 1));
+  const q = useQuery({ queryKey: ["muezzin-duties", date], queryFn: () => api<RepliesData>(`${BASE}/duties?date=${date}`), refetchInterval: 30_000 });
+  const qc = useQueryClient();
+  const [pick, setPick] = useState<Record<number, string>>({});
+  const assign = useMutation({
+    mutationFn: ({ id, substituteId }: { id: number; substituteId: number }) =>
+      api<{ substitute: string; note: string }>(`${BASE}/duties/${id}/substitute`, { method: "POST", body: JSON.stringify({ substituteId }) }),
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["muezzin-duties"] }); toast({ title: `أُسندت المهمة إلى ${r.substitute}`, description: r.note || "وأُرسلت له رسالة المهمة" }); },
+    onError: (e: Error) => toast({ title: "تعذّر الإسناد", description: e.message, variant: "destructive" }),
+  });
+  const duties = q.data?.duties ?? [];
+  const sent = duties.filter((d) => d.sendOk);
+  const count = (f: (d: DutyRow) => boolean) => sent.filter(f).length;
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><MessageSquareReply className="h-5 w-5 text-sidebar-primary" />ردود المؤذنين ليوم محدد</CardTitle>
+          <CardDescription>تتحدّث كل 30 ثانية. نفس ما يصل المشرف على واتساب.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <Input type="date" className="w-44" value={date} onChange={(e) => setDate(e.target.value)} />
+            <span className="text-sm">{DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()]}</span>
+            <Button size="sm" variant="outline" onClick={() => q.refetch()}><RefreshCw className="ml-1 h-4 w-4" />تحديث</Button>
+          </div>
+          {sent.length > 0 && (
+            <div className="flex flex-wrap gap-2 text-sm">
+              <span className="rounded-md border px-2 py-1">المهام: <b>{sent.length}</b></span>
+              <span className="rounded-md border px-2 py-1 text-emerald-700">عُلم: <b>{count((d) => d.response === "ack")}</b></span>
+              <span className="rounded-md border px-2 py-1 text-red-700">اعتذر: <b>{count((d) => d.response === "apology")}</b></span>
+              <span className="rounded-md border px-2 py-1 text-amber-800">بانتظار السبب: <b>{count((d) => d.response === "apology_pending")}</b></span>
+              <span className="rounded-md border px-2 py-1 text-muted-foreground">لم يرد: <b>{count((d) => !d.response)}</b></span>
+            </div>
+          )}
+          {q.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !duties.length ? (
+            <p className="text-sm text-muted-foreground">لا توجد رسائل مهام لهذا اليوم بعد{data.settings.confirmMode ? "" : " — التأكيد بالأزرار غير مفعّل"}.</p>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full border-collapse text-sm">
+                <thead><tr className="bg-muted/40">
+                  <th className="border p-1.5">المهمة</th><th className="border p-1.5">الدور</th><th className="border p-1.5">الشيخ</th>
+                  <th className="border p-1.5">الحالة</th><th className="border p-1.5">السبب</th><th className="border p-1.5">البديل</th>
+                </tr></thead>
+                <tbody>
+                  {duties.map((d) => {
+                    const replacement = duties.find((x) => x.id === d.replacedByDutyId);
+                    const original = duties.find((x) => x.id === d.substituteForDutyId);
+                    return (
+                      <tr key={d.id} className={cn(d.replacedByDutyId && "text-muted-foreground")}>
+                        <td className="border p-1.5 whitespace-nowrap">{SLOT_NAME[d.slot]}</td>
+                        <td className="border p-1.5">{d.role === "mulazim" ? "ملازم" : "مؤذن"}</td>
+                        <td className="border p-1.5">{d.name}{original && <div className="text-[11px] text-muted-foreground">بديل عن {original.name}</div>}{d.testMode && <span className="mr-1 text-[11px] text-muted-foreground">(تجربة)</span>}</td>
+                        <td className="border p-1.5"><DutyStatus d={d} />{!d.sendOk && d.sendDetail && <div className="text-[11px] text-red-700">{d.sendDetail}</div>}{d.deliveryError && <div className="text-[11px] text-red-700">{d.deliveryError}</div>}</td>
+                        <td className="border p-1.5 text-xs">{d.reason ?? "—"}</td>
+                        <td className="border p-1.5 text-xs">
+                          {replacement ? replacement.name : d.response === "apology" ? (
+                            <div className="flex items-center gap-1">
+                              <select className="rounded border bg-background px-1 py-0.5 text-xs" value={pick[d.id] ?? ""} onChange={(e) => setPick((p) => ({ ...p, [d.id]: e.target.value }))}>
+                                <option value="">اختر البديل…</option>
+                                {data.muezzins.filter((m) => m.isActive && m.id !== d.muezzinId).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+                              </select>
+                              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!pick[d.id] || assign.isPending}
+                                onClick={() => { if (window.confirm("إسناد المهمة للبديل وإرسال رسالة المهمة له؟")) assign.mutate({ id: d.id, substituteId: Number(pick[d.id]) }); }}>إسناد</Button>
+                            </div>
+                          ) : "—"}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>إحصائيات آخر 30 يومًا</CardTitle><CardDescription>{data.settings.testMode ? "رسائل التجربة (وضع التجربة مفعّل)" : "الرسائل الفعلية"}</CardDescription></CardHeader>
+        <CardContent className="overflow-x-auto">
+          {!q.data?.stats.length ? <p className="text-sm text-muted-foreground">لا توجد بيانات بعد.</p> : (
+            <table className="w-full border-collapse text-sm">
+              <thead><tr className="bg-muted/40"><th className="border p-1.5">الشيخ</th><th className="border p-1.5">المهام</th><th className="border p-1.5">عُلم</th><th className="border p-1.5">اعتذر</th><th className="border p-1.5">لم يرد</th><th className="border p-1.5">كبديل</th></tr></thead>
+              <tbody>{q.data.stats.map((r) => (
+                <tr key={r.name} className="tabular-nums"><td className="border p-1.5">{r.name}</td><td className="border p-1.5 text-center">{r.total}</td><td className="border p-1.5 text-center text-emerald-700">{r.ack}</td><td className="border p-1.5 text-center text-red-700">{r.apology}</td><td className="border p-1.5 text-center">{r.noReply}</td><td className="border p-1.5 text-center">{r.asSubstitute}</td></tr>
+              ))}</tbody>
+            </table>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>سجل واتساب</CardTitle><CardDescription>كل ما خرج ودخل عبر رقم الإرسال، الأحدث أولًا.</CardDescription></CardHeader>
+        <CardContent className="max-h-[480px] overflow-y-auto">
+          {!q.data?.events.length ? <p className="text-sm text-muted-foreground">لا يوجد شيء بعد.</p> : (
+            <ul className="space-y-2 text-sm">
+              {q.data.events.map((e) => (
+                <li key={e.id} className={cn("rounded-md border p-2", e.direction === "in" ? "bg-emerald-50/40" : "bg-muted/30")}>
+                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
+                    <span>{e.direction === "in" ? "⬅ وارد" : "➡ صادر"}</span><span>{EVENT_KIND[e.kind] ?? e.kind}</span>
+                    {e.name && <span className="font-medium text-foreground">{e.name}</span>}
+                    <span dir="ltr">{e.phone}</span><span>{new Date(e.createdAt).toLocaleString("ar-SA-u-ca-gregory", { timeZone: "Asia/Riyadh" })}</span>
+                  </div>
+                  {e.text && <div className="mt-1 whitespace-pre-line">{e.text}</div>}
+                </li>
+              ))}
+            </ul>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}
+
+/* ───────────────────────── الأزرار والمشرف ───────────────────────── */
+
+const WORDING_OPTIONS: Array<{ key: keyof Wording; title: string; options: Array<{ v: string; label: string }> }> = [
+  { key: "duty", title: "١. نص رسالة المهمة", options: [{ v: "a", label: "أ — رسمية" }, { v: "b", label: "ب — ودّية" }, { v: "c", label: "ج — مختصرة" }] },
+  { key: "buttons", title: "٢. نص الزرّين", options: [{ v: "a", label: "أ — عُلم / أعتذر" }, { v: "b", label: "ب — علم وسأحضر بإذن الله / أعتذر عن المهمة" }, { v: "c", label: "ج — ✅ عُلم / ❌ أعتذر" }] },
+  { key: "form", title: "٣. نموذج الاعتذار", options: [{ v: "a", label: "أ — رسمي" }, { v: "b", label: "ب — ودّي" }] },
+  { key: "substitute", title: "٥. رسالة البديل", options: [{ v: "a", label: "أ — مثل رسالة المهمة" }, { v: "b", label: "ب — مع ذكر أنه بديل" }] },
+];
+const TEMPLATE_STATUS: Record<string, string> = { APPROVED: "معتمد ✓", PENDING: "قيد المراجعة", REJECTED: "مرفوض", PAUSED: "موقوف مؤقتًا", DISABLED: "معطّل", NOT_FOUND: "غير موجود" };
+
+function CopyField({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="flex flex-wrap items-center gap-2">
+      <span className="w-40 text-sm font-medium">{label}</span>
+      <code dir="ltr" className="max-w-full break-all rounded bg-muted px-2 py-1 text-xs">{value}</code>
+      <Button size="sm" variant="outline" className="h-7 px-2" onClick={() => navigator.clipboard?.writeText(value).catch(() => {})}><Copy className="h-3.5 w-3.5" /></Button>
+    </div>
+  );
+}
+
+function ConfirmTab({ data, onChange, toast }: { data: Setup; onChange: () => void; toast: any }) {
+  const s = data.settings;
+  const [supPhone, setSupPhone] = useState(s.supervisorPhone ?? "");
+  const [wording, setWording] = useState<Wording>(s.wording);
+  const templates = useQuery({ queryKey: ["muezzin-templates"], queryFn: () => api<{ templates: Array<{ name: string; status: string; reason: string | null }> }>(`${BASE}/meta/templates`), enabled: Boolean(s.meta.templates) });
+  const save = useMutation({
+    mutationFn: (body: Partial<Settings>) => api(`${BASE}/settings`, { method: "PATCH", body: JSON.stringify(body) }),
+    onSuccess: () => { onChange(); toast({ title: "تم الحفظ" }); },
+    onError: (e: Error) => toast({ title: "تعذّر الحفظ", description: e.message, variant: "destructive" }),
+  });
+  const prepare = useMutation({
+    mutationFn: async () => {
+      await api(`${BASE}/settings`, { method: "PATCH", body: JSON.stringify({ wording }) });
+      return api<{ steps: string[] }>(`${BASE}/meta/prepare`, { method: "POST", body: "{}" });
+    },
+    onSuccess: (r) => { onChange(); templates.refetch(); toast({ title: "أُرسلت القوالب لميتا ✓", description: r.steps.join(" · ") }); },
+    onError: (e: Error) => toast({ title: "تعذّر الإرسال لميتا", description: e.message, variant: "destructive" }),
+  });
+  const preview = useMutation({
+    mutationFn: () => api<{ to: string; results: Array<{ label: string; ok: boolean; detail: string }> }>(`${BASE}/meta/preview`, { method: "POST", body: JSON.stringify({ wording }) }),
+    onSuccess: (r) => {
+      const bad = r.results.filter((x) => !x.ok);
+      toast({ title: bad.length ? "تعذّرت بعض رسائل المعاينة" : `أُرسلت المعاينة إلى ${r.to} ✓`, description: bad.length ? bad.map((x) => `${x.label}: ${x.detail}`).join(" · ") : r.results.map((x) => x.label).join(" · "), variant: bad.length ? "destructive" : undefined });
+    },
+    onError: (e: Error) => toast({ title: "تعذّرت المعاينة", description: e.message, variant: "destructive" }),
+  });
+  const wordingChanged = JSON.stringify(wording) !== JSON.stringify(s.wording);
+  const allApproved = Boolean(templates.data?.templates.length) && templates.data!.templates.every((t) => t.status === "APPROVED");
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader><CardTitle>١) المشرف</CardTitle><CardDescription>رقم واتساب شخصي عادي — تصله تنبيهات «عُلم» و«اعتذر» وقائمة البدلاء. في وضع التجربة تذهب لرقم التجربة.</CardDescription></CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <Input dir="ltr" className="w-44" placeholder="05XXXXXXXX" value={supPhone} onChange={(e) => setSupPhone(e.target.value)} />
+          <Button size="sm" variant="outline" disabled={supPhone === (s.supervisorPhone ?? "") || save.isPending} onClick={() => save.mutate({ supervisorPhone: supPhone || null })}>حفظ</Button>
+          {s.supervisorPhone && <span className="text-sm text-muted-foreground">{data.muezzins.find((m) => m.phone === s.supervisorPhone)?.name ?? ""}</span>}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>٢) استقبال الردود من ميتا</CardTitle>
+          <CardDescription>يُضبط مرة واحدة في إعدادات تطبيق Muezzin Notify في ميتا (Webhooks).</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2">
+          <CopyField label="رابط الاستقبال" value={data.status.webhookUrl} />
+          <CopyField label="رمز التحقق" value={s.verifyToken ?? ""} />
+          <div className="flex items-center gap-2 text-sm">
+            <span className="w-40 font-medium">المفتاح السري للتطبيق</span>
+            <StatusPill ok={data.status.appSecret} on="مضاف في Railway" off="غير مضاف — WHATSAPP_APP_SECRET" />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>٣) نص الرسائل وإرسالها لاعتماد ميتا</CardTitle><CardDescription>اختر كما في صفحة الخيارات، ثم أرسل. الاعتماد يأخذ عادة من ساعات إلى يوم.</CardDescription></CardHeader>
+        <CardContent className="space-y-3">
+          {WORDING_OPTIONS.map((g) => (
+            <div key={g.key} className="flex flex-wrap items-center gap-3">
+              <span className="w-40 text-sm font-medium">{g.title}</span>
+              <select className="rounded border bg-background px-2 py-1 text-sm" value={wording[g.key]} onChange={(e) => setWording((w) => ({ ...w, [g.key]: e.target.value }))}>
+                {g.options.map((o) => <option key={o.v} value={o.v}>{o.label}</option>)}
+              </select>
+            </div>
+          ))}
+          <p className="text-xs text-muted-foreground">٤. تنبيهات المشرف بنص ثابت كما في صفحة الخيارات.</p>
+          <div className="flex flex-wrap items-center gap-3 rounded-md bg-muted/40 p-2">
+            <Button variant="outline" disabled={preview.isPending || !data.status.whatsapp || !s.testPhone} onClick={() => preview.mutate()}>
+              {preview.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Send className="ml-2 h-4 w-4" />}معاينة على جوال التجربة
+            </Button>
+            <span className="text-xs text-muted-foreground">يرسل شكل الرسائل بالنص المختار إلى {s.testPhone ?? "رقم التجربة"}. الأزرار للعرض فقط. شرط ميتا: أرسل أولًا «السلام عليكم» من ذلك الجوال إلى رقم الإرسال 0557578627.</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3 border-t pt-3">
+            <Button disabled={prepare.isPending || !data.status.whatsapp}
+              onClick={() => { if (window.confirm("إرسال النماذج والقوالب لمراجعة ميتا بالنص المختار؟")) prepare.mutate(); }}>
+              {prepare.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Send className="ml-2 h-4 w-4" />}إرسال لاعتماد ميتا
+            </Button>
+            {s.meta.preparedAt && <span className="text-xs text-muted-foreground">آخر إرسال: {new Date(s.meta.preparedAt).toLocaleString("ar-SA-u-ca-gregory", { timeZone: "Asia/Riyadh" })}{wordingChanged ? " — غيّرت الاختيار ولم ترسله بعد" : ""}</span>}
+          </div>
+          {s.meta.templates && (
+            <div className="rounded-md border p-2">
+              <div className="mb-1 flex items-center gap-2 text-sm font-medium">حالة القوالب
+                <Button size="sm" variant="ghost" className="h-6 px-1" onClick={() => templates.refetch()}><RefreshCw className={cn("h-3.5 w-3.5", templates.isFetching && "animate-spin")} /></Button>
+              </div>
+              {templates.isError ? <p className="text-xs text-red-700">{(templates.error as Error).message}</p> : (
+                <ul className="space-y-1 text-sm">
+                  {(templates.data?.templates ?? []).map((t) => (
+                    <li key={t.name} className="flex flex-wrap gap-2"><code dir="ltr" className="text-xs">{t.name}</code>
+                      <span className={cn(t.status === "APPROVED" ? "text-emerald-700" : t.status === "REJECTED" ? "text-red-700" : "text-amber-800")}>{TEMPLATE_STATUS[t.status] ?? t.status}</span>
+                      {t.reason && <span className="text-xs text-red-700">{t.reason}</span>}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>٤) تفعيل التأكيد بالأزرار</CardTitle><CardDescription>بعد اعتماد كل القوالب. عند التفعيل تصل كل مهمة في رسالة مستقلة بزرّي «عُلم / أعتذر».</CardDescription></CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-3">
+          <Switch checked={s.confirmMode} disabled={save.isPending || (!s.confirmMode && !allApproved)}
+            onCheckedChange={(v) => save.mutate({ confirmMode: v })} />
+          <span className="text-sm text-muted-foreground">{s.confirmMode ? "مفعّل" : allApproved ? "جاهز للتفعيل" : "بانتظار اعتماد القوالب"}</span>
         </CardContent>
       </Card>
     </div>

@@ -7,6 +7,7 @@ import tasksRouter from "./tasks";
 import substitutionsRouter from "./substitutions";
 import weeklyScheduleRouter from "./weekly-schedule";
 import muezzinRouter from "./muezzin";
+import whatsappWebhookRouter from "./whatsapp-webhook";
 import telegramMonitorRouter from "./telegram-monitor";
 import commentsRouter from "./comments";
 import statsRouter from "./stats";
@@ -39,6 +40,8 @@ router.use(showcasePublicRouter);
 router.use(crosspostMachineRouter);
 // أجهزة تسجيل الحرمين: نشر الجمعة آليًا في التطبيق — محمي بمفتاح سري (FRIDAY_PUBLISH_KEY).
 router.use(fridayMachineRouter);
+// ردود واتساب الرسمية (جدول المؤذنين) — محمية بتوقيع ميتا، لا بالجلسة.
+router.use(whatsappWebhookRouter);
 
 // Protected routes
 router.use(requireAuth);
