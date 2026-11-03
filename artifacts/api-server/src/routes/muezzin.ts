@@ -18,6 +18,8 @@ import {
   updateSettings,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
+import { assignSubstitute, dutiesForDate, dutyStats, prepareMeta, recentEvents, templateStatuses } from "../services/muezzin-confirm";
+import { addDays } from "../services/muezzin";
 
 // «جدول المؤذنين» — للمدير فقط (requireAdmin على كل مسار في الخادم).
 const router = Router();
@@ -45,12 +47,17 @@ function handle(fn: (req: any, res: any) => Promise<unknown>) {
   };
 }
 
-router.get("/muezzin-schedule/setup", requireAdmin, handle(async (_req, res) => {
+router.get("/muezzin-schedule/setup", requireAdmin, handle(async (_req: any, res) => {
   const today = riyadhDayKey(new Date());
   res.json({
     today,
     settings: await getSettings(),
-    status: { vision: isVisionConfigured(), whatsapp: isWhatsAppConfigured() },
+    status: {
+      vision: isVisionConfigured(),
+      whatsapp: isWhatsAppConfigured(),
+      appSecret: Boolean(process.env.WHATSAPP_APP_SECRET?.trim()),
+      webhookUrl: `${_req.protocol}://${_req.get("host")}/api/whatsapp/webhook`,
+    },
     muezzins: await listMuezzins(),
     upcoming: await getScheduleRange(today, 8),
     log: await recentLog(),
@@ -89,6 +96,33 @@ router.post("/muezzin-schedule/week", requireAdmin, handle(async (req, res) => {
 router.patch("/muezzin-schedule/settings", requireAdmin, handle(async (req, res) => {
   await updateSettings(req.body ?? {});
   res.json(await getSettings());
+}));
+
+// ردود المؤذنين (عُلم / اعتذار) ليوم محدد + الإحصائيات + سجل واتساب.
+router.get("/muezzin-schedule/duties", requireAdmin, handle(async (req, res) => {
+  const date = String(req.query.date ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new MuezzinError(400, "تاريخ غير صحيح");
+  const settings = await getSettings();
+  const today = riyadhDayKey(new Date());
+  res.json({
+    duties: await dutiesForDate(date),
+    stats: await dutyStats(addDays(today, -30), addDays(today, 7), settings.testMode),
+    events: await recentEvents(80),
+  });
+}));
+
+// إسناد بديل من الموقع (بدل واتساب) — نفس النتيجة: يتحدّث الجدول وتصل البديلَ رسالته.
+router.post("/muezzin-schedule/duties/:id/substitute", requireAdmin, handle(async (req, res) => {
+  res.json(await assignSubstitute(Number(req.params.id), Number(req.body?.substituteId)));
+}));
+
+// إنشاء نماذج واتساب وإرسال القوالب لاعتماد ميتا بالنص المختار.
+router.post("/muezzin-schedule/meta/prepare", requireAdmin, handle(async (_req, res) => {
+  res.json(await prepareMeta());
+}));
+
+router.get("/muezzin-schedule/meta/templates", requireAdmin, handle(async (_req, res) => {
+  res.json({ templates: await templateStatuses() });
 }));
 
 // إرسال يدوي ليوم محدد (يحترم وضع التجربة ويمنع التكرار).

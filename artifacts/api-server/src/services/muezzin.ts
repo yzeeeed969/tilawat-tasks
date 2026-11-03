@@ -4,6 +4,8 @@ import { db } from "@workspace/db";
 import { hijriPartsOf, riyadhDayKey } from "../lib/hijri";
 import { ensureMuezzinSchema } from "./muezzin-schema";
 import { sendTelegramMessage } from "./telegram";
+import { sendDutiesForDate } from "./muezzin-confirm";
+import { normalizeWording, type Wording } from "./muezzin-wording";
 
 // «جدول المؤذنين»: قراءة صورة الجدول الأسبوعي الرسمي ← معاينة المدير ← إنشاء ← إرسال يومي لكل مؤذن
 // بمهامه فقط عبر واجهة واتساب الرسمية (Cloud API). وضع التجربة مفعّل افتراضيًا: كل الرسائل إلى رقم المدير.
@@ -27,7 +29,7 @@ export const SLOT_LABELS: Record<Slot, string> = {
   jumuah1: "الجمعة — الأذان الأول",
   jumuah2: "الجمعة — الأذان الثاني",
 };
-const SLOT_MESSAGE: Record<Slot, string> = {
+export const SLOT_MESSAGE: Record<Slot, string> = {
   fajr1: "الأذان الأول للفجر",
   fajr2: "الأذان الثاني للفجر",
   dhuhr: "أذان الظهر",
@@ -37,9 +39,9 @@ const SLOT_MESSAGE: Record<Slot, string> = {
   jumuah1: "الأذان الأول للجمعة",
   jumuah2: "الأذان الثاني للجمعة",
 };
-const ROLE_LABEL: Record<Role, string> = { muezzin: "مؤذن", mulazim: "ملازم" };
+export const ROLE_LABEL: Record<Role, string> = { muezzin: "مؤذن", mulazim: "ملازم" };
 // ترتيب زمني: الجمعة مكان الظهر.
-const ALL_SLOT_ORDER: Record<Slot, number> = { fajr1: 0, fajr2: 1, jumuah1: 2, jumuah2: 3, dhuhr: 4, asr: 5, maghrib: 6, isha: 7 };
+export const ALL_SLOT_ORDER: Record<Slot, number> = { fajr1: 0, fajr2: 1, jumuah1: 2, jumuah2: 3, dhuhr: 4, asr: 5, maghrib: 6, isha: 7 };
 
 export class MuezzinError extends Error {
   constructor(public status: number, message: string) {
@@ -47,7 +49,7 @@ export class MuezzinError extends Error {
   }
 }
 
-function rowsOf<T = any>(result: any): T[] {
+export function rowsOf<T = any>(result: any): T[] {
   return (Array.isArray(result) ? result : result?.rows ?? []) as T[];
 }
 
@@ -85,7 +87,7 @@ export async function listMuezzins(): Promise<Muezzin[]> {
   }));
 }
 
-function cleanPhone(raw: unknown): string | null {
+export function cleanPhone(raw: unknown): string | null {
   const digits = String(raw ?? "").replace(/\D/g, "");
   if (!digits) return null;
   let p = digits;
@@ -263,7 +265,7 @@ export async function readScheduleImage(file: Buffer, mime: string): Promise<Rea
 
 /* ───────────────────────── الإنشاء ───────────────────────── */
 
-function addDays(key: string, n: number) {
+export function addDays(key: string, n: number) {
   const d = new Date(`${key}T12:00:00Z`);
   d.setUTCDate(d.getUTCDate() + n);
   return d.toISOString().slice(0, 10);
@@ -335,26 +337,74 @@ export async function getScheduleRange(fromKey: string, days: number) {
 
 /* ───────────────────────── الإعدادات ───────────────────────── */
 
-export type MuezzinSettings = { sendHour: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null };
+export type MuezzinMeta = {
+  rev?: number;
+  apologyFlowId?: string;
+  substituteFlowId?: string;
+  templates?: { duty?: string; substitute?: string; supAck?: string; supApology?: string };
+  wording?: Wording; // النص الذي أُرسل فعلًا لميتا (قد يختلف عن المختار إن لم يُرسل بعد)
+  preparedAt?: string;
+};
+export type MuezzinSettings = {
+  sendHour: number;
+  sendMinute: number;
+  testMode: boolean;
+  testPhone: string | null;
+  autoSendEnabled: boolean;
+  lastAutoRunDate: string | null;
+  supervisorPhone: string | null;
+  confirmMode: boolean;
+  wording: Wording;
+  meta: MuezzinMeta;
+  verifyToken: string | null;
+};
 
 export async function getSettings(): Promise<MuezzinSettings> {
   await ensureMuezzinSchema();
   const r = rowsOf(await db.execute(sql`SELECT * FROM muezzin_settings WHERE id = 1`))[0] ?? {};
   return {
     sendHour: Number(r.send_hour ?? 21),
+    sendMinute: Number(r.send_minute ?? 0),
     testMode: r.test_mode !== false,
     testPhone: r.test_phone ? String(r.test_phone) : null,
     autoSendEnabled: Boolean(r.auto_send_enabled),
     lastAutoRunDate: r.last_auto_run_date ? String(r.last_auto_run_date) : null,
+    supervisorPhone: r.supervisor_phone ? String(r.supervisor_phone) : null,
+    confirmMode: Boolean(r.confirm_mode),
+    wording: normalizeWording(r.wording),
+    meta: (r.meta && typeof r.meta === "object" ? r.meta : {}) as MuezzinMeta,
+    verifyToken: r.verify_token ? String(r.verify_token) : null,
   };
 }
 
-export async function updateSettings(input: Partial<Omit<MuezzinSettings, "lastAutoRunDate">>) {
+export async function saveMeta(meta: MuezzinMeta) {
+  await db.execute(sql`UPDATE muezzin_settings SET meta = ${JSON.stringify(meta)}::jsonb, updated_at = now() WHERE id = 1`);
+}
+
+export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendHour" | "sendMinute" | "testMode" | "testPhone" | "autoSendEnabled" | "supervisorPhone" | "confirmMode" | "wording">>) {
   await ensureMuezzinSchema();
   if (input.sendHour !== undefined) {
     const h = Number(input.sendHour);
     if (!Number.isInteger(h) || h < 0 || h > 23) throw new MuezzinError(400, "ساعة الإرسال بين 0 و 23");
     await db.execute(sql`UPDATE muezzin_settings SET send_hour = ${h}, updated_at = now() WHERE id = 1`);
+  }
+  if (input.sendMinute !== undefined) {
+    const m = Number(input.sendMinute);
+    if (!Number.isInteger(m) || m < 0 || m > 59) throw new MuezzinError(400, "الدقائق بين 0 و 59");
+    await db.execute(sql`UPDATE muezzin_settings SET send_minute = ${m}, updated_at = now() WHERE id = 1`);
+  }
+  if (input.supervisorPhone !== undefined) {
+    await db.execute(sql`UPDATE muezzin_settings SET supervisor_phone = ${cleanPhone(input.supervisorPhone)}, updated_at = now() WHERE id = 1`);
+  }
+  if (input.wording !== undefined) {
+    await db.execute(sql`UPDATE muezzin_settings SET wording = ${JSON.stringify(normalizeWording(input.wording))}::jsonb, updated_at = now() WHERE id = 1`);
+  }
+  if (input.confirmMode !== undefined) {
+    if (input.confirmMode) {
+      const { checkConfirmReady } = await import("./muezzin-confirm");
+      await checkConfirmReady(); // يرمي خطأ واضحًا إن لم تُعتمد القوالب أو لم يُضبط المشرف.
+    }
+    await db.execute(sql`UPDATE muezzin_settings SET confirm_mode = ${Boolean(input.confirmMode)}, updated_at = now() WHERE id = 1`);
   }
   if (input.testPhone !== undefined) {
     await db.execute(sql`UPDATE muezzin_settings SET test_phone = ${cleanPhone(input.testPhone)}, updated_at = now() WHERE id = 1`);
@@ -407,7 +457,7 @@ async function sendWhatsAppTemplate(to: string, params: string[]): Promise<{ ok:
 
 /* ───────────────────────── الإرسال ───────────────────────── */
 
-async function alertAdmins(text: string) {
+export async function alertAdmins(text: string) {
   try {
     const admins = rowsOf(await db.execute(sql`
       SELECT r.chat_id FROM app_users u JOIN telegram_recipients r ON r.user_id = u.id
@@ -418,7 +468,7 @@ async function alertAdmins(text: string) {
   }
 }
 
-function weekdayOf(dateKey: string) {
+export function weekdayOf(dateKey: string) {
   return DAYS[new Date(`${dateKey}T12:00:00Z`).getUTCDay()];
 }
 
@@ -426,6 +476,8 @@ export async function sendForDate(dateKey: string) {
   await ensureMuezzinSchema();
   if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) throw new MuezzinError(400, "تاريخ غير صحيح");
   const settings = await getSettings();
+  // التأكيد بالأزرار: رسالة مستقلة لكل مهمة.
+  if (settings.confirmMode) return sendDutiesForDate(dateKey);
   const testMode = settings.testMode;
   if (testMode && !settings.testPhone) throw new MuezzinError(400, "أضف رقم التجربة أولًا (وضع التجربة مفعّل)");
 
@@ -492,8 +544,11 @@ export async function recentLog(limit = 60) {
 
 /* ───────────────────────── المجدول اليومي ───────────────────────── */
 
-function riyadhHour(now: Date) {
-  return Number(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Riyadh", hour: "2-digit", hourCycle: "h23" }).format(now));
+/** الدقائق منذ منتصف الليل بتوقيت الرياض. */
+function riyadhMinutes(now: Date) {
+  const parts = new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Riyadh", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(now);
+  const get = (t: string) => Number(parts.find((p) => p.type === t)?.value ?? 0);
+  return get("hour") * 60 + get("minute");
 }
 
 let schedulerStarted = false;
@@ -504,7 +559,7 @@ export async function runMuezzinTick(now = new Date()) {
   if (!settings.autoSendEnabled) return { ran: false };
   const today = riyadhDayKey(now);
   if (settings.lastAutoRunDate === today) return { ran: false };
-  if (riyadhHour(now) < settings.sendHour) return { ran: false };
+  if (riyadhMinutes(now) < settings.sendHour * 60 + settings.sendMinute) return { ran: false };
   // نحجز يوم اليوم أولًا (ذرّيًا) كي لا يتكرر الإرسال حتى لو تعددت النسخ أو أُعيد التشغيل.
   const claimed = rowsOf(await db.execute(sql`
     UPDATE muezzin_settings SET last_auto_run_date = ${today}
@@ -536,5 +591,5 @@ export function startMuezzinScheduler(logger?: Logger) {
     }
   };
   setTimeout(tick, 30_000).unref();
-  setInterval(tick, 5 * 60_000).unref();
+  setInterval(tick, 60_000).unref(); // كل دقيقة — ليصح الإرسال في الدقيقة المحددة.
 }
