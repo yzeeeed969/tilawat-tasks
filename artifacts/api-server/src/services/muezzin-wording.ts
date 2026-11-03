@@ -33,7 +33,7 @@ export const DUTY_TEXT: Record<Wording["duty"], string> = {
 
 export const BUTTONS: Record<Wording["buttons"], [string, string]> = {
   a: ["عُلم", "أعتذر"],
-  b: ["عُلم وسأحضر بإذن الله", "أعتذر عن المهمة"],
+  b: ["علم وسأحضر بإذن الله", "أعتذر عن المهمة"],
   c: ["✅ عُلم", "❌ أعتذر"],
 };
 

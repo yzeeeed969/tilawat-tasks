@@ -727,7 +727,7 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
 
 const WORDING_OPTIONS: Array<{ key: keyof Wording; title: string; options: Array<{ v: string; label: string }> }> = [
   { key: "duty", title: "١. نص رسالة المهمة", options: [{ v: "a", label: "أ — رسمية" }, { v: "b", label: "ب — ودّية" }, { v: "c", label: "ج — مختصرة" }] },
-  { key: "buttons", title: "٢. نص الزرّين", options: [{ v: "a", label: "أ — عُلم / أعتذر" }, { v: "b", label: "ب — عُلم وسأحضر بإذن الله / أعتذر عن المهمة" }, { v: "c", label: "ج — ✅ عُلم / ❌ أعتذر" }] },
+  { key: "buttons", title: "٢. نص الزرّين", options: [{ v: "a", label: "أ — عُلم / أعتذر" }, { v: "b", label: "ب — علم وسأحضر بإذن الله / أعتذر عن المهمة" }, { v: "c", label: "ج — ✅ عُلم / ❌ أعتذر" }] },
   { key: "form", title: "٣. نموذج الاعتذار", options: [{ v: "a", label: "أ — رسمي" }, { v: "b", label: "ب — ودّي" }] },
   { key: "substitute", title: "٥. رسالة البديل", options: [{ v: "a", label: "أ — مثل رسالة المهمة" }, { v: "b", label: "ب — مع ذكر أنه بديل" }] },
 ];
@@ -760,6 +760,14 @@ function ConfirmTab({ data, onChange, toast }: { data: Setup; onChange: () => vo
     },
     onSuccess: (r) => { onChange(); templates.refetch(); toast({ title: "أُرسلت القوالب لميتا ✓", description: r.steps.join(" · ") }); },
     onError: (e: Error) => toast({ title: "تعذّر الإرسال لميتا", description: e.message, variant: "destructive" }),
+  });
+  const preview = useMutation({
+    mutationFn: () => api<{ to: string; results: Array<{ label: string; ok: boolean; detail: string }> }>(`${BASE}/meta/preview`, { method: "POST", body: JSON.stringify({ wording }) }),
+    onSuccess: (r) => {
+      const bad = r.results.filter((x) => !x.ok);
+      toast({ title: bad.length ? "تعذّرت بعض رسائل المعاينة" : `أُرسلت المعاينة إلى ${r.to} ✓`, description: bad.length ? bad.map((x) => `${x.label}: ${x.detail}`).join(" · ") : r.results.map((x) => x.label).join(" · "), variant: bad.length ? "destructive" : undefined });
+    },
+    onError: (e: Error) => toast({ title: "تعذّرت المعاينة", description: e.message, variant: "destructive" }),
   });
   const wordingChanged = JSON.stringify(wording) !== JSON.stringify(s.wording);
   const allApproved = Boolean(templates.data?.templates.length) && templates.data!.templates.every((t) => t.status === "APPROVED");
@@ -802,6 +810,12 @@ function ConfirmTab({ data, onChange, toast }: { data: Setup; onChange: () => vo
             </div>
           ))}
           <p className="text-xs text-muted-foreground">٤. تنبيهات المشرف بنص ثابت كما في صفحة الخيارات.</p>
+          <div className="flex flex-wrap items-center gap-3 rounded-md bg-muted/40 p-2">
+            <Button variant="outline" disabled={preview.isPending || !data.status.whatsapp || !s.testPhone} onClick={() => preview.mutate()}>
+              {preview.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Send className="ml-2 h-4 w-4" />}معاينة على جوال التجربة
+            </Button>
+            <span className="text-xs text-muted-foreground">يرسل شكل الرسائل بالنص المختار إلى {s.testPhone ?? "رقم التجربة"}. الأزرار للعرض فقط. شرط ميتا: أرسل أولًا «السلام عليكم» من ذلك الجوال إلى رقم الإرسال 0557578627.</span>
+          </div>
           <div className="flex flex-wrap items-center gap-3 border-t pt-3">
             <Button disabled={prepare.isPending || !data.status.whatsapp}
               onClick={() => { if (window.confirm("إرسال النماذج والقوالب لمراجعة ميتا بالنص المختار؟")) prepare.mutate(); }}>

@@ -525,3 +525,41 @@ export async function recentEvents(limit = 100) {
   }));
 }
 
+
+/* ───────────────────────── معاينة على جوال التجربة ───────────────────────── */
+
+/**
+ * يرسل لرقم التجربة شكل الرسائل بالنص المختار، كرسائل تفاعلية بلا قالب (لا تحتاج اعتماد ميتا).
+ * شرط ميتا: أن يكون رقم التجربة راسل رقم الإرسال خلال آخر 24 ساعة. الأزرار هنا للعرض فقط.
+ */
+export async function sendPreview(input: unknown) {
+  const { normalizeWording } = await import("./muezzin-wording");
+  const s = await getSettings();
+  const to = s.testPhone;
+  if (!to) throw new MuezzinError(400, "أضف رقم التجربة أولًا");
+  const w = normalizeWording(input ?? s.wording);
+  const [b1, b2] = BUTTONS[w.buttons];
+  // أزرار الرسائل التفاعلية حدّها 20 حرفًا (في القالب الفعلي 25).
+  const btn = (id: string, title: string) => ({ type: "reply", reply: { id, title: title.slice(0, 20) } });
+  const interactive = (text: string, buttons: Array<ReturnType<typeof btn>>) => ({
+    type: "interactive",
+    interactive: { type: "button", body: { text }, action: { buttons } },
+  });
+  const messages: Array<{ label: string; payload: Record<string, unknown> }> = [
+    { label: "رسالة المهمة", payload: interactive(fill(DUTY_TEXT[w.duty], EXAMPLE), [btn("p1", b1), btn("p2", b2)]) },
+    { label: "تنبيه المشرف (علم)", payload: textMsg(fill(SUP_ACK_TEXT, EXAMPLE)) },
+    { label: "تنبيه المشرف (اعتذار)", payload: interactive(fill(SUP_APOLOGY_TEXT, [...EXAMPLE, "ظرف عائلي"]), [btn("p3", SUP_APOLOGY_BUTTON)]) },
+  ];
+  if (w.substitute === "b") {
+    messages.push({ label: "رسالة البديل", payload: interactive(fill(SUBSTITUTE_TEXT, ["أحمد نحاس", ...EXAMPLE.slice(1), "عبدالله باعفيف"]), [btn("p4", b1), btn("p5", b2)]) });
+  }
+  const results: Array<{ label: string; ok: boolean; detail: string }> = [];
+  for (const m of messages) {
+    const r = await sendMessage(to, m.payload);
+    results.push({ label: m.label, ok: r.ok, detail: r.detail });
+    if (!r.ok) break;
+  }
+  const outside = results.some((r) => !r.ok && /131047|24 hours|re-engage/i.test(r.detail));
+  if (outside) throw new MuezzinError(400, `أرسل أولًا أي رسالة (مثل «السلام عليكم») من جوال التجربة إلى رقم الإرسال 0557578627، ثم أعد المحاولة.`);
+  return { to, results };
+}

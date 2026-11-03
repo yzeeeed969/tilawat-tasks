@@ -18,7 +18,7 @@ import {
   updateSettings,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, dutiesForDate, dutyStats, prepareMeta, recentEvents, templateStatuses } from "../services/muezzin-confirm";
+import { assignSubstitute, dutiesForDate, dutyStats, prepareMeta, recentEvents, sendPreview, templateStatuses } from "../services/muezzin-confirm";
 import { addDays } from "../services/muezzin";
 
 // «جدول المؤذنين» — للمدير فقط (requireAdmin على كل مسار في الخادم).
@@ -123,6 +123,11 @@ router.post("/muezzin-schedule/meta/prepare", requireAdmin, handle(async (_req, 
 
 router.get("/muezzin-schedule/meta/templates", requireAdmin, handle(async (_req, res) => {
   res.json({ templates: await templateStatuses() });
+}));
+
+// معاينة شكل الرسائل على جوال التجربة (بلا قالب — لا تحتاج اعتماد ميتا).
+router.post("/muezzin-schedule/meta/preview", requireAdmin, handle(async (req, res) => {
+  res.json(await sendPreview(req.body?.wording));
 }));
 
 // إرسال يدوي ليوم محدد (يحترم وضع التجربة ويمنع التكرار).
