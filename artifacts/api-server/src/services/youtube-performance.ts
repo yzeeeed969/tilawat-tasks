@@ -62,10 +62,10 @@ const median = (values: number[]) => {
   return s.length % 2 ? s[(s.length - 1) / 2] : (s[s.length / 2 - 1] + s[s.length / 2]) / 2;
 };
 
-async function channelVideoIds(uploadsPlaylistId: string, cutoff: number): Promise<string[]> {
+async function channelVideoIds(uploadsPlaylistId: string, cutoff: number, maxPages = 6): Promise<string[]> {
   const ids: string[] = [];
   let pageToken: string | undefined;
-  for (let page = 0; page < 6; page++) {
+  for (let page = 0; page < maxPages; page++) {
     const data = await callYoutubeApi<{ nextPageToken?: string; items?: Array<{ contentDetails?: { videoId?: string; videoPublishedAt?: string } }> }>(
       "playlistItems",
       { part: "contentDetails", playlistId: uploadsPlaylistId, maxResults: "50", ...(pageToken ? { pageToken } : {}) },
@@ -100,7 +100,8 @@ async function buildPerformance(days: number) {
   for (const ch of channels) {
     if (!ch.uploads_playlist_id) { errors.push(`${ch.reciter_name_constant}: لم تُربط قناته بعد`); continue; }
     try {
-      const ids = await channelVideoIds(ch.uploads_playlist_id, cutoff);
+      // المدد الطويلة (تقرير سنوي): صفحات أكثر — كل صفحة 50 مقطعًا ووحدة واحدة من الحصة.
+      const ids = await channelVideoIds(ch.uploads_playlist_id, cutoff, Math.min(40, Math.max(6, Math.ceil(days / 15))));
       for (let i = 0; i < ids.length; i += 50) {
         const chunk = ids.slice(i, i + 50);
         const data = await callYoutubeApi<{ items?: any[] }>("videos", { part: "snippet,statistics,contentDetails,liveStreamingDetails", id: chunk.join(","), maxResults: "50" });
@@ -174,7 +175,8 @@ async function buildPerformance(days: number) {
 }
 
 export async function youtubePerformance(days = 30, refresh = false) {
-  const d = Math.min(Math.max(Math.round(days) || 30, 7), 90);
+  // حتى سنة كاملة (الإصدار 77) لتقارير الأشهر والسنة؛ الصفحة نفسها تطلب 30 يومًا.
+  const d = Math.min(Math.max(Math.round(days) || 30, 7), 366);
   if (!refresh && cache && cache.days === d && Date.now() - cache.at < 30 * 60_000) return cache.value;
   const value = await buildPerformance(d);
   cache = { at: Date.now(), days: d, value };

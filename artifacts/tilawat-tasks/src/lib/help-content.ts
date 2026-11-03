@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 77, date: "2026-11-03",
+    items: [
+      { text: "تقارير المدد الطويلة: أداء مقاطع يوتيوب صار يُجلب حتى سنة كاملة من الواجهة الرسمية، وأُضيفت قراءة مشاهدات فيسبوك وإنستقرام لأي مدة من حسابات Meta المربوطة (قراءة فقط).", adminOnly: true },
+    ],
+  },
+  {
     version: 76, date: "2026-11-02",
     items: [
       { text: "مسار تيليجرام ← فيسبوك: كل فيديو أفقي يُنشر في قناة الشيخ على تيليجرام يُنشر تلقائيًا في صفحته على فيسبوك بنص المنشور نفسه — بلا أي تنزيل من يوتيوب.", adminOnly: true },

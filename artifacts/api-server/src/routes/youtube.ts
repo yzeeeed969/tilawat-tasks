@@ -15,6 +15,7 @@ import { runYoutubeMonitorTick, reprocessChannelNeedsAttentionVideos } from "../
 import { ensureYoutubeMonitorSchema } from "../services/youtube-monitor-schema";
 import { riyadhDayKey } from "../lib/hijri";
 import { youtubePerformance } from "../services/youtube-performance";
+import { metaPeriodViews } from "../services/meta-period-views";
 
 // يزيل المسافات الطرفية وعلامات الاقتباس الطرفية بكل أشكالها الشائعة (مستقيمة أو منحنية/ذكية) —
 // خطأ شائع عند اللصق من الهاتف أو Word، وقد سبّب هذا تحديدًا خللًا حقيقيًا (قناة الوليد الشمسان).
@@ -67,6 +68,15 @@ router.get("/youtube/performance", async (req, res) => {
     res.json(await youtubePerformance(Number(req.query.days) || 30, req.query.refresh === "1"));
   } catch (error) {
     res.status(500).json({ message: (error as Error).message });
+  }
+});
+
+// مشاهدات فيسبوك وإنستقرام لمدة محددة (الإصدار 77) — قراءة فقط من حسابات Meta المربوطة، للتقارير.
+router.get("/reports/meta-views", async (req, res) => {
+  try {
+    res.json(await metaPeriodViews(String(req.query.from ?? ""), String(req.query.to ?? "")));
+  } catch (error) {
+    res.status(400).json({ message: (error as Error).message });
   }
 });
 
