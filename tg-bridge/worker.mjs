@@ -138,8 +138,22 @@ setInterval(async () => {
     const r = await site("/crosspost/tg/retries", {});
     for (const x of r.retries ?? []) {
       log(`إعادة رفع: ${x.chatTitle} #${x.messageId}`);
-      await handleVideo({ chat: { id: Number(x.chatId), username: x.username, title: x.chatTitle }, message_id: x.messageId, caption: x.caption,
-        video: { file_id: x.fileId, width: x.width, height: x.height, duration: x.duration, file_size: x.fileSize } }).catch((e) => log("retry:", e.message));
+      let video = x.fileId ? { file_id: x.fileId, width: x.width, height: x.height, duration: x.duration, file_size: x.fileSize } : null;
+      let caption = x.caption;
+      if (!video && r.recoveryChatId) {
+        // استرجاع منشور قديم بلا معرّف: إعادة توجيهه لمحادثة المدير الخاصة لنحصل على الملف.
+        try {
+          const fwd = await bot("forwardMessage", { chat_id: r.recoveryChatId, from_chat_id: x.chatId, message_id: x.messageId });
+          if (fwd.video) { video = fwd.video; caption = fwd.caption ?? x.caption; }
+          else throw new Error("المنشور ليس فيديو");
+        } catch (e) {
+          log("استرجاع:", e.message);
+          await site("/crosspost/tg/retry-failed", { chatId: x.chatId, messageId: x.messageId, reason: e.message }).catch(() => {});
+          continue;
+        }
+      }
+      if (!video) continue;
+      await handleVideo({ chat: { id: Number(x.chatId), username: x.username, title: x.chatTitle }, message_id: x.messageId, caption, video }).catch((e) => log("retry:", e.message));
     }
   } catch (e) { log("retries:", e.message); } finally { retrying = false; }
 }, 5 * 60_000);
@@ -148,7 +162,7 @@ log("بدء الاستماع لقنوات المشايخ…");
 for (;;) {
   let updates = [];
   try {
-    updates = await bot("getUpdates", { offset, timeout: 50, allowed_updates: ["channel_post", "my_chat_member"] });
+    updates = await bot("getUpdates", { offset, timeout: 50, allowed_updates: ["channel_post", "my_chat_member", "message"] });
   } catch (e) {
     log("getUpdates:", e.message);
     await sleep(5000);
@@ -160,6 +174,9 @@ for (;;) {
         const c = u.my_chat_member.chat;
         await site("/crosspost/tg/channel", { chatId: String(c.id), title: c.title ?? null, username: c.username ?? null, botStatus: u.my_chat_member.new_chat_member?.status ?? null }).catch((e) => log("channel:", e.message));
         log(`القناة «${c.title}»: حالة البوت ${u.my_chat_member.new_chat_member?.status}`);
+      } else if (u.message && u.message.chat?.type === "private" && typeof u.message.text === "string") {
+        const r = await site("/crosspost/tg/private", { chatId: String(u.message.chat.id), text: u.message.text }).catch(() => null);
+        if (r?.reply) await bot("sendMessage", { chat_id: u.message.chat.id, text: r.reply }).catch(() => {});
       } else if (u.channel_post?.video) {
         await handleVideo(u.channel_post);
       }

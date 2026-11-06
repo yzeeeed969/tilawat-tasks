@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
-import { pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
+import { createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
@@ -73,7 +73,15 @@ crosspostMachineRouter.post("/crosspost/tg/heartbeat", requireBridgeKey, async (
 
 // طلبات إعادة الرفع التي طلبها المدير (الإصدار 77).
 crosspostMachineRouter.post("/crosspost/tg/retries", requireBridgeKey, async (_req, res) => {
-  res.json({ ok: true, retries: await pendingTgRetries() });
+  res.json({ ok: true, ...(await pendingTgRetries()) });
+});
+crosspostMachineRouter.post("/crosspost/tg/retry-failed", requireBridgeKey, async (req, res) => {
+  await retryFailed(String(req.body?.chatId ?? ""), Number(req.body?.messageId), String(req.body?.reason ?? ""));
+  res.json({ ok: true });
+});
+// رسالة خاصة للبوت (ربط محادثة الاسترجاع برمز).
+crosspostMachineRouter.post("/crosspost/tg/private", requireBridgeKey, async (req, res) => {
+  res.json(await handlePrivateMessage(String(req.body?.chatId ?? ""), String(req.body?.text ?? "")));
 });
 
 // البوت أُضيف لقناة/تغيّرت صلاحيته.
@@ -151,6 +159,9 @@ router.delete("/crosspost/manual-links/:channelId", async (req, res) => {
 // مسار تيليجرام ← فيسبوك (الإصدار 76).
 router.get("/crosspost/tg/overview", async (_req, res) => {
   res.json(await tgCrosspostOverview());
+});
+router.post("/crosspost/tg/pair", async (_req, res) => {
+  res.json(await createPairCode());
 });
 router.post("/crosspost/tg/retry/:id", async (req, res) => {
   res.json(await requestTgRetry(Number(req.params.id)));

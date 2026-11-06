@@ -71,6 +71,10 @@ export function ensureTgCrosspostSchema() {
       // الإصدار 77: حفظ معرّف الملف لإعادة المحاولة، وطلب إعادة من المدير.
       await db.execute(sql`ALTER TABLE tg_fb_uploads ADD COLUMN IF NOT EXISTS file_id text`);
       await db.execute(sql`ALTER TABLE tg_fb_uploads ADD COLUMN IF NOT EXISTS retry_requested boolean NOT NULL DEFAULT false`);
+      // محادثة الاسترجاع الخاصة (المدير مع البوت) + رمز الربط المؤقت (الإصدار 78).
+      await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS recovery_chat_id text`);
+      await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_code text`);
+      await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_expires timestamp`);
     })().catch((err) => { schemaReady = null; throw err; });
   }
   return schemaReady;
@@ -226,17 +230,43 @@ export async function requestTgRetry(uploadId: number) {
   await ensureTgCrosspostSchema();
   const [row] = rowsOf(await db.execute(sql`UPDATE tg_fb_uploads SET retry_requested = true WHERE id = ${uploadId} AND status = 'failed' RETURNING id, file_id`));
   if (!row) return { ok: false, message: "لا يوجد منشور فاشل بهذا الرقم" };
-  return { ok: true, hasFile: Boolean(row.file_id), message: row.file_id ? "ستُعاد المحاولة خلال 5 دقائق" : "سُجّل الطلب، لكن معرّف الملف غير محفوظ لهذا المنشور القديم — يحتاج إعادة نشر يدوية" };
+  return { ok: true, hasFile: Boolean(row.file_id), message: "ستُعاد المحاولة خلال 5 دقائق" };
 }
 
 export async function pendingTgRetries() {
   await ensureTgCrosspostSchema();
+  const [s] = rowsOf(await db.execute(sql`SELECT recovery_chat_id FROM tg_fb_settings WHERE id = 1`));
+  const recoveryChatId = s?.recovery_chat_id ? String(s.recovery_chat_id) : null;
+  // بلا معرّف ملف: يُسترجع بإعادة توجيه المنشور لمحادثة المدير الخاصة مع البوت (إن رُبطت).
   const rows = rowsOf(await db.execute(sql`
     SELECT u.chat_id, u.message_id, u.title, u.width, u.height, u.duration, u.file_size, u.file_id, c.username, c.title AS chat_title
     FROM tg_fb_uploads u LEFT JOIN tg_fb_channels c ON c.chat_id = u.chat_id
-    WHERE u.retry_requested AND u.status = 'failed' AND u.file_id IS NOT NULL ORDER BY u.id LIMIT 5`));
-  return rows.map((r) => ({ chatId: String(r.chat_id), messageId: Number(r.message_id), caption: String(r.title ?? ""), width: Number(r.width ?? 0), height: Number(r.height ?? 0),
-    duration: Number(r.duration ?? 0), fileSize: Number(r.file_size ?? 0), fileId: String(r.file_id), username: r.username ?? null, chatTitle: r.chat_title ?? null }));
+    WHERE u.retry_requested AND u.status = 'failed' AND (u.file_id IS NOT NULL OR ${recoveryChatId}::text IS NOT NULL) ORDER BY u.id LIMIT 5`));
+  return { recoveryChatId, retries: rows.map((r) => ({ chatId: String(r.chat_id), messageId: Number(r.message_id), caption: String(r.title ?? ""), width: Number(r.width ?? 0), height: Number(r.height ?? 0),
+    duration: Number(r.duration ?? 0), fileSize: Number(r.file_size ?? 0), fileId: r.file_id ? String(r.file_id) : null, username: r.username ?? null, chatTitle: r.chat_title ?? null })) };
+}
+
+// تعذّر الاسترجاع (حُذف المنشور من القناة مثلًا): يُلغى طلب الإعادة ويُسجَّل السبب.
+export async function retryFailed(chatId: string, messageId: number, reason: string) {
+  await ensureTgCrosspostSchema();
+  await db.execute(sql`UPDATE tg_fb_uploads SET retry_requested = false, reason = ${`تعذّرت الإعادة: ${reason}`.slice(0, 500)} WHERE chat_id = ${chatId} AND message_id = ${messageId}`);
+}
+
+// ربط محادثة المدير الخاصة مع البوت برمز مؤقت (30 دقيقة) — الرمز يولّده المدير من الموقع.
+export async function createPairCode() {
+  await ensureTgCrosspostSchema();
+  const code = String(Math.floor(100000 + Math.random() * 900000));
+  await db.execute(sql`UPDATE tg_fb_settings SET pair_code = ${code}, pair_expires = now() + interval '30 minutes' WHERE id = 1`);
+  return { ok: true, code };
+}
+export async function handlePrivateMessage(chatId: string, text: string): Promise<{ reply: string }> {
+  await ensureTgCrosspostSchema();
+  const code = text.match(/\b(\d{6})\b/)?.[1];
+  if (!code) return { reply: "هذا البوت خاص بنظام النشر الآلي لتلاوات الحرمين." };
+  const rows = rowsOf(await db.execute(sql`
+    UPDATE tg_fb_settings SET recovery_chat_id = ${chatId}, pair_code = NULL, pair_expires = NULL
+    WHERE id = 1 AND pair_code = ${code} AND pair_expires > now() RETURNING id`));
+  return { reply: rows.length ? "✅ تم ربط هذه المحادثة. ستصلك هنا نسخ المقاطع التي يُعاد رفعها لفيسبوك." : "الرمز غير صحيح أو انتهت صلاحيته." };
 }
 
 // ── المدير ────────────────────────────────────────────────────────────────────────────────────

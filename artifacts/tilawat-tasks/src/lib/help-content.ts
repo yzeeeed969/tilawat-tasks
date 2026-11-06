@@ -543,6 +543,12 @@ export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ te
     ],
   },
   {
+    version: 78, date: "2026-11-06",
+    items: [
+      { text: "استرجاع فيديوهات تيليجرام التي فشل نشرها في فيسبوك وإعادة رفعها تلقائيًا.", adminOnly: true },
+    ],
+  },
+  {
     version: 77, date: "2026-11-06",
     items: [
       { text: "إصلاح نشر فيديوهات تيليجرام في فيسبوك: عنوان المنشور صار أول سطر من النص (بحد 90 حرفًا) والنص كاملًا في الوصف، بعد أن رفض فيسبوك العنوان الطويل.", adminOnly: true },
