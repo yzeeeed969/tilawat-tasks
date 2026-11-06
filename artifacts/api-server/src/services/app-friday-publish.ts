@@ -319,7 +319,7 @@ async function dryRunFriday(input: FridaySubmission): Promise<{ ok: boolean; sta
     const form = await adminPage(input.kind === "khutbah" ? "/admin/miscellanies/create" : "/admin/prayers/create");
     const reciter = khateeb ? pickReciter(form.html, khateeb, input.mosque) : null;
     const notes = [
-      "الرابط والملف: سليمان",
+      "الرابط والملف: صالحان",
       "الدخول للوحة التطبيق بحساب النظام: نجح",
       khateeb ? `الخطيب من منشور القناة: ${khateeb}${reciter ? ` (في القائمة: ${reciter.label})` : " — غير موجود في قائمة القراء!"}` : "منشور «خطباء الحرمين» لهذه الجمعة لم يُنشر بعد في القناة (يُنشر عادة ليلة الجمعة)",
     ];
