@@ -68,6 +68,9 @@ export function ensureTgCrosspostSchema() {
           created_at timestamp NOT NULL DEFAULT now(),
           UNIQUE (chat_id, message_id)
         )`);
+      // الإصدار 77: حفظ معرّف الملف لإعادة المحاولة، وطلب إعادة من المدير.
+      await db.execute(sql`ALTER TABLE tg_fb_uploads ADD COLUMN IF NOT EXISTS file_id text`);
+      await db.execute(sql`ALTER TABLE tg_fb_uploads ADD COLUMN IF NOT EXISTS retry_requested boolean NOT NULL DEFAULT false`);
     })().catch((err) => { schemaReady = null; throw err; });
   }
   return schemaReady;
@@ -133,7 +136,17 @@ export async function registerChannel(input: { chatId: string; title?: string | 
   await db.execute(sql`UPDATE tg_fb_settings SET last_bridge_at = now() WHERE id = 1`);
 }
 
-export type TgCheckInput = { chatId: string; messageId: number; username: string | null; chatTitle: string | null; caption: string; width: number; height: number; duration: number; fileSize: number };
+export type TgCheckInput = { chatId: string; messageId: number; username: string | null; chatTitle: string | null; caption: string; width: number; height: number; duration: number; fileSize: number; fileId?: string | null };
+
+// عنوان فيسبوك: أول سطر من نص المنشور فقط وبحد 90 حرفًا (فيسبوك يرفض العنوان الطويل: «اسم الملف طويل للغاية»)،
+// والنص الكامل يذهب في وصف المنشور. (الإصدار 77)
+export function facebookTitleOf(caption: string): string {
+  const first = caption.split(/\r?\n/).map((l) => l.replace(/\s+/g, " ").trim()).find(Boolean) ?? "";
+  if (first.length <= 90) return first;
+  const cut = first.slice(0, 90);
+  const sp = cut.lastIndexOf(" ");
+  return (sp > 40 ? cut.slice(0, sp) : cut).trim() + "…";
+}
 export type TgCheckResult = { upload: true; uploadId: number; pageName: string } | { upload: false; reason: string };
 
 export async function checkTgVideo(input: TgCheckInput): Promise<TgCheckResult> {
@@ -142,7 +155,7 @@ export async function checkTgVideo(input: TgCheckInput): Promise<TgCheckResult> 
   const record = async (status: string, reason: string, extra: { pageId?: string; pageName?: string; reciterName?: string } = {}) => {
     await db.execute(sql`
       INSERT INTO tg_fb_uploads (chat_id, message_id, fb_page_id, fb_page_name, reciter_name, title, status, reason, width, height, duration, file_size)
-      VALUES (${input.chatId}, ${input.messageId}, ${extra.pageId ?? null}, ${extra.pageName ?? null}, ${extra.reciterName ?? null}, ${input.caption.slice(0, 500)},
+      VALUES (${input.chatId}, ${input.messageId}, ${extra.pageId ?? null}, ${extra.pageName ?? null}, ${extra.reciterName ?? null}, ${input.caption.slice(0, 2000)},
         ${status}, ${reason}, ${input.width}, ${input.height}, ${input.duration}, ${input.fileSize})
       ON CONFLICT (chat_id, message_id) DO NOTHING`);
   };
@@ -161,7 +174,7 @@ export async function checkTgVideo(input: TgCheckInput): Promise<TgCheckResult> 
   const title = input.caption.trim();
   if (title) {
     const [dup] = rowsOf(await db.execute(sql`
-      SELECT 1 FROM tg_fb_uploads WHERE fb_page_id = ${target.pageId} AND title = ${title.slice(0, 500)} AND status IN ('uploaded','uploading')
+      SELECT 1 FROM tg_fb_uploads WHERE fb_page_id = ${target.pageId} AND title = ${title.slice(0, 2000)} AND status IN ('uploaded','uploading')
         AND NOT (chat_id = ${input.chatId} AND message_id = ${input.messageId}) AND created_at > now() - interval '3 days' LIMIT 1`));
     if (dup) {
       await record("skipped", "نفس العنوان نُشر في نفس الصفحة خلال 3 أيام — منع تكرار", { pageId: target.pageId, pageName: target.pageName, reciterName: target.reciterName });
@@ -169,11 +182,12 @@ export async function checkTgVideo(input: TgCheckInput): Promise<TgCheckResult> 
     }
   }
   const [claimed] = rowsOf(await db.execute(sql`
-    INSERT INTO tg_fb_uploads (chat_id, message_id, fb_page_id, fb_page_name, reciter_name, title, status, width, height, duration, file_size)
-    VALUES (${input.chatId}, ${input.messageId}, ${target.pageId}, ${target.pageName}, ${target.reciterName}, ${title.slice(0, 500)}, 'uploading',
-      ${input.width}, ${input.height}, ${input.duration}, ${input.fileSize})
-    ON CONFLICT (chat_id, message_id) DO UPDATE SET status = 'uploading', attempts = tg_fb_uploads.attempts + 1, started_at = now(), reason = NULL
-    WHERE (tg_fb_uploads.status = 'failed' AND tg_fb_uploads.attempts < ${MAX_ATTEMPTS})
+    INSERT INTO tg_fb_uploads (chat_id, message_id, fb_page_id, fb_page_name, reciter_name, title, status, width, height, duration, file_size, file_id)
+    VALUES (${input.chatId}, ${input.messageId}, ${target.pageId}, ${target.pageName}, ${target.reciterName}, ${title.slice(0, 2000)}, 'uploading',
+      ${input.width}, ${input.height}, ${input.duration}, ${input.fileSize}, ${input.fileId ?? null})
+    ON CONFLICT (chat_id, message_id) DO UPDATE SET status = 'uploading', attempts = tg_fb_uploads.attempts + 1, started_at = now(), reason = NULL,
+      title = EXCLUDED.title, file_id = coalesce(EXCLUDED.file_id, tg_fb_uploads.file_id), retry_requested = false
+    WHERE (tg_fb_uploads.status = 'failed' AND (tg_fb_uploads.attempts < ${MAX_ATTEMPTS} OR tg_fb_uploads.retry_requested))
       OR (tg_fb_uploads.status = 'uploading' AND tg_fb_uploads.started_at < now() - make_interval(mins => ${STALE_MINUTES}))
     RETURNING id`));
   if (!claimed) return { upload: false, reason: "سبق التعامل مع هذا المنشور" };
@@ -198,11 +212,31 @@ export async function performTgUpload(uploadId: number, filePath: string, fileSi
   const [page] = rowsOf(await db.execute(sql`SELECT access_token_encrypted, status FROM facebook_pages WHERE fb_page_id = ${row.fb_page_id}`));
   const token = decryptToken(page?.access_token_encrypted, config.appSecret);
   if (!token || page?.status !== "connected") return fail("رمز صفحة فيسبوك غير متاح — أعد «ربط فيسبوك»");
-  const title = String(row.title ?? "").trim() || String(row.fb_page_name ?? "");
-  const result = await uploadFacebookVideo({ pageId: String(row.fb_page_id), token, filePath, fileSize, title, published: true });
+  const caption = String(row.title ?? "").trim();
+  const title = facebookTitleOf(caption) || String(row.fb_page_name ?? "");
+  const result = await uploadFacebookVideo({ pageId: String(row.fb_page_id), token, filePath, fileSize, title, description: caption || title, published: true });
   if (!result.ok) return fail(`[${result.stage}] ${result.message}${result.metaError ? ` — ${JSON.stringify(result.metaError)}` : ""}`);
   await db.execute(sql`UPDATE tg_fb_uploads SET status = 'uploaded', fb_video_id = ${result.videoId}, uploaded_at = now(), reason = NULL, file_size = ${fileSize} WHERE id = ${uploadId}`);
   return { ok: true, fbVideoId: result.videoId };
+}
+
+// ── إعادة المحاولة (الإصدار 77) ─────────────────────────────────────────────────────────────────
+// المدير يطلب إعادة رفع منشور فشل؛ العامل يسأل كل 5 دقائق ويعيد المحاولة بمعرّف الملف المحفوظ.
+export async function requestTgRetry(uploadId: number) {
+  await ensureTgCrosspostSchema();
+  const [row] = rowsOf(await db.execute(sql`UPDATE tg_fb_uploads SET retry_requested = true WHERE id = ${uploadId} AND status = 'failed' RETURNING id, file_id`));
+  if (!row) return { ok: false, message: "لا يوجد منشور فاشل بهذا الرقم" };
+  return { ok: true, hasFile: Boolean(row.file_id), message: row.file_id ? "ستُعاد المحاولة خلال 5 دقائق" : "سُجّل الطلب، لكن معرّف الملف غير محفوظ لهذا المنشور القديم — يحتاج إعادة نشر يدوية" };
+}
+
+export async function pendingTgRetries() {
+  await ensureTgCrosspostSchema();
+  const rows = rowsOf(await db.execute(sql`
+    SELECT u.chat_id, u.message_id, u.title, u.width, u.height, u.duration, u.file_size, u.file_id, c.username, c.title AS chat_title
+    FROM tg_fb_uploads u LEFT JOIN tg_fb_channels c ON c.chat_id = u.chat_id
+    WHERE u.retry_requested AND u.status = 'failed' AND u.file_id IS NOT NULL ORDER BY u.id LIMIT 5`));
+  return rows.map((r) => ({ chatId: String(r.chat_id), messageId: Number(r.message_id), caption: String(r.title ?? ""), width: Number(r.width ?? 0), height: Number(r.height ?? 0),
+    duration: Number(r.duration ?? 0), fileSize: Number(r.file_size ?? 0), fileId: String(r.file_id), username: r.username ?? null, chatTitle: r.chat_title ?? null }));
 }
 
 // ── المدير ────────────────────────────────────────────────────────────────────────────────────

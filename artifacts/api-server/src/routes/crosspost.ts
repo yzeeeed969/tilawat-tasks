@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
-import { bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
+import { pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
@@ -71,6 +71,11 @@ crosspostMachineRouter.post("/crosspost/tg/heartbeat", requireBridgeKey, async (
   res.json({ ok: true, handles: await reciterTelegramHandles() });
 });
 
+// طلبات إعادة الرفع التي طلبها المدير (الإصدار 77).
+crosspostMachineRouter.post("/crosspost/tg/retries", requireBridgeKey, async (_req, res) => {
+  res.json({ ok: true, retries: await pendingTgRetries() });
+});
+
 // البوت أُضيف لقناة/تغيّرت صلاحيته.
 crosspostMachineRouter.post("/crosspost/tg/channel", requireBridgeKey, async (req, res) => {
   const chatId = String(req.body?.chatId ?? "").trim();
@@ -88,7 +93,7 @@ crosspostMachineRouter.post("/crosspost/tg/check", requireBridgeKey, async (req,
   try {
     res.json(await checkTgVideo({
       chatId, messageId, username: typeof b.username === "string" ? b.username : null, chatTitle: typeof b.chatTitle === "string" ? b.chatTitle : null,
-      caption: typeof b.caption === "string" ? b.caption : "", width: Number(b.width) || 0, height: Number(b.height) || 0, duration: Number(b.duration) || 0, fileSize: Number(b.fileSize) || 0,
+      caption: typeof b.caption === "string" ? b.caption : "", fileId: typeof b.fileId === "string" ? b.fileId : null, width: Number(b.width) || 0, height: Number(b.height) || 0, duration: Number(b.duration) || 0, fileSize: Number(b.fileSize) || 0,
     }));
   } catch (err) {
     res.status(500).json({ upload: false, reason: (err as Error).message });
@@ -146,6 +151,9 @@ router.delete("/crosspost/manual-links/:channelId", async (req, res) => {
 // مسار تيليجرام ← فيسبوك (الإصدار 76).
 router.get("/crosspost/tg/overview", async (_req, res) => {
   res.json(await tgCrosspostOverview());
+});
+router.post("/crosspost/tg/retry/:id", async (req, res) => {
+  res.json(await requestTgRetry(Number(req.params.id)));
 });
 router.patch("/crosspost/tg/settings", async (req, res) => {
   if (typeof req.body?.enabled !== "boolean") { res.status(400).json({ ok: false, message: "enabled مطلوب (true/false)" }); return; }

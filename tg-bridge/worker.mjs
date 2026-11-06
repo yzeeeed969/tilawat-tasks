@@ -102,7 +102,7 @@ async function handleVideo(post) {
   const v = post.video;
   const payload = {
     chatId: String(post.chat.id), messageId: post.message_id, username: post.chat.username ?? null, chatTitle: post.chat.title ?? null,
-    caption: post.caption ?? "", width: v.width ?? 0, height: v.height ?? 0, duration: v.duration ?? 0, fileSize: v.file_size ?? 0,
+    caption: post.caption ?? "", width: v.width ?? 0, height: v.height ?? 0, duration: v.duration ?? 0, fileSize: v.file_size ?? 0, fileId: v.file_id,
   };
   for (let cycle = 1; cycle <= 3; cycle++) {
     const check = await withRetry(() => site("/crosspost/tg/check", payload), "check");
@@ -128,6 +128,21 @@ async function handleVideo(post) {
     await sleep(60_000);
   }
 }
+
+// إعادة المحاولة التي يطلبها المدير (الإصدار 77): كل 5 دقائق.
+let retrying = false;
+setInterval(async () => {
+  if (retrying) return;
+  retrying = true;
+  try {
+    const r = await site("/crosspost/tg/retries", {});
+    for (const x of r.retries ?? []) {
+      log(`إعادة رفع: ${x.chatTitle} #${x.messageId}`);
+      await handleVideo({ chat: { id: Number(x.chatId), username: x.username, title: x.chatTitle }, message_id: x.messageId, caption: x.caption,
+        video: { file_id: x.fileId, width: x.width, height: x.height, duration: x.duration, file_size: x.fileSize } }).catch((e) => log("retry:", e.message));
+    }
+  } catch (e) { log("retries:", e.message); } finally { retrying = false; }
+}, 5 * 60_000);
 
 log("بدء الاستماع لقنوات المشايخ…");
 for (;;) {
