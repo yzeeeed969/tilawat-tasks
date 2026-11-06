@@ -215,9 +215,18 @@ async function alertAdmin(title: string, lines: string[], key: string) {
 }
 
 // ── الطلب من جهاز التسجيل ─────────────────────────────────────────────────────────────────────
-export type FridaySubmission = { mosque: Mosque; kind: "khutbah" | "prayer"; audioUrl: string; surahs?: SurahPart[] };
+export type FridaySubmission = { mosque: Mosque; kind: "khutbah" | "prayer"; audioUrl: string; surahs?: SurahPart[]; dryRun?: boolean };
 
-export async function submitFriday(input: FridaySubmission): Promise<{ ok: boolean; status: string; title?: string; message?: string }> {
+// آخر تجارب «بلا نشر» (dryRun) — للمدير ليتأكد أن الجهاز وصل والعنوان صحيح.
+export const dryRuns: Array<Record<string, unknown>> = [];
+
+export async function submitFriday(input: FridaySubmission): Promise<{ ok: boolean; status: string; title?: string; message?: string; reciter?: string }> {
+  if (input.dryRun) {
+    const r = await dryRunFriday(input);
+    dryRuns.unshift({ at: new Date().toISOString(), mosque: input.mosque, kind: input.kind, audioUrl: input.audioUrl, ...r });
+    dryRuns.splice(20);
+    return r;
+  }
   await ensureSchema();
   const mosqueLabel = input.mosque === "makkah" ? "المسجد الحرام" : "المسجد النبوي";
   const kindLabel = input.kind === "khutbah" ? "خطبة الجمعة" : "صلاة الجمعة";
@@ -254,6 +263,8 @@ export async function submitFriday(input: FridaySubmission): Promise<{ ok: boole
     const khateeb = await weeklyKhateeb(input.mosque, h);
     if (!khateeb) return await fail("لم أجد اسم الخطيب في منشور «خطباء الحرمين لهذا الأسبوع» في القناة", title);
 
+    const head = await fetch(input.audioUrl, { method: "HEAD" }).catch(() => null);
+    if (!head || !head.ok) return await fail(`ملف الصوت غير متاح على الرابط (${head?.status ?? "خطأ اتصال"})`, title);
     const createPath = input.kind === "khutbah" ? "/admin/miscellanies/create" : "/admin/prayers/create";
     const form = await adminPage(createPath);
     if (await alreadyInApp(input.kind, input.mosque, h, `${t.d}-${t.m}-${t.y}`, form.cookie)) {
@@ -291,6 +302,33 @@ export async function submitFriday(input: FridaySubmission): Promise<{ ok: boole
   }
 }
 
+// تجربة كاملة بلا نشر: العنوان، الخطيب، الملف، الدخول للوحة، اختيار الشيخ والقسم — دون حفظ أي شيء ولا تنبيه.
+async function dryRunFriday(input: FridaySubmission): Promise<{ ok: boolean; status: string; title?: string; message?: string; reciter?: string }> {
+  try {
+    if (!/^https:\/\/media\.altilawat\.com\/[^\s?#]+\.(?:mp3|m4a)$/i.test(input.audioUrl)) return { ok: false, status: "dry-run", message: "الرابط يجب أن يكون ملف mp3 أو m4a من media.altilawat.com" };
+    const t = riyadhToday();
+    // في التجربة نستخدم الجمعة القادمة (أو اليوم إن كان جمعة) لبناء العنوان.
+    const base = new Date(Date.UTC(t.y, t.m - 1, t.d + ((5 - t.weekday + 7) % 7)));
+    const g = { y: base.getUTCFullYear(), m: base.getUTCMonth() + 1, d: base.getUTCDate() };
+    const h = hijriOf(g.y, g.m, g.d);
+    const built = buildTitle(input.kind, h, g, input.surahs ?? []);
+    if ("error" in built) return { ok: false, status: "dry-run", message: built.error };
+    const head = await fetch(input.audioUrl, { method: "HEAD" }).catch(() => null);
+    if (!head || !head.ok) return { ok: false, status: "dry-run", title: built.title, message: `ملف الصوت غير متاح على الرابط (${head?.status ?? "خطأ اتصال"})` };
+    const khateeb = await weeklyKhateeb(input.mosque, h);
+    const form = await adminPage(input.kind === "khutbah" ? "/admin/miscellanies/create" : "/admin/prayers/create");
+    const reciter = khateeb ? pickReciter(form.html, khateeb, input.mosque) : null;
+    const notes = [
+      "الرابط والملف: سليمان",
+      "الدخول للوحة التطبيق بحساب النظام: نجح",
+      khateeb ? `الخطيب من منشور القناة: ${khateeb}${reciter ? ` (في القائمة: ${reciter.label})` : " — غير موجود في قائمة القراء!"}` : "منشور «خطباء الحرمين» لهذه الجمعة لم يُنشر بعد في القناة (يُنشر عادة ليلة الجمعة)",
+    ];
+    return { ok: true, status: "dry-run", title: built.title, reciter: reciter?.label, message: notes.join(" · ") };
+  } catch (err) {
+    return { ok: false, status: "dry-run", message: (err as Error).message };
+  }
+}
+
 // للمدير: حالة الإعدادات وآخر العمليات.
 export async function fridayPublishOverview() {
   await ensureSchema();
@@ -298,6 +336,7 @@ export async function fridayPublishOverview() {
   return {
     configured: { ffmpeg: await new Promise<boolean>((r) => execFile("ffmpeg", ["-version"], { timeout: 10_000 }, (err) => r(!err))), machineKey: fridayKeyConfigured(), appAccount: Boolean((process.env.APP_ADMIN_EMAIL ?? "").trim() && process.env.APP_ADMIN_PASSWORD) },
     items,
+    dryRuns,
   };
 }
 

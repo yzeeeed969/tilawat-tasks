@@ -16,7 +16,8 @@ fridayMachineRouter.get("/friday-publish/machine/ping", requireKey, (_req, res) 
   res.json({ ok: true });
 });
 
-// الجسم: { mosque: "makkah"|"madinah", kind: "khutbah"|"prayer", audioUrl, surahs?: [{ surah, from?, to? }] }
+// الجسم: { mosque: "makkah"|"madinah", kind: "khutbah"|"prayer", audioUrl, surahs?: [{ surah, from?, to? }], dryRun?: true }
+// dryRun: تجربة كاملة بلا نشر (تُقبل في أي يوم).
 fridayMachineRouter.post("/friday-publish/machine/submit", requireKey, async (req, res) => {
   const b = req.body ?? {};
   const mosque = b.mosque === "makkah" || b.mosque === "madinah" ? b.mosque : null;
@@ -27,7 +28,8 @@ fridayMachineRouter.post("/friday-publish/machine/submit", requireKey, async (re
     ? b.surahs.slice(0, 6).map((s: any) => ({ surah: Number(s?.surah), from: s?.from != null ? Number(s.from) : undefined, to: s?.to != null ? Number(s.to) : undefined }))
     : [];
   try {
-    const result = await submitFriday({ mosque, kind, audioUrl, surahs });
+    const dryRun = b.dryRun === true || req.query.dryRun === "1";
+    const result = await submitFriday({ mosque, kind, audioUrl, surahs, dryRun });
     res.status(result.ok ? 200 : result.status === "rejected" ? 400 : 502).json(result);
   } catch (err) {
     res.status(500).json({ ok: false, message: (err as Error).message });
