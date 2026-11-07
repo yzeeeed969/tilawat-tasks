@@ -34,12 +34,12 @@ export const DUTY_TEXT: Record<Wording["duty"], string> = {
     "فضيلة الشيخ : ( {{1}} )",
     "",
     "⏰ نود تذكيرك بأن لديك :",
-    "( {{2}} )",
+    "{{2}}",
     "",
     "🗓️ يوم : ( {{3}} )",
     "{{4}} هـ الموافق {{5}} م",
     "",
-    "فضلًا اختر «عُلم» أو «أعتذر».",
+    "فضلا اختر عُلم أو أعتذر",
   ].join("\n"),
 };
 
@@ -48,13 +48,13 @@ export const SUBSTITUTE_TEXT_D = [
   "فضيلة الشيخ : ( {{1}} )",
   "",
   "⏰ نود تذكيرك بأن لديك :",
-  "( {{2}} )",
+  "{{2}}",
   "بديلًا عن الشيخ ( {{3}} )",
   "",
   "🗓️ يوم : ( {{4}} )",
   "{{5}} هـ الموافق {{6}} م",
   "",
-  "فضلًا اختر «عُلم» أو «أعتذر».",
+  "فضلا اختر عُلم أو أعتذر",
 ].join("\n");
 
 /* ───────────── التاريخ: هجري (أم القرى) + ميلادي ───────────── */
@@ -92,8 +92,8 @@ const TASK_ABC: Record<string, string> = {
 };
 export type DutyCtx = { name: string; slot: string; role: string; dateKey: string; original?: string };
 const roleWord = (role: string) => (role === "mulazim" ? "ملازم" : "مؤذن");
-/** اسم المهمة بصيغة المدير: المؤذن بلا وصف، والملازم يُذكر دوره. */
-export const taskD = (c: DutyCtx) => `${TASK_D[c.slot] ?? c.slot}${c.role === "mulazim" ? " (ملازم)" : ""}`;
+// المؤذن: «( أذان الفجر الأول )» — الملازم: «( ملازم ) أذان الفجر الأول» (صيغة المدير المعتمدة).
+export const taskD = (c: DutyCtx) => (c.role === "mulazim" ? `( ملازم ) ${TASK_D[c.slot] ?? c.slot}` : `( ${TASK_D[c.slot] ?? c.slot} )`);
 
 export function dutyTemplate(w: Wording) {
   if (w.duty === "d") {
