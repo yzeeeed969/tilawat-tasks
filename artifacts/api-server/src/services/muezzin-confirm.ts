@@ -14,7 +14,6 @@ import {
   rowsOf,
   saveMeta,
   SLOT_MESSAGE,
-  weekdayOf,
   type MuezzinMeta,
   type Role,
   type Slot,
@@ -22,10 +21,13 @@ import {
 import {
   apologyFlowJson,
   BUTTONS,
-  DUTY_TEXT,
+  dutyTemplate,
   EXAMPLE,
+  EXAMPLE_CTX,
+  EXAMPLE_SUB_CTX,
+  fullDayLabel,
+  substituteTemplate,
   substituteFlowJson,
-  SUBSTITUTE_TEXT,
   SUP_ACK_TEXT,
   SUP_APOLOGY_BUTTON,
   SUP_APOLOGY_TEXT,
@@ -152,7 +154,7 @@ export async function prepareMeta() {
   };
   const quick = { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: b1 }, { type: "QUICK_REPLY", text: b2 }] };
   const defs: Array<{ name: string; components: unknown[] }> = [
-    { name: names.duty, components: [body(DUTY_TEXT[w.duty], EXAMPLE), quick] },
+    { name: names.duty, components: [body(dutyTemplate(w).text, dutyTemplate(w).params(EXAMPLE_CTX)), quick] },
     { name: names.supAck, components: [body(SUP_ACK_TEXT, EXAMPLE)] },
     {
       name: names.supApology,
@@ -162,7 +164,7 @@ export async function prepareMeta() {
       ],
     },
   ];
-  if (names.substitute) defs.push({ name: names.substitute, components: [body(SUBSTITUTE_TEXT, ["أحمد نحاس", ...EXAMPLE.slice(1), "عبدالله باعفيف"]), quick] });
+  if (names.substitute) defs.push({ name: names.substitute, components: [body(substituteTemplate(w).text, substituteTemplate(w).params(EXAMPLE_SUB_CTX)), quick] });
 
   const meta: MuezzinMeta = { ...settings.meta, rev, apologyFlowId, substituteFlowId, templates: {}, wording: w, preparedAt: new Date().toISOString() };
   for (const d of defs) {
@@ -225,7 +227,7 @@ async function getDuty(id: number): Promise<Duty | null> {
 
 const dutyLabel = (d: { slot: Slot }) => SLOT_MESSAGE[d.slot];
 const roleLabel = (d: { slot: Slot; role: Role }) => ROLE_LABEL[d.role];
-const dayLabel = (dateKey: string) => `${weekdayOf(dateKey)} ${dateKey}`;
+const dayLabel = (dateKey: string) => fullDayLabel(dateKey);
 const dutyText = (d: { slot: Slot; role: Role; dateKey: string }) => `${dutyLabel(d)} (${roleLabel(d)}) — ${dayLabel(d.dateKey)}`;
 
 /** يرسل رسالة مهمة واحدة (أصلية أو بديلة) ويحدّث صفّها. */
@@ -234,14 +236,17 @@ async function sendDutyMessage(duty: Duty, to: string, originalName?: string) {
   const t = s.meta.templates ?? {};
   const useSub = Boolean(originalName && t.substitute);
   const name = useSub ? t.substitute! : t.duty!;
-  const params = [duty.name, dutyLabel(duty), roleLabel(duty), dayLabel(duty.dateKey), ...(useSub ? [originalName!] : [])];
+  // الصيغة التي اعتُمدت فعلًا عند ميتا (لا المختارة لاحقًا ولم تُرسل).
+  const w = s.meta.wording ?? s.wording;
+  const tpl = useSub ? substituteTemplate(w) : dutyTemplate(w);
+  const params = tpl.params({ name: duty.name, slot: duty.slot, role: duty.role, dateKey: duty.dateKey, original: originalName });
   const buttons = [
     { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: `ack:${duty.id}` }] },
     { type: "button", sub_type: "quick_reply", index: "1", parameters: [{ type: "payload", payload: `apol:${duty.id}` }] },
   ];
   const r = await sendMessage(to, templatePayload(name, params, buttons));
   await db.execute(sql`UPDATE muezzin_duties SET phone = ${to}, wamid = ${r.wamid}, send_ok = ${r.ok}, send_detail = ${r.detail} WHERE id = ${duty.id}`);
-  await logEvent({ direction: "out", phone: to, name: duty.name, kind: useSub ? "substitute_duty" : "duty", text: fill(useSub ? SUBSTITUTE_TEXT : DUTY_TEXT[s.meta.wording?.duty ?? s.wording.duty], params), dutyId: duty.id, waId: r.wamid });
+  await logEvent({ direction: "out", phone: to, name: duty.name, kind: useSub ? "substitute_duty" : "duty", text: fill(tpl.text, params), dutyId: duty.id, waId: r.wamid });
   return r;
 }
 
@@ -546,12 +551,12 @@ export async function sendPreview(input: unknown) {
     interactive: { type: "button", body: { text }, action: { buttons } },
   });
   const messages: Array<{ label: string; payload: Record<string, unknown> }> = [
-    { label: "رسالة المهمة", payload: interactive(fill(DUTY_TEXT[w.duty], EXAMPLE), [btn("p1", b1), btn("p2", b2)]) },
+    { label: "رسالة المهمة", payload: interactive(fill(dutyTemplate(w).text, dutyTemplate(w).params(EXAMPLE_CTX)), [btn("p1", b1), btn("p2", b2)]) },
     { label: "تنبيه المشرف (علم)", payload: textMsg(fill(SUP_ACK_TEXT, EXAMPLE)) },
     { label: "تنبيه المشرف (اعتذار)", payload: interactive(fill(SUP_APOLOGY_TEXT, [...EXAMPLE, "ظرف عائلي"]), [btn("p3", SUP_APOLOGY_BUTTON)]) },
   ];
   if (w.substitute === "b") {
-    messages.push({ label: "رسالة البديل", payload: interactive(fill(SUBSTITUTE_TEXT, ["أحمد نحاس", ...EXAMPLE.slice(1), "عبدالله باعفيف"]), [btn("p4", b1), btn("p5", b2)]) });
+    messages.push({ label: "رسالة البديل", payload: interactive(fill(substituteTemplate(w).text, substituteTemplate(w).params(EXAMPLE_SUB_CTX)), [btn("p4", b1), btn("p5", b2)]) });
   }
   const results: Array<{ label: string; ok: boolean; detail: string }> = [];
   for (const m of messages) {

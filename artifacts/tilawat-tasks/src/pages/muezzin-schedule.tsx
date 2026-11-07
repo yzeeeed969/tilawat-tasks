@@ -30,7 +30,7 @@ const ROLES: Array<{ key: Role; label: string }> = [
 const FRIDAY = 5;
 
 type Muezzin = { id: number; name: string; phone: string | null; isActive: boolean };
-type Wording = { duty: "a" | "b" | "c"; buttons: "a" | "b" | "c"; form: "a" | "b"; substitute: "a" | "b" };
+type Wording = { duty: "a" | "b" | "c" | "d"; buttons: "a" | "b" | "c"; form: "a" | "b"; substitute: "a" | "b" };
 type Settings = {
   sendHour: number; sendMinute: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null;
   supervisorPhone: string | null; confirmMode: boolean; wording: Wording; verifyToken: string | null;
@@ -726,7 +726,7 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
 /* ───────────────────────── الأزرار والمشرف ───────────────────────── */
 
 const WORDING_OPTIONS: Array<{ key: keyof Wording; title: string; options: Array<{ v: string; label: string }> }> = [
-  { key: "duty", title: "١. نص رسالة المهمة", options: [{ v: "a", label: "أ — رسمية" }, { v: "b", label: "ب — ودّية" }, { v: "c", label: "ج — مختصرة" }] },
+  { key: "duty", title: "١. نص رسالة المهمة", options: [{ v: "d", label: "د — صيغة المدير (هجري + ميلادي)" }, { v: "a", label: "أ — رسمية" }, { v: "b", label: "ب — ودّية" }, { v: "c", label: "ج — مختصرة" }] },
   { key: "buttons", title: "٢. نص الزرّين", options: [{ v: "a", label: "أ — عُلم / أعتذر" }, { v: "b", label: "ب — علم وسأحضر بإذن الله / أعتذر عن المهمة" }, { v: "c", label: "ج — ✅ عُلم / ❌ أعتذر" }] },
   { key: "form", title: "٣. نموذج الاعتذار", options: [{ v: "a", label: "أ — رسمي" }, { v: "b", label: "ب — ودّي" }] },
   { key: "substitute", title: "٥. رسالة البديل", options: [{ v: "a", label: "أ — مثل رسالة المهمة" }, { v: "b", label: "ب — مع ذكر أنه بديل" }] },
