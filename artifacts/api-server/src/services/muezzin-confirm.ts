@@ -260,16 +260,13 @@ export async function sendDutiesForDate(dateKey: string) {
         AND muezzin_id = ${m.id} AND test_mode = ${testMode} ORDER BY id DESC LIMIT 1`))[0];
     if (existing?.send_ok) { skipped++; continue; }
     const to = testMode ? settings.testPhone! : m.phone;
+    // من لا رقم له يُتجاوز بهدوء (الإطلاق تدريجي: يُضاف رقم المؤذن متى اتُّفق معه).
+    if (!to) { skipped++; continue; }
     const duty = existing
       ? mapDuty(existing)
       : mapDuty(rowsOf(await db.execute(sql`
           INSERT INTO muezzin_duties (date_key, slot, role, muezzin_id, muezzin_name, phone, test_mode)
           VALUES (${dateKey}, ${e.slot}, ${e.role}, ${m.id}, ${m.name}, ${to}, ${testMode}) RETURNING *`))[0]);
-    if (!to) {
-      failed++; failures.push(`${m.name}: لا يوجد رقم`);
-      await db.execute(sql`UPDATE muezzin_duties SET send_ok = false, send_detail = 'لا يوجد رقم' WHERE id = ${duty.id}`);
-      continue;
-    }
     const r = await sendDutyMessage(duty, to);
     if (r.ok) sent++;
     else { failed++; failures.push(`${m.name} (${dutyLabel(duty)}): ${r.detail}`); }

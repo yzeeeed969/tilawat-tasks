@@ -557,6 +557,8 @@ let tickRunning = false;
 export async function runMuezzinTick(now = new Date()) {
   const settings = await getSettings();
   if (!settings.autoSendEnabled) return { ran: false };
+  // بعد تجهيز قوالب الأزرار: لا إرسال تلقائي بالرسالة القديمة — ننتظر تفعيل «التأكيد بالأزرار» (بعد اعتماد ميتا).
+  if (settings.meta.templates?.duty && !settings.confirmMode) return { ran: false };
   const today = riyadhDayKey(now);
   if (settings.lastAutoRunDate === today) return { ran: false };
   if (riyadhMinutes(now) < settings.sendHour * 60 + settings.sendMinute) return { ran: false };
