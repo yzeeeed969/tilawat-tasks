@@ -81,3 +81,84 @@ export function privacyPageHtml(): string {
 </body>
 </html>`;
 }
+
+/**
+ * سياسة الخصوصية لتطبيق «Muezzin Notify» (/privacy/muezzin-notify): إشعارات جدول المؤذنين عبر واتساب.
+ * HTML ثابت بلا تسجيل دخول، يقرؤه مدقّق ميتا بلا JavaScript.
+ */
+export function muezzinPrivacyPageHtml(): string {
+  const email = (process.env.PRIVACY_CONTACT_EMAIL ?? DEFAULT_CONTACT_EMAIL).trim();
+  const contact = email
+    ? `البريد الإلكتروني: <a href="mailto:${escapeHtml(email)}" dir="ltr">${escapeHtml(email)}</a>`
+    : `راسلنا على واتساب الخدمة نفسه: <span dir="ltr">+966 55 757 8627</span>`;
+  return `<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>سياسة الخصوصية — Muezzin Notify | تلاوات الحرمين</title>
+<meta name="description" content="سياسة الخصوصية لخدمة Muezzin Notify لإشعار المؤذنين بمهامهم عبر واتساب.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=El+Messiri:wght@600;700&family=Readex+Pro:wght@400;500;600&display=swap">
+<style>
+  :root{--bg:#F6F1E7;--surface:#FFFDF8;--ink:#2A2620;--muted:#6F675A;--green:#0F5A46;--gold:#B88A2E;--line:#E8DFCD}
+  @media (prefers-color-scheme: dark){:root{--bg:#0E1D18;--surface:#16302A;--ink:#F3EBDC;--muted:#BDB4A1;--green:#5DBE9A;--gold:#D6AE57;--line:#2B4A41}}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font-family:"Readex Pro",system-ui,sans-serif;line-height:1.8}
+  header{background:linear-gradient(180deg,#0F5A46,#0a3f31);color:#F6F1E7;padding:34px 18px 30px}
+  .wrap{max-width:760px;margin:0 auto;padding-inline:18px}
+  header .wrap{padding-inline:0}
+  h1{font-family:"El Messiri","Readex Pro",sans-serif;font-size:clamp(26px,5vw,36px);margin:0 0 6px}
+  header p{margin:0;color:rgba(246,241,231,.85)}
+  main{padding:26px 0 40px}
+  section{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:18px 20px;margin-bottom:14px}
+  h2{font-family:"El Messiri","Readex Pro",sans-serif;font-size:20px;margin:0 0 8px;color:var(--green)}
+  h2::before{content:"";display:inline-block;width:18px;height:2px;background:var(--gold);vertical-align:middle;margin-inline-end:8px}
+  p,li{margin:0 0 6px}
+  ul{margin:0;padding-inline-start:20px}
+  a{color:var(--green);font-weight:600}
+  .muted{color:var(--muted)}
+  footer{text-align:center;color:var(--muted);font-size:13px;padding:0 18px 30px}
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1>سياسة الخصوصية</h1>
+  <p>خدمة <b dir="ltr">Muezzin Notify</b> — التابعة لمشروع «تلاوات الحرمين»</p>
+</div></header>
+<main class="wrap">
+  <section>
+    <h2>عن الخدمة</h2>
+    <p><b dir="ltr">Muezzin Notify</b> خدمة داخلية تُرسل لكل مؤذن وملازم رسالة واتساب يومية بمهامه في رفع الأذان لليوم التالي، وتتيح له تأكيد العلم بالمهمة أو الاعتذار عنها، ويُبلَّغ المشرف بالردود لترتيب البديل عند الحاجة.</p>
+  </section>
+  <section>
+    <h2>البيانات التي نحفظها</h2>
+    <ul>
+      <li>اسم المؤذن أو الملازم، ورقم جواله الذي أضافه المشرف.</li>
+      <li>جدول المهام اليومي (اليوم، الصلاة، الدور).</li>
+      <li>الرد على كل مهمة: «عُلم» أو «أعتذر»، وسبب الاعتذار إن كُتب، ووقت الرد.</li>
+      <li>حالة توصيل الرسائل (أُرسلت، وصلت، قُرئت) كما تُبلغنا بها واتساب.</li>
+    </ul>
+    <p class="muted">لا نجمع أي بيانات أخرى، ولا نقرأ محادثات الأشخاص الخاصة.</p>
+  </section>
+  <section>
+    <h2>استخدام البيانات</h2>
+    <p>تُستخدم البيانات فقط لإرسال المهام اليومية، وتسجيل الردود، وإبلاغ المشرف، وإعداد إحصاءات داخلية عن الالتزام بالجدول.</p>
+  </section>
+  <section>
+    <h2>المشاركة والحماية</h2>
+    <p>لا تُباع أي بيانات ولا تُشارك مع أي طرف ثالث. تُرسل الرسائل عبر منصة واتساب للأعمال الرسمية من Meta. تُحفظ البيانات على خادم المشروع، ولا يطّلع عليها إلا مديرو النظام.</p>
+  </section>
+  <section>
+    <h2>إيقاف الرسائل وحذف البيانات</h2>
+    <p>يمكن لأي مؤذن طلب إيقاف الرسائل أو حذف بياناته في أي وقت، بالتواصل معنا عبر الوسيلة أدناه، وسنحذفها في أقرب وقت.</p>
+  </section>
+  <section>
+    <h2>التواصل</h2>
+    <p>${contact}</p>
+  </section>
+</main>
+<footer>آخر تحديث: 7 نوفمبر 2026 · مشروع «تلاوات الحرمين»</footer>
+</body>
+</html>`;
+}
