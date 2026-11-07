@@ -527,6 +527,9 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
             <label className="w-40 text-sm font-medium">الإرسال اليومي التلقائي</label>
             <Switch checked={s.autoSendEnabled} onCheckedChange={(v) => saveSettings.mutate({ autoSendEnabled: v })} />
             <span className="text-sm text-muted-foreground">{s.lastAutoRunDate ? `آخر تشغيل: ${s.lastAutoRunDate}` : "لم يعمل بعد"}</span>
+            {s.autoSendEnabled && s.meta.templates?.duty && !s.confirmMode && (
+              <span className="text-sm text-amber-700">⏸ لن يُرسل شيء حتى يُفعَّل «التأكيد بالأزرار» بعد اعتماد ميتا.</span>
+            )}
           </div>
         </CardContent>
       </Card>
