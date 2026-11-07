@@ -8,7 +8,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import router from "./routes";
 import { logger } from "./lib/logger";
-import { privacyPageHtml } from "./lib/privacy-page";
+import { muezzinPrivacyPageHtml, privacyPageHtml } from "./lib/privacy-page";
 
 const app: Express = express();
 const clientDistDir = path.resolve(process.cwd(), "artifacts/tilawat-tasks/dist/public");
@@ -87,6 +87,12 @@ app.use(express.static(clientDistDir, {
 }));
 
 // سياسة الخصوصية العامة لتطبيق Quran Views — HTML ثابت من الخادم (بلا تسجيل دخول، يقرؤه مدقّق ميتا بلا JavaScript).
+// سياسة الخصوصية لخدمة إشعارات المؤذنين عبر واتساب (تطبيق Muezzin Notify في ميتا).
+app.get("/privacy/muezzin-notify", (_req, res) => {
+  res.setHeader("Cache-Control", "public, max-age=3600");
+  res.type("html").send(muezzinPrivacyPageHtml());
+});
+
 app.get("/privacy", (_req, res) => {
   res.setHeader("Cache-Control", "public, max-age=3600");
   res.type("html").send(privacyPageHtml());
