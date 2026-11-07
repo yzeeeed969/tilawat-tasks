@@ -3,8 +3,8 @@
 // قالب البديل يضيف {{5}} اسم المعتذر، وتنبيه الاعتذار للمشرف يضيف {{5}} السبب.
 // قواعد ميتا: لا يبدأ النص ولا ينتهي بمتغير، ولا متغيرين متجاورين، ونص الزر ≤ 25 حرفًا.
 
-export type Wording = { duty: "a" | "b" | "c"; buttons: "a" | "b" | "c"; form: "a" | "b"; substitute: "a" | "b" };
-export const DEFAULT_WORDING: Wording = { duty: "a", buttons: "a", form: "a", substitute: "b" };
+export type Wording = { duty: "a" | "b" | "c" | "d"; buttons: "a" | "b" | "c"; form: "a" | "b"; substitute: "a" | "b" };
+export const DEFAULT_WORDING: Wording = { duty: "d", buttons: "a", form: "a", substitute: "b" };
 
 export const DUTY_TEXT: Record<Wording["duty"], string> = {
   a: [
@@ -29,7 +29,86 @@ export const DUTY_TEXT: Record<Wording["duty"], string> = {
     "اليوم: {{4}}",
     "فضلًا أكّدوا أو اعتذروا.",
   ].join("\n"),
+  // صيغة المدير: {{1}} الاسم، {{2}} المهمة، {{3}} اليوم، {{4}} الهجري، {{5}} الميلادي.
+  d: [
+    "فضيلة الشيخ : ( {{1}} )",
+    "",
+    "⏰ نود تذكيرك بأن لديك :",
+    "( {{2}} )",
+    "",
+    "🗓️ يوم : ( {{3}} )",
+    "{{4}} هـ الموافق {{5}} م",
+    "",
+    "فضلًا اختر «عُلم» أو «أعتذر».",
+  ].join("\n"),
 };
+
+// رسالة البديل بصيغة المدير: {{1}} الاسم، {{2}} المهمة، {{3}} المعتذر، {{4}} اليوم، {{5}} الهجري، {{6}} الميلادي.
+export const SUBSTITUTE_TEXT_D = [
+  "فضيلة الشيخ : ( {{1}} )",
+  "",
+  "⏰ نود تذكيرك بأن لديك :",
+  "( {{2}} )",
+  "بديلًا عن الشيخ ( {{3}} )",
+  "",
+  "🗓️ يوم : ( {{4}} )",
+  "{{5}} هـ الموافق {{6}} م",
+  "",
+  "فضلًا اختر «عُلم» أو «أعتذر».",
+].join("\n");
+
+/* ───────────── التاريخ: هجري (أم القرى) + ميلادي ───────────── */
+
+const WEEKDAYS = ["الأحد", "الاثنين", "الثلاثاء", "الأربعاء", "الخميس", "الجمعة", "السبت"];
+export function weekdayName(dateKey: string) {
+  return WEEKDAYS[new Date(`${dateKey}T12:00:00Z`).getUTCDay()];
+}
+/** 2026-11-05 ← «25 / 05 / 1448» بتقويم أم القرى. */
+export function hijriDate(dateKey: string) {
+  const parts = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura-nu-latn", { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" })
+    .formatToParts(new Date(`${dateKey}T12:00:00Z`));
+  const get = (t: string) => parts.find((x) => x.type === t)?.value ?? "";
+  return `${get("day")} / ${get("month")} / ${get("year")}`;
+}
+/** 2026-11-05 ← «05 / 11 / 2026». */
+export function gregorianDate(dateKey: string) {
+  const [y, m, d] = dateKey.split("-");
+  return `${d} / ${m} / ${y}`;
+}
+/** «الخميس 25 / 05 / 1448 هـ الموافق 05 / 11 / 2026 م» — لتنبيهات المشرف والردود. */
+export function fullDayLabel(dateKey: string) {
+  return `${weekdayName(dateKey)} ${hijriDate(dateKey)} هـ الموافق ${gregorianDate(dateKey)} م`;
+}
+
+/* ───────────── معاملات القوالب حسب الصيغة المختارة ───────────── */
+
+const TASK_D: Record<string, string> = {
+  fajr1: "أذان الفجر الأول", fajr2: "أذان الفجر الثاني", dhuhr: "أذان الظهر", asr: "أذان العصر",
+  maghrib: "أذان المغرب", isha: "أذان العشاء", jumuah1: "أذان الجمعة الأول", jumuah2: "أذان الجمعة الثاني",
+};
+const TASK_ABC: Record<string, string> = {
+  fajr1: "الأذان الأول للفجر", fajr2: "الأذان الثاني للفجر", dhuhr: "أذان الظهر", asr: "أذان العصر",
+  maghrib: "أذان المغرب", isha: "أذان العشاء", jumuah1: "الأذان الأول للجمعة", jumuah2: "الأذان الثاني للجمعة",
+};
+export type DutyCtx = { name: string; slot: string; role: string; dateKey: string; original?: string };
+const roleWord = (role: string) => (role === "mulazim" ? "ملازم" : "مؤذن");
+/** اسم المهمة بصيغة المدير: المؤذن بلا وصف، والملازم يُذكر دوره. */
+export const taskD = (c: DutyCtx) => `${TASK_D[c.slot] ?? c.slot}${c.role === "mulazim" ? " (ملازم)" : ""}`;
+
+export function dutyTemplate(w: Wording) {
+  if (w.duty === "d") {
+    return { text: DUTY_TEXT.d, params: (c: DutyCtx) => [c.name, taskD(c), weekdayName(c.dateKey), hijriDate(c.dateKey), gregorianDate(c.dateKey)] };
+  }
+  return { text: DUTY_TEXT[w.duty], params: (c: DutyCtx) => [c.name, TASK_ABC[c.slot] ?? c.slot, roleWord(c.role), `${weekdayName(c.dateKey)} ${c.dateKey}`] };
+}
+export function substituteTemplate(w: Wording) {
+  if (w.duty === "d") {
+    return { text: SUBSTITUTE_TEXT_D, params: (c: DutyCtx) => [c.name, taskD(c), c.original ?? "", weekdayName(c.dateKey), hijriDate(c.dateKey), gregorianDate(c.dateKey)] };
+  }
+  return { text: SUBSTITUTE_TEXT, params: (c: DutyCtx) => [c.name, TASK_ABC[c.slot] ?? c.slot, roleWord(c.role), `${weekdayName(c.dateKey)} ${c.dateKey}`, c.original ?? ""] };
+}
+export const EXAMPLE_CTX: DutyCtx = { name: "عبدالله باعفيف", slot: "fajr1", role: "muezzin", dateKey: "2026-11-05" };
+export const EXAMPLE_SUB_CTX: DutyCtx = { name: "أحمد نحاس", slot: "fajr1", role: "muezzin", dateKey: "2026-11-05", original: "عبدالله باعفيف" };
 
 export const BUTTONS: Record<Wording["buttons"], [string, string]> = {
   a: ["عُلم", "أعتذر"],
@@ -67,13 +146,13 @@ export const SUP_APOLOGY_TEXT = [
 export const SUP_APOLOGY_BUTTON = "اختيار البديل";
 
 // أمثلة إلزامية عند إرسال القالب لميتا.
-export const EXAMPLE = ["عبدالله باعفيف", "الأذان الأول للفجر", "مؤذن", "الخميس 2026-11-05"];
+export const EXAMPLE = ["عبدالله باعفيف", "الأذان الأول للفجر", "مؤذن", "الخميس 25 / 05 / 1448 هـ الموافق 05 / 11 / 2026 م"];
 
 export function normalizeWording(input: any): Wording {
   const pick = <K extends keyof Wording>(k: K, allowed: readonly string[]) =>
     (allowed.includes(String(input?.[k])) ? String(input[k]) : DEFAULT_WORDING[k]) as Wording[K];
   return {
-    duty: pick("duty", ["a", "b", "c"]),
+    duty: pick("duty", ["a", "b", "c", "d"]),
     buttons: pick("buttons", ["a", "b", "c"]),
     form: pick("form", ["a", "b"]),
     substitute: pick("substitute", ["a", "b"]),
