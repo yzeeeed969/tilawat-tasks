@@ -592,7 +592,7 @@ const SLOT_NAME: Record<Slot, string> = {
   jumuah1: "الأذان الأول للجمعة", jumuah2: "الأذان الثاني للجمعة",
 };
 const EVENT_KIND: Record<string, string> = {
-  duty: "رسالة مهمة", substitute_duty: "رسالة مهمة (بديل)", ack: "ضغط «عُلم»", apology_tap: "ضغط «أعتذر»", apology_form: "نموذج السبب",
+  duty: "رسالة مهمة", substitute_duty: "رسالة مهمة (بديل)", ack: "ضغط «عُلم»", apology_tap: "ضغط «أعتذر»", apology_form: "نموذج السبب", apology_prompt: "طلب كتابة السبب", apology_reminder: "تذكير بالسبب", pick_tap: "ضغط «اختيار البديل»", substitute_list: "قائمة البدلاء", list_unknown: "اختيار غير معروف",
   apology_reason: "سبب الاعتذار", supervisor_ack: "تنبيه المشرف (علم)", supervisor_apology: "تنبيه المشرف (اعتذار)",
   substitute_pick: "اختيار البديل", message: "رسالة نصية", button_unknown: "زر غير معروف", form_unknown: "نموذج غير معروف", error: "خطأ",
 };
@@ -728,7 +728,6 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
 const WORDING_OPTIONS: Array<{ key: keyof Wording; title: string; options: Array<{ v: string; label: string }> }> = [
   { key: "duty", title: "١. نص رسالة المهمة", options: [{ v: "d", label: "د — صيغة المدير (هجري + ميلادي)" }, { v: "a", label: "أ — رسمية" }, { v: "b", label: "ب — ودّية" }, { v: "c", label: "ج — مختصرة" }] },
   { key: "buttons", title: "٢. نص الزرّين", options: [{ v: "a", label: "أ — عُلم / أعتذر" }, { v: "b", label: "ب — علم وسأحضر بإذن الله / أعتذر عن المهمة" }, { v: "c", label: "ج — ✅ عُلم / ❌ أعتذر" }] },
-  { key: "form", title: "٣. نموذج الاعتذار", options: [{ v: "a", label: "أ — رسمي" }, { v: "b", label: "ب — ودّي" }] },
   { key: "substitute", title: "٥. رسالة البديل", options: [{ v: "a", label: "أ — مثل رسالة المهمة" }, { v: "b", label: "ب — مع ذكر أنه بديل" }] },
 ];
 const TEMPLATE_STATUS: Record<string, string> = { APPROVED: "معتمد ✓", PENDING: "قيد المراجعة", REJECTED: "مرفوض", PAUSED: "موقوف مؤقتًا", DISABLED: "معطّل", NOT_FOUND: "غير موجود" };

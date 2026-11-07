@@ -584,6 +584,9 @@ export function startMuezzinScheduler(logger?: Logger) {
     try {
       const r = await runMuezzinTick();
       if (r.ran) logger?.info({ result: r }, "Muezzin schedule daily send completed");
+      // تذكير من ضغط «أعتذر» ولم يكتب السبب بعد 30 دقيقة.
+      const { remindPendingReasons } = await import("./muezzin-confirm");
+      await remindPendingReasons().catch((err) => logger?.warn({ err }, "Muezzin reason reminders failed"));
     } catch (err) {
       logger?.warn({ err }, "Muezzin schedule tick failed");
     } finally {

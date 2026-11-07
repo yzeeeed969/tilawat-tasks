@@ -113,6 +113,7 @@ async function runMuezzinSchemaEnsure() {
     )
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_muezzin_duties_date ON muezzin_duties(date_key)`);
+  await db.execute(sql`ALTER TABLE muezzin_duties ADD COLUMN IF NOT EXISTS reason_reminded boolean NOT NULL DEFAULT false`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_muezzin_duties_wamid ON muezzin_duties(wamid)`);
 
   // كل ما يدخل ويخرج عبر واتساب (للعرض في الموقع والمرجع).
