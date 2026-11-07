@@ -479,6 +479,10 @@ export async function sendForDate(dateKey: string) {
   // التأكيد بالأزرار: رسالة مستقلة لكل مهمة.
   if (settings.confirmMode) return sendDutiesForDate(dateKey);
   const testMode = settings.testMode;
+  // بعد تجهيز قوالب الأزرار لا تخرج الرسالة القديمة للمؤذنين (إلا تجربةً على رقم التجربة).
+  if (settings.meta.templates?.duty && !testMode) {
+    throw new MuezzinError(400, "الإرسال للمؤذنين ينتظر اعتماد قوالب الأزرار وتفعيل «التأكيد بالأزرار»");
+  }
   if (testMode && !settings.testPhone) throw new MuezzinError(400, "أضف رقم التجربة أولًا (وضع التجربة مفعّل)");
 
   const entries = await getScheduleRange(dateKey, 1);
