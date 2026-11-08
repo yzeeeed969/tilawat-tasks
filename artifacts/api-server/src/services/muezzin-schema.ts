@@ -82,6 +82,9 @@ async function runMuezzinSchemaEnsure() {
   // التأكيد بالأزرار (عُلم / أعتذر) — إضافة فقط.
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS send_minute integer NOT NULL DEFAULT 0`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS supervisor_phone text`);
+  // عدة مشرفين: القائمة الجديدة، ويُنقل إليها المشرف الحالي مرة واحدة.
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS supervisor_phones jsonb`);
+  await db.execute(sql`UPDATE muezzin_settings SET supervisor_phones = CASE WHEN supervisor_phone IS NULL THEN '[]'::jsonb ELSE jsonb_build_array(supervisor_phone) END WHERE id = 1 AND supervisor_phones IS NULL`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS confirm_mode boolean NOT NULL DEFAULT false`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS wording jsonb`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS meta jsonb`);

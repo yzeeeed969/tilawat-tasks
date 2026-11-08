@@ -352,7 +352,8 @@ export type MuezzinSettings = {
   testPhone: string | null;
   autoSendEnabled: boolean;
   lastAutoRunDate: string | null;
-  supervisorPhone: string | null;
+  supervisorPhone: string | null; // الأول في القائمة (توافقًا)
+  supervisorPhones: string[];
   confirmMode: boolean;
   wording: Wording;
   meta: MuezzinMeta;
@@ -369,7 +370,8 @@ export async function getSettings(): Promise<MuezzinSettings> {
     testPhone: r.test_phone ? String(r.test_phone) : null,
     autoSendEnabled: Boolean(r.auto_send_enabled),
     lastAutoRunDate: r.last_auto_run_date ? String(r.last_auto_run_date) : null,
-    supervisorPhone: r.supervisor_phone ? String(r.supervisor_phone) : null,
+    supervisorPhones: Array.isArray(r.supervisor_phones) ? r.supervisor_phones.map(String) : r.supervisor_phone ? [String(r.supervisor_phone)] : [],
+    supervisorPhone: (Array.isArray(r.supervisor_phones) ? r.supervisor_phones.map(String)[0] : r.supervisor_phone) ?? null,
     confirmMode: Boolean(r.confirm_mode),
     wording: normalizeWording(r.wording),
     meta: (r.meta && typeof r.meta === "object" ? r.meta : {}) as MuezzinMeta,
@@ -381,7 +383,7 @@ export async function saveMeta(meta: MuezzinMeta) {
   await db.execute(sql`UPDATE muezzin_settings SET meta = ${JSON.stringify(meta)}::jsonb, updated_at = now() WHERE id = 1`);
 }
 
-export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendHour" | "sendMinute" | "testMode" | "testPhone" | "autoSendEnabled" | "supervisorPhone" | "confirmMode" | "wording">>) {
+export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendHour" | "sendMinute" | "testMode" | "testPhone" | "autoSendEnabled" | "supervisorPhone" | "supervisorPhones" | "confirmMode" | "wording">>) {
   await ensureMuezzinSchema();
   if (input.sendHour !== undefined) {
     const h = Number(input.sendHour);
@@ -393,8 +395,12 @@ export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendH
     if (!Number.isInteger(m) || m < 0 || m > 59) throw new MuezzinError(400, "الدقائق بين 0 و 59");
     await db.execute(sql`UPDATE muezzin_settings SET send_minute = ${m}, updated_at = now() WHERE id = 1`);
   }
-  if (input.supervisorPhone !== undefined) {
-    await db.execute(sql`UPDATE muezzin_settings SET supervisor_phone = ${cleanPhone(input.supervisorPhone)}, updated_at = now() WHERE id = 1`);
+  if (input.supervisorPhones !== undefined || input.supervisorPhone !== undefined) {
+    const raw = input.supervisorPhones ?? (input.supervisorPhone ? [input.supervisorPhone] : []);
+    if (!Array.isArray(raw)) throw new MuezzinError(400, "قائمة المشرفين غير صحيحة");
+    const phones = [...new Set(raw.map((p) => cleanPhone(p)).filter(Boolean) as string[])];
+    if (phones.length > 10) throw new MuezzinError(400, "الحد الأقصى 10 مشرفين");
+    await db.execute(sql`UPDATE muezzin_settings SET supervisor_phones = ${JSON.stringify(phones)}::jsonb, supervisor_phone = ${phones[0] ?? null}, updated_at = now() WHERE id = 1`);
   }
   if (input.wording !== undefined) {
     await db.execute(sql`UPDATE muezzin_settings SET wording = ${JSON.stringify(normalizeWording(input.wording))}::jsonb, updated_at = now() WHERE id = 1`);
