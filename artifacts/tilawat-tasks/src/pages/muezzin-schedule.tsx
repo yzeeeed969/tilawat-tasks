@@ -33,7 +33,7 @@ type Muezzin = { id: number; name: string; phone: string | null; isActive: boole
 type Wording = { duty: "a" | "b" | "c" | "d"; buttons: "a" | "b" | "c"; form: "a" | "b"; substitute: "a" | "b" };
 type Settings = {
   sendHour: number; sendMinute: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null;
-  supervisorPhone: string | null; confirmMode: boolean; wording: Wording; verifyToken: string | null;
+  supervisorPhone: string | null; supervisorPhones: string[]; confirmMode: boolean; wording: Wording; verifyToken: string | null;
   meta: { rev?: number; templates?: Record<string, string>; preparedAt?: string; wording?: Wording };
 };
 type Setup = {
@@ -747,7 +747,10 @@ function CopyField({ label, value }: { label: string; value: string }) {
 
 function ConfirmTab({ data, onChange, toast }: { data: Setup; onChange: () => void; toast: any }) {
   const s = data.settings;
-  const [supPhone, setSupPhone] = useState(s.supervisorPhone ?? "");
+  // عرض الأرقام بصيغة 05… لسهولة القراءة.
+  const toLocal = (p: string) => (p.startsWith("966") ? `0${p.slice(3)}` : p);
+  const [sups, setSups] = useState<string[]>(s.supervisorPhones.length ? s.supervisorPhones.map(toLocal) : [""]);
+  const supsChanged = JSON.stringify(sups.filter(Boolean)) !== JSON.stringify(s.supervisorPhones.map(toLocal));
   const [wording, setWording] = useState<Wording>(s.wording);
   const templates = useQuery({ queryKey: ["muezzin-templates"], queryFn: () => api<{ templates: Array<{ name: string; status: string; reason: string | null }> }>(`${BASE}/meta/templates`), enabled: Boolean(s.meta.templates) });
   const save = useMutation({
@@ -777,11 +780,25 @@ function ConfirmTab({ data, onChange, toast }: { data: Setup; onChange: () => vo
   return (
     <div className="space-y-4">
       <Card>
-        <CardHeader><CardTitle>١) المشرف</CardTitle><CardDescription>رقم واتساب شخصي عادي — تصله تنبيهات «عُلم» و«اعتذر» وقائمة البدلاء. في وضع التجربة تذهب لرقم التجربة.</CardDescription></CardHeader>
-        <CardContent className="flex flex-wrap items-center gap-3">
-          <Input dir="ltr" className="w-44" placeholder="05XXXXXXXX" value={supPhone} onChange={(e) => setSupPhone(e.target.value)} />
-          <Button size="sm" variant="outline" disabled={supPhone === (s.supervisorPhone ?? "") || save.isPending} onClick={() => save.mutate({ supervisorPhone: supPhone || null })}>حفظ</Button>
-          {s.supervisorPhone && <span className="text-sm text-muted-foreground">{data.muezzins.find((m) => m.phone === s.supervisorPhone)?.name ?? ""}</span>}
+        <CardHeader><CardTitle>١) المشرفون</CardTitle><CardDescription>أرقام واتساب شخصية عادية — تصل كلَّ مشرف تنبيهات «عُلم» و«اعتذر»، وأي مشرف يختار البديل (أول اختيار هو المعتمد). في وضع التجربة تذهب لرقم التجربة.</CardDescription></CardHeader>
+        <CardContent className="space-y-2">
+          {sups.map((p, i) => {
+            const name = data.muezzins.find((m) => m.phone && toLocal(m.phone) === p)?.name;
+            return (
+              <div key={i} className="flex flex-wrap items-center gap-2">
+                <span className="w-16 text-sm text-muted-foreground">مشرف {i + 1}</span>
+                <Input dir="ltr" className="w-44" placeholder="05XXXXXXXX" value={p} onChange={(e) => setSups((xs) => xs.map((x, j) => (j === i ? e.target.value : x)))} />
+                {name && <span className="text-sm text-muted-foreground">{name}</span>}
+                {sups.length > 1 && (
+                  <Button size="sm" variant="ghost" className="h-8 px-2 text-red-700" onClick={() => setSups((xs) => xs.filter((_, j) => j !== i))}>حذف</Button>
+                )}
+              </div>
+            );
+          })}
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <Button size="sm" variant="outline" disabled={sups.length >= 10} onClick={() => setSups((xs) => [...xs, ""])}><Plus className="ml-1 h-4 w-4" />إضافة مشرف</Button>
+            <Button size="sm" disabled={!supsChanged || save.isPending} onClick={() => save.mutate({ supervisorPhones: sups.filter(Boolean) })}>حفظ المشرفين</Button>
+          </div>
         </CardContent>
       </Card>
 

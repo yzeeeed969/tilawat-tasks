@@ -179,7 +179,7 @@ export async function templateStatuses() {
 export async function checkConfirmReady() {
   const s = await getSettings();
   if (!process.env.WHATSAPP_APP_SECRET?.trim()) throw new MuezzinError(400, "أضف WHATSAPP_APP_SECRET في Railway أولًا (لاستقبال الردود بأمان)");
-  if (!s.supervisorPhone) throw new MuezzinError(400, "أضف رقم المشرف أولًا");
+  if (!s.supervisorPhones.length) throw new MuezzinError(400, "أضف رقم مشرف واحد على الأقل");
   if (!s.meta.templates?.duty || !s.meta.templates?.supApology) throw new MuezzinError(400, "أرسل القوالب لاعتماد ميتا أولًا");
   const statuses = await templateStatuses();
   const pending = statuses.filter((t) => t.status !== "APPROVED");
@@ -290,9 +290,10 @@ export function verifySignature(rawBody: Buffer | undefined, header: string | un
 
 const textMsg = (body: string) => ({ type: "text", text: { body } });
 
-async function supervisorTarget(testMode: boolean) {
+/** أرقام المشرفين (في التجربة: رقم التجربة وحده). */
+async function supervisorTargets(testMode: boolean): Promise<string[]> {
   const s = await getSettings();
-  return testMode ? s.testPhone : s.supervisorPhone;
+  return testMode ? (s.testPhone ? [s.testPhone] : []) : s.supervisorPhones;
 }
 
 async function onAck(duty: Duty, from: string) {
@@ -305,12 +306,14 @@ async function onAck(duty: Duty, from: string) {
   await sendMessage(from, textMsg(`تم تسجيل علمكم بمهمة ${dutyLabel(duty)} (${roleLabel(duty)}) يوم ${dayLabel(duty.dateKey)}. جزاكم الله خيرًا.`));
   if (already) return;
   const s = await getSettings();
-  const sup = await supervisorTarget(duty.testMode);
   // المشرف نفسه لا يصله تنبيه عن ردّه هو (إلا في التجربة حيث الكل رقم واحد).
-  if (!sup || (!duty.testMode && from === s.supervisorPhone) || !s.meta.templates?.supAck) return;
+  const sups = (await supervisorTargets(duty.testMode)).filter((p) => duty.testMode || p !== from);
+  if (!sups.length || !s.meta.templates?.supAck) return;
   const params = [duty.name, dutyLabel(duty), roleLabel(duty), dayLabel(duty.dateKey)];
+  for (const sup of sups) {
   const r = await sendMessage(sup, templatePayload(s.meta.templates.supAck, params));
   await logEvent({ direction: "out", phone: sup, name: "المشرف", kind: "supervisor_ack", text: fill(SUP_ACK_TEXT, params), dutyId: duty.id, waId: r.wamid });
+  }
 }
 
 async function onApologyTap(duty: Duty, from: string) {
@@ -364,17 +367,19 @@ async function onApologyReason(duty: Duty, from: string, reasonRaw: string, quie
   if (!quiet) await sendMessage(from, textMsg(`تم تسجيل اعتذاركم عن ${dutyText(duty)}، وسيتولى المشرف ترتيب البديل. جزاكم الله خيرًا.`));
 
   const s = await getSettings();
-  const sup = await supervisorTarget(duty.testMode);
-  if (!sup || !s.meta.templates?.supApology) {
+  const sups = await supervisorTargets(duty.testMode);
+  if (!sups.length || !s.meta.templates?.supApology) {
     await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nاعتذر ${duty.name} عن ${dutyText(duty)}\nالسبب: ${reason}\n(لم يُضبط رقم المشرف)`);
     return;
   }
   const params = [duty.name, dutyLabel(duty), roleLabel(duty), dayLabel(duty.dateKey), reason];
+  for (const sup of sups) {
   const r = await sendMessage(sup, templatePayload(s.meta.templates.supApology, params, [
     { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: `pick:${duty.id}` }] },
   ]));
   await logEvent({ direction: "out", phone: sup, name: "المشرف", kind: "supervisor_apology", text: fill(SUP_APOLOGY_TEXT, params), dutyId: duty.id, waId: r.wamid });
-  if (!r.ok) await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nتعذّر تنبيه المشرف باعتذار ${duty.name} عن ${dutyText(duty)}: ${r.detail}`);
+  if (!r.ok) await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nتعذّر تنبيه المشرف ${sup} باعتذار ${duty.name} عن ${dutyText(duty)}: ${r.detail}`);
+  }
 }
 
 /** المشرف ضغط «اختيار البديل» ← قوائم واتساب (10 أسماء لكل قائمة، حد ميتا) بكل المؤذنين عدا المعتذر. */
@@ -406,7 +411,11 @@ async function onPickTap(duty: Duty, from: string) {
 export async function assignSubstitute(dutyId: number, substituteId: number, replyTo?: string | null) {
   const duty = await getDuty(dutyId);
   if (!duty) throw new MuezzinError(404, "المهمة غير موجودة");
-  if (duty.replacedByDutyId) throw new MuezzinError(409, "سبق إسناد هذه المهمة لبديل");
+  if (duty.replacedByDutyId) {
+    // عدة مشرفين: أول اختيار هو المعتمد.
+    const prev = await getDuty(duty.replacedByDutyId);
+    throw new MuezzinError(409, `سبق إسناد هذه المهمة إلى الشيخ ${prev?.name ?? ""}`);
+  }
   const sub = (await listMuezzins()).find((m) => m.id === substituteId && m.isActive);
   if (!sub) throw new MuezzinError(400, "البديل غير موجود أو موقوف");
   if (sub.id === duty.muezzinId) throw new MuezzinError(400, "البديل هو نفس المعتذر");
@@ -469,7 +478,7 @@ export async function handleWebhook(body: any) {
             const duty = await getDuty(Number(idStr));
             if (kind === "pick") {
               // زر المشرف «اختيار البديل».
-              if (!duty || from !== (await supervisorTarget(duty.testMode))) { await setEvent("button_unknown", String(msg.button?.text ?? payload)); continue; }
+              if (!duty || !(await supervisorTargets(duty.testMode)).includes(from)) { await setEvent("button_unknown", String(msg.button?.text ?? payload)); continue; }
               await setEvent("pick_tap", String(msg.button?.text ?? ""), duty.id, "المشرف");
               await onPickTap(duty, from);
               continue;
@@ -482,7 +491,7 @@ export async function handleWebhook(body: any) {
             // المشرف اختار البديل من القائمة: sub:<المهمة>:<البديل>
             const [kind, dutyIdStr, subIdStr] = String(msg.interactive.list_reply?.id ?? "").split(":");
             const duty = kind === "sub" ? await getDuty(Number(dutyIdStr)) : null;
-            if (!duty || from !== (await supervisorTarget(duty.testMode))) { await setEvent("list_unknown", String(msg.interactive.list_reply?.title ?? "")); continue; }
+            if (!duty || !(await supervisorTargets(duty.testMode)).includes(from)) { await setEvent("list_unknown", String(msg.interactive.list_reply?.title ?? "")); continue; }
             await setEvent("substitute_pick", `البديل: ${String(msg.interactive.list_reply?.title ?? "")}`, duty.id, "المشرف");
             try {
               await assignSubstitute(duty.id, Number(subIdStr), from);
@@ -499,8 +508,7 @@ export async function handleWebhook(body: any) {
               await setEvent("apology_reason", String(resp.reason ?? ""), duty.id, duty.name);
               await onApologyReason(duty, from, String(resp.reason ?? ""));
             } else if (kind === "sub") {
-              const sup = await supervisorTarget(duty.testMode);
-              if (from !== sup) { await setEvent("form_unknown", "اختيار بديل من رقم غير المشرف"); continue; }
+              if (!(await supervisorTargets(duty.testMode)).includes(from)) { await setEvent("form_unknown", "اختيار بديل من رقم غير المشرف"); continue; }
               const subId = Number(resp.substitute);
               const subName = (await listMuezzins()).find((m) => m.id === subId)?.name ?? String(resp.substitute);
               await setEvent("substitute_pick", `البديل: ${subName}`, duty.id, "المشرف");
