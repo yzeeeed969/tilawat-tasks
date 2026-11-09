@@ -125,6 +125,13 @@ export async function reciterTelegramHandles(): Promise<string[]> {
   return [...new Set(rows.map((r) => handleOf(r.page_url)).filter((h): h is string => Boolean(h)))];
 }
 
+// محادثة المدير الخاصة مع البوت — تصلها تقارير كل فيديو (الإصدار 80).
+export async function recoveryChatId(): Promise<string | null> {
+  await ensureTgCrosspostSchema();
+  const [r] = rowsOf(await db.execute(sql`SELECT recovery_chat_id FROM tg_fb_settings WHERE id = 1`));
+  return r?.recovery_chat_id ? String(r.recovery_chat_id) : null;
+}
+
 export async function bridgeHeartbeat() {
   await ensureTgCrosspostSchema();
   await db.execute(sql`UPDATE tg_fb_settings SET last_bridge_at = now() WHERE id = 1`);

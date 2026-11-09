@@ -98,15 +98,31 @@ async function withRetry(fn, label, tries = 3) {
   }
 }
 
+// تقرير كل فيديو في محادثة المدير الخاصة مع البوت «رفع فيسبوك» (الإصدار 80).
+async function report(chatId, lines) {
+  if (!chatId) return;
+  await bot("sendMessage", { chat_id: chatId, text: lines.filter(Boolean).join("\n"), link_preview_options: { is_disabled: true } }).catch((e) => log("report:", e.message));
+}
+
 async function handleVideo(post) {
   const v = post.video;
+  const firstLine = String(post.caption ?? "").split(/\r?\n/).map((l) => l.trim()).find(Boolean)?.slice(0, 90) || "(بلا نص)";
+  const tgLink = post.chat.username ? `https://t.me/${post.chat.username}/${post.message_id}` : "";
+  const head = (icon, status) => [`${icon} ${status}`, `القناة: ${post.chat.title ?? ""}`, `المقطع: ${firstLine}`];
+  let lastError = "";
+  let reportTo = null;
   const payload = {
     chatId: String(post.chat.id), messageId: post.message_id, username: post.chat.username ?? null, chatTitle: post.chat.title ?? null,
     caption: post.caption ?? "", width: v.width ?? 0, height: v.height ?? 0, duration: v.duration ?? 0, fileSize: v.file_size ?? 0, fileId: v.file_id,
   };
   for (let cycle = 1; cycle <= 3; cycle++) {
     const check = await withRetry(() => site("/crosspost/tg/check", payload), "check");
-    if (!check.upload) { log(`لا رفع (${post.chat.title} #${post.message_id}):`, check.reason); return; }
+    reportTo = check.recoveryChatId ?? reportTo;
+    if (!check.upload) {
+      log(`لا رفع (${post.chat.title} #${post.message_id}):`, check.reason);
+      if (!/سبق التعامل|معطّل/.test(String(check.reason))) await report(reportTo, [...head("⚪", "لم يُرفع لفيسبوك"), `السبب: ${check.reason}`, tgLink]);
+      return;
+    }
     let filePath = null;
     try {
       const file = await withRetry(() => bot("getFile", { file_id: v.file_id }), "getFile");
@@ -118,15 +134,22 @@ async function handleVideo(post) {
         headers: { "Content-Type": "application/octet-stream", "Content-Length": String(size), Authorization: `Bearer ${KEY}` },
       });
       const body = await res.json().catch(() => ({}));
-      if (body.ok) { log("✅ نُشر في فيسبوك:", body.fbVideoId); return; }
-      log(`❌ فشل الرفع (دورة ${cycle}):`, body.message ?? res.status);
+      if (body.ok) {
+        log("✅ نُشر في فيسبوك:", body.fbVideoId);
+        await report(reportTo, [...head("✅", "نُشر في فيسبوك"), `الصفحة: ${check.pageName}`, body.fbVideoId ? `فيسبوك: https://www.facebook.com/${body.fbVideoId}` : "", tgLink ? `تيليجرام: ${tgLink}` : ""]);
+        return;
+      }
+      lastError = String(body.message ?? res.status);
+      log(`❌ فشل الرفع (دورة ${cycle}):`, lastError);
     } catch (e) {
+      lastError = e.message;
       log(`❌ خطأ (دورة ${cycle}):`, e.message);
     } finally {
       if (filePath) fs.promises.unlink(filePath).catch(() => {});
     }
     await sleep(60_000);
   }
+  await report(reportTo, [...head("❌", "فشل رفعه لفيسبوك بعد 3 محاولات"), `السبب: ${lastError.slice(0, 300)}`, tgLink, "يمكن إعادة رفعه دون إعادة نشره في القناة — أخبر Claude."]);
 }
 
 // إعادة المحاولة التي يطلبها المدير (الإصدار 77): كل 5 دقائق.

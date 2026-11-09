@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
-import { createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
+import { recoveryChatId, createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
@@ -99,10 +99,10 @@ crosspostMachineRouter.post("/crosspost/tg/check", requireBridgeKey, async (req,
   const messageId = Number(b.messageId);
   if (!/^-?\d+$/.test(chatId) || !Number.isFinite(messageId)) { res.status(400).json({ upload: false, reason: "chatId/messageId غير صالح" }); return; }
   try {
-    res.json(await checkTgVideo({
+    res.json({ recoveryChatId: await recoveryChatId().catch(() => null), ...(await checkTgVideo({
       chatId, messageId, username: typeof b.username === "string" ? b.username : null, chatTitle: typeof b.chatTitle === "string" ? b.chatTitle : null,
       caption: typeof b.caption === "string" ? b.caption : "", fileId: typeof b.fileId === "string" ? b.fileId : null, width: Number(b.width) || 0, height: Number(b.height) || 0, duration: Number(b.duration) || 0, fileSize: Number(b.fileSize) || 0,
-    }));
+    })) });
   } catch (err) {
     res.status(500).json({ upload: false, reason: (err as Error).message });
   }
