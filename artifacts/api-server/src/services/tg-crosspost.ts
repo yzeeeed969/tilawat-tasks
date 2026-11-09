@@ -179,9 +179,12 @@ export async function checkTgVideo(input: TgCheckInput): Promise<TgCheckResult> 
   if (title) {
     const [dup] = rowsOf(await db.execute(sql`
       SELECT 1 FROM tg_fb_uploads WHERE fb_page_id = ${target.pageId} AND title = ${title.slice(0, 2000)} AND status IN ('uploaded','uploading')
-        AND NOT (chat_id = ${input.chatId} AND message_id = ${input.messageId}) AND created_at > now() - interval '3 days' LIMIT 1`));
+        AND NOT (chat_id = ${input.chatId} AND message_id = ${input.messageId}) AND created_at > now() - interval '3 days'
+        -- الإصدار 79: التكرار = نفس النص ونفس الملف (الحجم متطابق تقريبًا). الفريق ينشر أحيانًا مقطعين مختلفين بنفس النص، فكلاهما يُنشر.
+        AND file_size > 0 AND ${input.fileSize} > 0 AND abs(file_size - ${input.fileSize}) <= greatest(file_size, ${input.fileSize}) * 0.02
+      LIMIT 1`));
     if (dup) {
-      await record("skipped", "نفس العنوان نُشر في نفس الصفحة خلال 3 أيام — منع تكرار", { pageId: target.pageId, pageName: target.pageName, reciterName: target.reciterName });
+      await record("skipped", "نفس النص ونفس الملف نُشر في نفس الصفحة خلال 3 أيام — منع تكرار", { pageId: target.pageId, pageName: target.pageName, reciterName: target.reciterName });
       return { upload: false, reason: "مكرر بالعنوان" };
     }
   }
@@ -228,8 +231,8 @@ export async function performTgUpload(uploadId: number, filePath: string, fileSi
 // المدير يطلب إعادة رفع منشور فشل؛ العامل يسأل كل 5 دقائق ويعيد المحاولة بمعرّف الملف المحفوظ.
 export async function requestTgRetry(uploadId: number) {
   await ensureTgCrosspostSchema();
-  const [row] = rowsOf(await db.execute(sql`UPDATE tg_fb_uploads SET retry_requested = true WHERE id = ${uploadId} AND status = 'failed' RETURNING id, file_id`));
-  if (!row) return { ok: false, message: "لا يوجد منشور فاشل بهذا الرقم" };
+  const [row] = rowsOf(await db.execute(sql`UPDATE tg_fb_uploads SET retry_requested = true, status = 'failed' WHERE id = ${uploadId} AND (status = 'failed' OR (status = 'skipped' AND reason LIKE '%منع تكرار%')) RETURNING id, file_id`));
+  if (!row) return { ok: false, message: "لا يوجد منشور فاشل أو متروك للتكرار بهذا الرقم" };
   return { ok: true, hasFile: Boolean(row.file_id), message: "ستُعاد المحاولة خلال 5 دقائق" };
 }
 

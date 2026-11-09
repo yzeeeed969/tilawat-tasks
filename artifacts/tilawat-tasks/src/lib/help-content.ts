@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 79, date: "2026-11-09",
+    items: [
+      { text: "تيليجرام ← فيسبوك: المقطعان المختلفان بنفس النص يُنشران كلاهما؛ ويُمنع التكرار فقط إذا كان نفس النص ونفس الملف.", adminOnly: true },
+    ],
+  },
+  {
     version: 77, date: "2026-11-03",
     items: [
       { text: "تقارير المدد الطويلة: أداء مقاطع يوتيوب صار يُجلب حتى سنة كاملة من الواجهة الرسمية، وأُضيفت قراءة مشاهدات فيسبوك وإنستقرام لأي مدة من حسابات Meta المربوطة (قراءة فقط).", adminOnly: true },
