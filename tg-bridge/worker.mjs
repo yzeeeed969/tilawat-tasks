@@ -197,7 +197,7 @@ for (;;) {
         const c = u.my_chat_member.chat;
         await site("/crosspost/tg/channel", { chatId: String(c.id), title: c.title ?? null, username: c.username ?? null, botStatus: u.my_chat_member.new_chat_member?.status ?? null }).catch((e) => log("channel:", e.message));
         log(`القناة «${c.title}»: حالة البوت ${u.my_chat_member.new_chat_member?.status}`);
-      } else if (u.message && u.message.chat?.type === "private" && typeof u.message.text === "string") {
+      } else if (u.message && ["private", "group", "supergroup"].includes(u.message.chat?.type) && typeof u.message.text === "string" && (u.message.chat.type === "private" || /^\/start(@\w+)?\s+\d{6}\b/.test(u.message.text))) {
         const r = await site("/crosspost/tg/private", { chatId: String(u.message.chat.id), text: u.message.text }).catch(() => null);
         if (r?.reply) await bot("sendMessage", { chat_id: u.message.chat.id, text: r.reply }).catch(() => {});
       } else if (u.channel_post?.video) {
