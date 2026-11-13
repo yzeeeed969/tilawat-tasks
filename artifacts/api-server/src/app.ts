@@ -11,6 +11,8 @@ import { logger } from "./lib/logger";
 import { muezzinPrivacyPageHtml, privacyPageHtml } from "./lib/privacy-page";
 
 const app: Express = express();
+// ملاحظة: الواجهة تُبنى مع هذه الخدمة؛ تعديل الواجهة وحدها لا يعيد نشر الخدمة في Railway
+// (مسارات المراقبة)، فيلزم تعديل ملف هنا لإعادة النشر. — آخر إعادة نشر للواجهة: 2026-11-13
 const clientDistDir = path.resolve(process.cwd(), "artifacts/tilawat-tasks/dist/public");
 const clientIndexPath = path.join(clientDistDir, "index.html");
 // Railway watches the API service, so this marker forces rebuilds that include frontend assets. task-flow-cache-diagnostic-deploy-20260619
