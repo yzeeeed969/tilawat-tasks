@@ -42,6 +42,7 @@ import {
   useCanViewMembers,
   useCanViewReports,
   useCanAccessSettings,
+  useCanManageMuezzins,
   getRoleLabel,
   getRoleBadgeClass,
   type UserRole,
@@ -287,6 +288,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const [location] = useLocation();
   const { user } = useAuth();
   const isAdmin = useIsAdmin();
+  const canManageMuezzins = useCanManageMuezzins();
   const role = useRole();
   const canViewMembers = useCanViewMembers();
   const canViewReports = useCanViewReports();
@@ -311,7 +313,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
         { href: "/weekly-schedule", label: "إنشاء الجدول الأسبوعي", icon: CalendarPlus, show: isAdmin },
         { href: "/publishing-template", label: "قالب النشر", icon: ClipboardList, show: isAdmin },
-        { href: "/muezzin-schedule", label: "جدول المؤذنين", icon: Megaphone, show: isAdmin },
+        { href: "/muezzin-schedule", label: "جدول المؤذنين", icon: Megaphone, show: isAdmin || canManageMuezzins },
         { href: "/settings/telegram", label: "إشعارات Telegram", icon: Bell, show: canManageSettings },
         { href: "/settings/general", label: "المستخدمون والصلاحيات", icon: ShieldCheck, show: canManageSettings },
       ].filter((item) => item.show),

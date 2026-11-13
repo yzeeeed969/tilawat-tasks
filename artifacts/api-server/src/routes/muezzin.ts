@@ -1,5 +1,5 @@
 import express, { Router } from "express";
-import { requireAdmin } from "../middlewares/auth";
+import { requireMuezzinAccess } from "../middlewares/auth";
 import { riyadhDayKey } from "../lib/hijri";
 import { ensureMuezzinSchema } from "../services/muezzin-schema";
 import {
@@ -21,7 +21,7 @@ import { logWeeklyActivity } from "./weekly-schedule";
 import { assignSubstitute, dutiesForDate, dutyStats, prepareMeta, recentEvents, sendPreview, templateStatuses } from "../services/muezzin-confirm";
 import { addDays } from "../services/muezzin";
 
-// «جدول المؤذنين» — للمدير فقط (requireAdmin على كل مسار في الخادم).
+// «جدول المؤذنين» — للمدير ولمن مُنح صلاحية «إدارة جدول المؤذنين» (requireMuezzinAccess على كل مسار).
 const router = Router();
 
 router.use("/muezzin-schedule", async (_req, _res, next) => {
@@ -47,7 +47,7 @@ function handle(fn: (req: any, res: any) => Promise<unknown>) {
   };
 }
 
-router.get("/muezzin-schedule/setup", requireAdmin, handle(async (_req: any, res) => {
+router.get("/muezzin-schedule/setup", requireMuezzinAccess, handle(async (_req: any, res) => {
   const today = riyadhDayKey(new Date());
   res.json({
     today,
@@ -65,12 +65,12 @@ router.get("/muezzin-schedule/setup", requireAdmin, handle(async (_req: any, res
   });
 }));
 
-router.post("/muezzin-schedule/muezzins", requireAdmin, handle(async (req, res) => {
+router.post("/muezzin-schedule/muezzins", requireMuezzinAccess, handle(async (req, res) => {
   await createMuezzin(req.body ?? {});
   res.status(201).json({ ok: true });
 }));
 
-router.patch("/muezzin-schedule/muezzins/:id", requireAdmin, handle(async (req, res) => {
+router.patch("/muezzin-schedule/muezzins/:id", requireMuezzinAccess, handle(async (req, res) => {
   const id = Number(req.params.id);
   if (!Number.isInteger(id)) throw new MuezzinError(400, "معرّف غير صحيح");
   await updateMuezzin(id, req.body ?? {});
@@ -80,7 +80,7 @@ router.patch("/muezzin-schedule/muezzins/:id", requireAdmin, handle(async (req, 
 // الملف (صورة أو PDF) يُرسل خامًا لا JSON — محلّل JSON العام محدود بـ 100KB.
 router.post(
   "/muezzin-schedule/read",
-  requireAdmin,
+  requireMuezzinAccess,
   express.raw({ type: ["image/*", "application/pdf"], limit: "20mb" }),
   handle(async (req, res) => {
     const mime = String(req.headers["content-type"] ?? "").split(";")[0].trim();
@@ -88,19 +88,19 @@ router.post(
   }),
 );
 
-router.post("/muezzin-schedule/week", requireAdmin, handle(async (req, res) => {
+router.post("/muezzin-schedule/week", requireMuezzinAccess, handle(async (req, res) => {
   const result = await saveWeek({ ...(req.body ?? {}), userId: req.currentUser?.id ?? null });
   await logWeeklyActivity(req, "muezzin_schedule_created", "muezzin_schedule", null, `جدول المؤذنين ${result.weekStart}`, result).catch(() => {});
   res.json(result);
 }));
 
-router.patch("/muezzin-schedule/settings", requireAdmin, handle(async (req, res) => {
+router.patch("/muezzin-schedule/settings", requireMuezzinAccess, handle(async (req, res) => {
   await updateSettings(req.body ?? {});
   res.json(await getSettings());
 }));
 
 // ردود المؤذنين (عُلم / اعتذار) ليوم محدد + الإحصائيات + سجل واتساب.
-router.get("/muezzin-schedule/duties", requireAdmin, handle(async (req, res) => {
+router.get("/muezzin-schedule/duties", requireMuezzinAccess, handle(async (req, res) => {
   const date = String(req.query.date ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new MuezzinError(400, "تاريخ غير صحيح");
   const settings = await getSettings();
@@ -113,26 +113,26 @@ router.get("/muezzin-schedule/duties", requireAdmin, handle(async (req, res) => 
 }));
 
 // إسناد بديل من الموقع (بدل واتساب) — نفس النتيجة: يتحدّث الجدول وتصل البديلَ رسالته.
-router.post("/muezzin-schedule/duties/:id/substitute", requireAdmin, handle(async (req, res) => {
+router.post("/muezzin-schedule/duties/:id/substitute", requireMuezzinAccess, handle(async (req, res) => {
   res.json(await assignSubstitute(Number(req.params.id), Number(req.body?.substituteId)));
 }));
 
 // إنشاء نماذج واتساب وإرسال القوالب لاعتماد ميتا بالنص المختار.
-router.post("/muezzin-schedule/meta/prepare", requireAdmin, handle(async (_req, res) => {
+router.post("/muezzin-schedule/meta/prepare", requireMuezzinAccess, handle(async (_req, res) => {
   res.json(await prepareMeta());
 }));
 
-router.get("/muezzin-schedule/meta/templates", requireAdmin, handle(async (_req, res) => {
+router.get("/muezzin-schedule/meta/templates", requireMuezzinAccess, handle(async (_req, res) => {
   res.json({ templates: await templateStatuses() });
 }));
 
 // معاينة شكل الرسائل على جوال التجربة (بلا قالب — لا تحتاج اعتماد ميتا).
-router.post("/muezzin-schedule/meta/preview", requireAdmin, handle(async (req, res) => {
+router.post("/muezzin-schedule/meta/preview", requireMuezzinAccess, handle(async (req, res) => {
   res.json(await sendPreview(req.body?.wording));
 }));
 
 // إرسال يدوي ليوم محدد (يحترم وضع التجربة ويمنع التكرار).
-router.post("/muezzin-schedule/send", requireAdmin, handle(async (req, res) => {
+router.post("/muezzin-schedule/send", requireMuezzinAccess, handle(async (req, res) => {
   res.json(await sendForDate(String(req.body?.date ?? "")));
 }));
 

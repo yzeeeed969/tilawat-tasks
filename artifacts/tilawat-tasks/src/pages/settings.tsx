@@ -67,6 +67,7 @@ interface UserPerms {
   canManageReciters?: boolean;
   canManagePlatforms?: boolean;
   canManageAccounts?: boolean;
+  canManageMuezzins?: boolean;
 }
 
 interface AppUser {
@@ -277,8 +278,8 @@ function PermCheckbox({ label, checked, onChange }: { label: string; checked: bo
 }
 
 const DEFAULT_PERMS: Record<UserRole, Required<UserPerms>> = {
-  admin: { canViewMembers: true, canViewReports: true, canCreateTasks: true, canEditTasks: true, canDeleteTasks: true, canManageSettings: true, canManageReciters: true, canManagePlatforms: true, canManageAccounts: true },
-  editor: { canViewMembers: false, canViewReports: false, canCreateTasks: true, canEditTasks: true, canDeleteTasks: false, canManageSettings: false, canManageReciters: false, canManagePlatforms: false, canManageAccounts: false },
+  admin: { canViewMembers: true, canViewReports: true, canCreateTasks: true, canEditTasks: true, canDeleteTasks: true, canManageSettings: true, canManageReciters: true, canManagePlatforms: true, canManageAccounts: true, canManageMuezzins: true },
+  editor: { canViewMembers: false, canViewReports: false, canCreateTasks: true, canEditTasks: true, canDeleteTasks: false, canManageSettings: false, canManageReciters: false, canManagePlatforms: false, canManageAccounts: false, canManageMuezzins: false },
 };
 
 function resolvePerms(role: UserRole, custom: UserPerms | null): Required<UserPerms> {
@@ -295,6 +296,7 @@ function resolvePerms(role: UserRole, custom: UserPerms | null): Required<UserPe
     canManageReciters: custom.canManageReciters ?? base.canManageReciters,
     canManagePlatforms: custom.canManagePlatforms ?? base.canManagePlatforms,
     canManageAccounts: custom.canManageAccounts ?? base.canManageAccounts,
+    canManageMuezzins: custom.canManageMuezzins ?? base.canManageMuezzins,
   };
 }
 
@@ -419,6 +421,7 @@ function UserRow({ u, onUpdate, onDelete }: {
                   <PermCheckbox label="إدارة القراء" checked={perms.canManageReciters ?? false} onChange={(v) => setPerm("canManageReciters", v)} />
                   <PermCheckbox label="إدارة المنصات" checked={perms.canManagePlatforms ?? false} onChange={(v) => setPerm("canManagePlatforms", v)} />
                   <PermCheckbox label="إدارة الحسابات" checked={perms.canManageAccounts ?? false} onChange={(v) => setPerm("canManageAccounts", v)} />
+                  <PermCheckbox label="إدارة جدول المؤذنين (كاملة)" checked={perms.canManageMuezzins ?? false} onChange={(v) => setPerm("canManageMuezzins", v)} />
                 </div>
               )}
             </div>

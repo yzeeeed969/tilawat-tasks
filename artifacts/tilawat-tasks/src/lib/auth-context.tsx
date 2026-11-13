@@ -10,6 +10,7 @@ export interface UserPermissions {
   canManageReciters?: boolean;
   canManagePlatforms?: boolean;
   canManageAccounts?: boolean;
+  canManageMuezzins?: boolean;
 }
 
 export interface AuthUser {

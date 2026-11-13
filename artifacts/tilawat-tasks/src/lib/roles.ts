@@ -22,12 +22,12 @@ function resolvePermissions(role: UserRole, custom?: UserPermissions | null): Re
     admin: {
       canViewMembers: true, canViewReports: true, canCreateTasks: true,
       canEditTasks: true, canDeleteTasks: true, canManageSettings: true,
-      canManageReciters: true, canManagePlatforms: true, canManageAccounts: true,
+      canManageReciters: true, canManagePlatforms: true, canManageAccounts: true, canManageMuezzins: true,
     },
     editor: {
       canViewMembers: false, canViewReports: false, canCreateTasks: false,
       canEditTasks: false, canDeleteTasks: false, canManageSettings: false,
-      canManageReciters: false, canManagePlatforms: false, canManageAccounts: false,
+      canManageReciters: false, canManagePlatforms: false, canManageAccounts: false, canManageMuezzins: false,
     },
   };
   if (role === "admin") return defaults.admin;
@@ -43,6 +43,7 @@ function resolvePermissions(role: UserRole, custom?: UserPermissions | null): Re
     canManageReciters: custom.canManageReciters ?? base.canManageReciters,
     canManagePlatforms: custom.canManagePlatforms ?? base.canManagePlatforms,
     canManageAccounts: custom.canManageAccounts ?? base.canManageAccounts,
+    canManageMuezzins: custom.canManageMuezzins ?? base.canManageMuezzins,
   };
 }
 
@@ -60,6 +61,7 @@ export function useCanManageSettings(): boolean { return usePermissions().canMan
 export function useCanManageReciters(): boolean { return usePermissions().canManageReciters; }
 export function useCanManagePlatforms(): boolean { return usePermissions().canManagePlatforms; }
 export function useCanManageAccounts(): boolean { return usePermissions().canManageAccounts; }
+export function useCanManageMuezzins(): boolean { return usePermissions().canManageMuezzins; }
 
 export function useCanAccessSettings(): boolean {
   const p = usePermissions();
