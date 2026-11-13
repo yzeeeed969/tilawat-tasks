@@ -16,8 +16,8 @@ import { cn } from "@/lib/utils";
 type Slot = "fajr1" | "fajr2" | "dhuhr" | "asr" | "maghrib" | "isha" | "jumuah1" | "jumuah2";
 type Role = "muezzin" | "mulazim";
 const SLOTS: Array<{ key: Slot; label: string }> = [
-  { key: "fajr1", label: "الفجر 1" },
-  { key: "fajr2", label: "الفجر 2" },
+  { key: "fajr1", label: "الفجر الأول" },
+  { key: "fajr2", label: "الفجر الثاني" },
   { key: "dhuhr", label: "الظهر" },
   { key: "asr", label: "العصر" },
   { key: "maghrib", label: "المغرب" },
@@ -385,6 +385,34 @@ function weekLabel(sunday: string) {
   return m1 === m2 ? `${d1} – ${d2} ${MONTHS_AR[m1 - 1]}` : `${d1} ${MONTHS_AR[m1 - 1]} – ${d2} ${MONTHS_AR[m2 - 1]}`;
 }
 
+// ألوان هادئة: الأخضر للمؤذن، والأزرق للملازم، والذهبي لأذاني الجمعة (مع الوضع الداكن).
+const CHIP = {
+  muezzin: "bg-emerald-100/80 text-emerald-950 ring-1 ring-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-100 dark:ring-emerald-800",
+  mulazim: "bg-sky-100/80 text-sky-950 ring-1 ring-sky-300 dark:bg-sky-950/50 dark:text-sky-100 dark:ring-sky-800",
+  jumuah: "bg-amber-100/80 text-amber-950 ring-1 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100 dark:ring-amber-800",
+} as const;
+
+function NameChip({ kind, name, label }: { kind: keyof typeof CHIP; name?: string; label?: string }) {
+  return (
+    <div className={cn("rounded-md px-2 py-1 text-center leading-tight", CHIP[kind])}>
+      {label && <div className="text-[10px] opacity-70">{label}</div>}
+      <div className="truncate font-medium" title={name}>{name ?? "—"}</div>
+    </div>
+  );
+}
+
+/** «25/05/1448» بتقويم أم القرى. */
+function hijriShort(dateKey: string) {
+  try {
+    const parts = new Intl.DateTimeFormat("en-u-ca-islamic-umalqura-nu-latn", { timeZone: "UTC", day: "2-digit", month: "2-digit", year: "numeric" })
+      .formatToParts(new Date(`${dateKey}T12:00:00Z`));
+    const get = (t: string) => parts.find((p) => p.type === t)?.value ?? "";
+    return `${get("day")}/${get("month")}/${get("year")}`;
+  } catch {
+    return "";
+  }
+}
+
 function UpcomingCard({ data }: { data: Setup }) {
   const find = (d: string, s: Slot, r: Role) => data.upcoming.find((u) => u.dateKey === d && u.slot === s && u.role === r)?.name;
   // أسابيع كاملة من الأحد إلى السبت: الحالي والقادمان.
@@ -406,35 +434,62 @@ function UpcomingCard({ data }: { data: Setup }) {
           ))}
         </div>
       </CardHeader>
-      <CardContent>
-        <table className="w-full table-fixed border-collapse text-xs">
-          <colgroup><col className="w-[84px]" />{SLOTS.map((s) => <col key={s.key} />)}</colgroup>
-          <thead><tr className="bg-muted/40"><th className="border p-1.5">اليوم</th>{SLOTS.map((s) => <th key={s.key} className="border p-1.5">{s.label}</th>)}</tr></thead>
-          <tbody>
-            {dates.map((d) => {
-              const any = data.upcoming.some((u) => u.dateKey === d);
-              const isFriday = new Date(`${d}T12:00:00Z`).getUTCDay() === FRIDAY;
-              return (
-                <tr key={d} className={cn(!any && "text-muted-foreground")}>
-                  <th className="border p-1.5">{DAY_NAMES[new Date(`${d}T12:00:00Z`).getUTCDay()]}<div className="text-[10px] font-normal">{d}</div></th>
-                  {SLOTS.map((s) => {
-                    const m = find(d, s.key, "muezzin");
-                    const z = find(d, s.key, "mulazim");
-                    const j1 = s.key === "dhuhr" && isFriday ? find(d, "jumuah1", "muezzin") : undefined;
-                    const j2 = s.key === "dhuhr" && isFriday ? find(d, "jumuah2", "muezzin") : undefined;
-                    return (
-                      <td key={s.key} className="border p-1.5 text-center">
-                        {m ?? (any && !j1 ? "—" : "")}
-                        {z && <div className="text-[10px] text-muted-foreground">ملازم: {z}</div>}
-                        {(j1 || j2) && <div className="text-[10px]">الجمعة: {j1 ?? "—"} / {j2 ?? "—"}</div>}
-                      </td>
-                    );
-                  })}
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
+      <CardContent className="space-y-3">
+        {/* مفتاح الألوان */}
+        <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+          <span className="flex items-center gap-1.5"><span className={cn("inline-block h-3 w-3 rounded-sm", CHIP.muezzin)} />مؤذن</span>
+          <span className="flex items-center gap-1.5"><span className={cn("inline-block h-3 w-3 rounded-sm", CHIP.mulazim)} />ملازم</span>
+          <span className="flex items-center gap-1.5"><span className={cn("inline-block h-3 w-3 rounded-sm", CHIP.jumuah)} />أذانا الجمعة</span>
+        </div>
+        <div className="overflow-x-auto rounded-lg border">
+          <table className="w-full min-w-[760px] table-fixed border-collapse text-sm">
+            <colgroup><col className="w-[124px]" />{SLOTS.map((s) => <col key={s.key} />)}</colgroup>
+            <thead>
+              <tr className="bg-muted/50 text-muted-foreground">
+                <th className="border-b p-2 text-right font-semibold">اليوم</th>
+                {SLOTS.map((s) => <th key={s.key} className="border-b border-r p-2 font-semibold">{s.label}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {dates.map((d) => {
+                const any = data.upcoming.some((u) => u.dateKey === d);
+                const dow = new Date(`${d}T12:00:00Z`).getUTCDay();
+                const isFriday = dow === FRIDAY;
+                const isToday = d === data.today;
+                return (
+                  <tr key={d} className={cn("align-top", isToday && "bg-sidebar-primary/5", !any && "text-muted-foreground")}>
+                    <th className={cn("border-b p-2 text-right", isToday && "border-r-4 border-r-sidebar-primary")}>
+                      <div className="font-bold">{DAY_NAMES[dow]}{isToday && <span className="mr-1 text-[10px] font-normal text-sidebar-primary">اليوم</span>}</div>
+                      <div className="whitespace-nowrap text-[11px] font-normal text-muted-foreground">{hijriShort(d)} هـ</div>
+                      <div className="text-[11px] font-normal text-muted-foreground" dir="ltr">{d.split("-").reverse().join("/")}</div>
+                    </th>
+                    {SLOTS.map((s) => {
+                      const m = find(d, s.key, "muezzin");
+                      const z = find(d, s.key, "mulazim");
+                      const j1 = s.key === "dhuhr" && isFriday ? find(d, "jumuah1", "muezzin") : undefined;
+                      const j2 = s.key === "dhuhr" && isFriday ? find(d, "jumuah2", "muezzin") : undefined;
+                      return (
+                        <td key={s.key} className="border-b border-r p-1.5">
+                          <div className="flex flex-col gap-1">
+                            {(j1 || j2) && (
+                              <>
+                                <NameChip kind="jumuah" label="الجمعة ١" name={j1} />
+                                <NameChip kind="jumuah" label="الجمعة ٢" name={j2} />
+                              </>
+                            )}
+                            {m && <NameChip kind="muezzin" name={m} />}
+                            {z && <NameChip kind="mulazim" name={z} />}
+                            {!m && !z && !j1 && !j2 && any && <span className="py-1 text-center text-muted-foreground">—</span>}
+                          </div>
+                        </td>
+                      );
+                    })}
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
         {!hasData(week) && <p className="mt-2 text-sm text-amber-700">لم يُرفع جدول هذا الأسبوع ({weekLabel(week)}) بعد.</p>}
       </CardContent>
     </Card>
@@ -605,6 +660,12 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
 
 /* ───────────────────────── الردود ───────────────────────── */
 
+/** وقت قاعدة البيانات (UTC بلا منطقة) ← توقيت مكة. */
+function fmtTime(v: string) {
+  const d = new Date(/[zZ]|[+-]\d\d:?\d\d$/.test(v) ? v : `${String(v).replace(" ", "T")}Z`);
+  return d.toLocaleString("ar-SA-u-ca-gregory-nu-latn", { timeZone: "Asia/Riyadh", dateStyle: "short", timeStyle: "short" });
+}
+
 type DutyRow = {
   id: number; dateKey: string; slot: Slot; role: Role; muezzinId: number | null; name: string; phone: string | null; testMode: boolean;
   sendOk: boolean; sendDetail: string | null; deliveryStatus: string | null; deliveryError: string | null;
@@ -729,21 +790,39 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>سجل واتساب</CardTitle><CardDescription>كل ما خرج ودخل عبر رقم الإرسال، الأحدث أولًا.</CardDescription></CardHeader>
-        <CardContent className="max-h-[480px] overflow-y-auto">
+        <CardHeader><CardTitle>سجل واتساب</CardTitle><CardDescription>كل ما دخل وخرج عبر رقم الإرسال، الأحدث أولًا.</CardDescription></CardHeader>
+        <CardContent>
           {!q.data?.events.length ? <p className="text-sm text-muted-foreground">لا يوجد شيء بعد.</p> : (
-            <ul className="space-y-2 text-sm">
-              {q.data.events.map((e) => (
-                <li key={e.id} className={cn("rounded-md border p-2", e.direction === "in" ? "bg-emerald-50/40" : "bg-muted/30")}>
-                  <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
-                    <span>{e.direction === "in" ? "⬅ وارد" : "➡ صادر"}</span><span>{EVENT_KIND[e.kind] ?? e.kind}</span>
-                    {e.name && <span className="font-medium text-foreground">{e.name}</span>}
-                    <span dir="ltr">{e.phone}</span><span>{new Date(e.createdAt).toLocaleString("ar-SA-u-ca-gregory", { timeZone: "Asia/Riyadh" })}</span>
+            <div className="grid gap-4 md:grid-cols-2">
+              {([
+                { dir: "in", title: "⬅ الوارد", hint: "ردود المؤذنين والمشرفين", tone: "border-emerald-200 dark:border-emerald-900" },
+                { dir: "out", title: "➡ الصادر", hint: "ما أرسله النظام", tone: "border-sky-200 dark:border-sky-900" },
+              ] as const).map((col) => {
+                const items = q.data!.events.filter((e) => e.direction === col.dir);
+                return (
+                  <div key={col.dir} className={cn("rounded-lg border-2", col.tone)}>
+                    <div className="flex items-baseline justify-between border-b px-3 py-2">
+                      <span className="font-bold">{col.title}</span>
+                      <span className="text-xs text-muted-foreground">{col.hint} · {items.length}</span>
+                    </div>
+                    <ul className="max-h-[480px] space-y-2 overflow-y-auto p-2 text-sm">
+                      {!items.length && <li className="p-2 text-muted-foreground">لا يوجد.</li>}
+                      {items.map((e) => (
+                        <li key={e.id} className="rounded-md bg-muted/30 p-2">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+                            <span className="rounded bg-background px-1.5 py-0.5 font-medium text-foreground">{EVENT_KIND[e.kind] ?? e.kind}</span>
+                            {e.name && <span className="font-medium text-foreground">{e.name}</span>}
+                            <span dir="ltr">{e.phone}</span>
+                            <span>{fmtTime(e.createdAt)}</span>
+                          </div>
+                          {e.text && <div className="mt-1 whitespace-pre-line">{e.text}</div>}
+                        </li>
+                      ))}
+                    </ul>
                   </div>
-                  {e.text && <div className="mt-1 whitespace-pre-line">{e.text}</div>}
-                </li>
-              ))}
-            </ul>
+                );
+              })}
+            </div>
           )}
         </CardContent>
       </Card>

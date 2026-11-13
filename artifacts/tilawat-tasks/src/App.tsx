@@ -5,6 +5,8 @@ import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppLayout } from "@/components/layout";
 import { AuthProvider, useAuth } from "@/lib/auth-context";
+import { isMuezzinOnlyUser } from "@/lib/roles";
+import { MuezzinOnlyLayout } from "@/components/muezzin-only-layout";
 
 import Tasks from "@/pages/tasks";
 import Members from "@/pages/members";
@@ -38,12 +40,17 @@ const queryClient = new QueryClient({
 });
 
 function ProtectedRoute({ children }: { children: ReactNode }) {
-  const { isLoaded, isSignedIn } = useAuth();
-  const [, setLocation] = useLocation();
+  const { isLoaded, isSignedIn, user } = useAuth();
+  const [location, setLocation] = useLocation();
+  // مشرف المؤذنين فقط ← صفحة المؤذنين دائمًا (والحساب لتغيير كلمة المرور).
+  const muezzinOnly = isMuezzinOnlyUser(user as any);
+  const allowedForMuezzinOnly = location.startsWith("/muezzin-schedule") || location.startsWith("/account");
 
   useEffect(() => {
     if (isLoaded && !isSignedIn) setLocation("/sign-in");
-  }, [isLoaded, isSignedIn, setLocation]);
+    else if (isLoaded && muezzinOnly && !allowedForMuezzinOnly) setLocation("/muezzin-schedule", { replace: true });
+  }, [isLoaded, isSignedIn, muezzinOnly, allowedForMuezzinOnly, setLocation]);
+  if (muezzinOnly && !allowedForMuezzinOnly) return null;
 
   if (!isLoaded) {
     return (
@@ -54,6 +61,12 @@ function ProtectedRoute({ children }: { children: ReactNode }) {
   }
   if (!isSignedIn) return null;
   return <>{children}</>;
+}
+
+/** المدير يرى الصفحة داخل النظام كاملًا، ومشرف المؤذنين يراها وحدها. */
+function MuezzinRouteLayout({ children }: { children: ReactNode }) {
+  const { user } = useAuth();
+  return isMuezzinOnlyUser(user as any) ? <MuezzinOnlyLayout>{children}</MuezzinOnlyLayout> : <AppLayout>{children}</AppLayout>;
 }
 
 function HomeRoute() {
@@ -174,7 +187,7 @@ function AppRouter() {
       </Route>
       <Route path="/muezzin-schedule">
         <ProtectedRoute>
-          <AppLayout><MuezzinSchedulePage /></AppLayout>
+          <MuezzinRouteLayout><MuezzinSchedulePage /></MuezzinRouteLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/publishing-template">
