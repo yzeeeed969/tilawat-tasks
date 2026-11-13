@@ -104,17 +104,24 @@ function buildTitle(kind: "khutbah" | "prayer", h: { day: number; month: number;
 
 // ── الخطيب من منشور «خطباء الحرمين لهذا الأسبوع» ────────────────────────────────────────────────
 async function weeklyKhateeb(mosque: Mosque, h: { day: number; month: number }): Promise<string | null> {
+  // الإصدار 81: توحيد المسافات والمحارف الخفية (منشور 3 جمادى الآخرة كان فيه مسافتان «جمادى  الآخرة» فلم يطابق)،
+  // وقبول أسماء الشهر البديلة، ثم الرجوع لأحدث منشور هذا الأسبوع إن لم يطابق التاريخ.
   const rows = rowsOf(await db.execute(sql`
-    SELECT caption FROM telegram_channel_posts WHERE caption LIKE '%خطباء الحرمين%' AND published_at > now() - interval '6 days'
+    SELECT caption, published_at > now() - interval '4 days' AS recent FROM telegram_channel_posts WHERE caption LIKE '%خطباء الحرمين%' AND published_at > now() - interval '6 days'
     ORDER BY published_at DESC LIMIT 5`));
+  const clean = (t: string) => t.replace(/[\u2066-\u2069\u200e\u200f\u200b-\u200d\u0640]/g, "").replace(/[ \t\u00a0]+/g, " ").replace(/الأخرى|الثانية|الآخره|الاخرة/g, "الآخرة").replace(/الاولى|الأولي/g, "الأولى");
   const monthName = HIJRI_MONTHS[h.month - 1];
-  for (const r of rows) {
-    const c = String(r.caption ?? "").replace(/[⁦-⁩‎‏]/g, "");
-    if (!c.includes(`${h.day} ${monthName}`)) continue;
-    const label = mosque === "makkah" ? "المسجد الحرام" : "المسجد النبوي";
-    const m = c.match(new RegExp(`${label}[^#\\n]*#([^\\s#]+)`));
-    if (m) return m[1].replace(/_/g, " ").trim();
+  const label = mosque === "makkah" ? "المسجد الحرام" : "المسجد النبوي";
+  const nameIn = (c: string) => c.match(new RegExp(`${label}[^#\\n]*#([^\\s#]+)`))?.[1]?.replace(/_/g, " ").trim() ?? null;
+  const captions = rows.map((r) => clean(String(r.caption ?? "")));
+  const recentCaptions = rows.filter((r) => r.recent === true || r.recent === "t").map((r) => clean(String(r.caption ?? "")));
+  for (const c of captions) {
+    if (!new RegExp(`(^|\\D)${h.day} ${monthName}`).test(c)) continue;
+    const n = nameIn(c);
+    if (n) return n;
   }
+  // احتياط: أحدث منشور «خطباء الحرمين» خلال 4 أيام (منشور هذا الأسبوع فقط، لا منشور الأسبوع الماضي).
+  for (const c of recentCaptions) { const n = nameIn(c); if (n) return n; }
   return null;
 }
 
@@ -215,7 +222,7 @@ async function alertAdmin(title: string, lines: string[], key: string) {
 }
 
 // ── الطلب من جهاز التسجيل ─────────────────────────────────────────────────────────────────────
-export type FridaySubmission = { mosque: Mosque; kind: "khutbah" | "prayer"; audioUrl: string; surahs?: SurahPart[]; dryRun?: boolean };
+export type FridaySubmission = { mosque: Mosque; kind: "khutbah" | "prayer"; audioUrl: string; surahs?: SurahPart[]; dryRun?: boolean; khateeb?: string };
 
 // آخر تجارب «بلا نشر» (dryRun) — للمدير ليتأكد أن الجهاز وصل والعنوان صحيح.
 export const dryRuns: Array<Record<string, unknown>> = [];
@@ -249,19 +256,20 @@ export async function submitFriday(input: FridaySubmission): Promise<{ ok: boole
     await db.execute(sql`UPDATE app_friday_publish SET status = ${status}, reason = ${values.reason ?? null}, title = coalesce(${values.title ?? null}, title),
       reciter = coalesce(${values.reciter ?? null}, reciter), updated_at = now() WHERE mosque = ${input.mosque} AND kind = ${input.kind} AND friday = ${friday}`);
   };
-  const fail = async (reason: string, title?: string) => {
+  // dataError: نقص بيانات لا تحلّه إعادة المحاولة ⇐ الرد 400 حتى لا يعيد الجهاز المحاولة (الإصدار 81).
+  const fail = async (reason: string, title?: string, dataError = false) => {
     await done("failed", { reason, title });
     await alertAdmin(`لم تُنشر ${kindLabel} (${mosqueLabel}) في التطبيق آليًا`, [`السبب: ${reason}`, `الملف: ${input.audioUrl}`, "", "انشرها يدويًا في لوحة التطبيق."], `friday_publish:${friday}:${input.mosque}:${input.kind}`);
-    return { ok: false, status: "failed", title, message: reason };
+    return { ok: false, status: dataError ? "missing-data" : "failed", title, message: reason };
   };
 
   try {
     const h = hijriOf(t.y, t.m, t.d);
     const built = buildTitle(input.kind, h, t, input.surahs ?? []);
-    if ("error" in built) return await fail(built.error!);
+    if ("error" in built) return await fail(built.error!, undefined, true);
     const title = built.title!;
-    const khateeb = await weeklyKhateeb(input.mosque, h);
-    if (!khateeb) return await fail("لم أجد اسم الخطيب في منشور «خطباء الحرمين لهذا الأسبوع» في القناة", title);
+    const khateeb = (input.khateeb ?? "").trim() || await weeklyKhateeb(input.mosque, h);
+    if (!khateeb) return await fail("لم أجد اسم الخطيب في منشور «خطباء الحرمين لهذا الأسبوع» في القناة", title, true);
 
     const head = await fetch(input.audioUrl, { method: "HEAD" }).catch(() => null);
     if (!head || !head.ok) return await fail(`ملف الصوت غير متاح على الرابط (${head?.status ?? "خطأ اتصال"})`, title);
@@ -272,14 +280,14 @@ export async function submitFriday(input: FridaySubmission): Promise<{ ok: boole
       return { ok: true, status: "skipped", title, message: "نشرها الفريق في التطبيق مسبقًا" };
     }
     const reciter = pickReciter(form.html, khateeb, input.mosque);
-    if (!reciter) return await fail(`الخطيب «${khateeb}» غير موجود في قائمة القراء في لوحة التطبيق`, title);
+    if (!reciter) return await fail(`الخطيب «${khateeb}» غير موجود في قائمة القراء في لوحة التطبيق`, title, true);
     const token = tokenOf(form.html);
     if (!token) return await fail("تعذّرت قراءة نموذج الإضافة في لوحة التطبيق", title);
 
     let fields: Array<[string, string]>;
     if (input.kind === "khutbah") {
       const cat = await currentYearCategory(PARENTS[input.mosque]);
-      if (!cat) return await fail("لم أجد قسم خطب السنة الحالية في التطبيق", title);
+      if (!cat) return await fail("لم أجد قسم خطب السنة الحالية في التطبيق", title, true);
       const position = form.html.match(/name="position"[^>]*value="(\d+)"/)?.[1] ?? form.html.match(/value="(\d+)"[^>]*name="position"/)?.[1] ?? "";
       fields = [["_token", token], ["_method", "POST"], ["category", String(cat)], ["name", title], ["sound_url", input.audioUrl], ["youtube_id", ""],
         ["reciter", reciter.id], ["position", position], ["status", "1"], ["send_push_notification", "1"]];
@@ -287,7 +295,7 @@ export async function submitFriday(input: FridaySubmission): Promise<{ ok: boole
       const emoji = input.mosque === "makkah" ? "🕋" : "🕌";
       const select = form.html.match(/<select[^>]*name="category"[\s\S]*?<\/select>/)?.[0] ?? "";
       const cat = [...select.matchAll(/<option value="(\d+)"[^>]*>([\s\S]*?)<\/option>/g)].find((m) => m[2].includes(String(h.year)) && m[2].includes(emoji))?.[1];
-      if (!cat) return await fail(`لم أجد قسم «${h.year} ${emoji}» في تلاوات الفروض`, title);
+      if (!cat) return await fail(`لم أجد قسم «${h.year} ${emoji}» في تلاوات الفروض`, title, true);
       const positionsJson = form.html.match(/var positions = (\{[\s\S]*?\});/)?.[1];
       const position = positionsJson ? (JSON.parse(positionsJson)?.[cat]?.[String(h.month)] ?? "") : "";
       if (!position) return await fail("تعذّر تحديد ترتيب التلاوة (position) في لوحة التطبيق", title);

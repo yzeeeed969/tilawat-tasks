@@ -30,7 +30,7 @@ fridayMachineRouter.post("/friday-publish/machine/submit", requireKey, async (re
   try {
     const dryRun = b.dryRun === true || req.query.dryRun === "1";
     const result = await submitFriday({ mosque, kind, audioUrl, surahs, dryRun });
-    res.status(result.ok ? 200 : result.status === "rejected" ? 400 : 502).json(result);
+    res.status(result.ok ? 200 : result.status === "rejected" || result.status === "missing-data" ? 400 : 502).json(result);
   } catch (err) {
     res.status(500).json({ ok: false, message: (err as Error).message });
   }
@@ -41,6 +41,16 @@ const router = Router();
 
 router.get("/friday-publish", requireAdmin, async (_req, res) => {
   try { res.json(await fridayPublishOverview()); } catch (err) { res.status(500).json({ message: (err as Error).message }); }
+});
+
+// المدير: إعادة إرسال طلب جمعة اليوم من الموقع (نفس منطق الجهاز)، مع خطيب اختياري.
+router.post("/friday-publish/resubmit", requireAdmin, async (req, res) => {
+  const b = req.body ?? {};
+  if (!(b.mosque === "makkah" || b.mosque === "madinah") || !(b.kind === "khutbah" || b.kind === "prayer") || typeof b.audioUrl !== "string") {
+    res.status(400).json({ ok: false, message: "mosque و kind و audioUrl مطلوبة" }); return;
+  }
+  const surahs: SurahPart[] = Array.isArray(b.surahs) ? b.surahs.map((s: any) => ({ surah: Number(s?.surah), from: s?.from != null ? Number(s.from) : undefined, to: s?.to != null ? Number(s.to) : undefined })) : [];
+  res.json(await submitFriday({ mosque: b.mosque, kind: b.kind, audioUrl: b.audioUrl.trim(), surahs, khateeb: typeof b.khateeb === "string" ? b.khateeb : undefined }));
 });
 
 router.post("/friday-publish/test-login", requireAdmin, async (_req, res) => {
