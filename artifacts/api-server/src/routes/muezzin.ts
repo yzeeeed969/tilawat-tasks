@@ -59,7 +59,8 @@ router.get("/muezzin-schedule/setup", requireAdmin, handle(async (_req: any, res
       webhookUrl: `${_req.protocol}://${_req.get("host")}/api/whatsapp/webhook`,
     },
     muezzins: await listMuezzins(),
-    upcoming: await getScheduleRange(today, 8),
+    // من أحد الأسبوع الحالي، ثلاثة أسابيع كاملة (أحد ← سبت) ليُعرض الجدول أسبوعًا أسبوعًا.
+    upcoming: await getScheduleRange(addDays(today, -new Date(`${today}T12:00:00Z`).getUTCDay()), 21),
     log: await recentLog(),
   });
 }));
