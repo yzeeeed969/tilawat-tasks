@@ -375,12 +375,36 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
   );
 }
 
+const MONTHS_AR = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+/** «15 – 21 نوفمبر» */
+function weekLabel(sunday: string) {
+  const sat = addDays(sunday, 6);
+  const [, m1, d1] = sunday.split("-").map(Number);
+  const [, m2, d2] = sat.split("-").map(Number);
+  return m1 === m2 ? `${d1} – ${d2} ${MONTHS_AR[m1 - 1]}` : `${d1} ${MONTHS_AR[m1 - 1]} – ${d2} ${MONTHS_AR[m2 - 1]}`;
+}
+
 function UpcomingCard({ data }: { data: Setup }) {
   const find = (d: string, s: Slot, r: Role) => data.upcoming.find((u) => u.dateKey === d && u.slot === s && u.role === r)?.name;
-  const dates = Array.from({ length: 8 }, (_, i) => addDays(data.today, i));
+  // أسابيع كاملة من الأحد إلى السبت: الحالي والقادمان.
+  const thisSunday = addDays(data.today, -new Date(`${data.today}T12:00:00Z`).getUTCDay());
+  const weeks = [0, 7, 14].map((n) => addDays(thisSunday, n));
+  const hasData = (w: string) => data.upcoming.some((u) => u.dateKey >= w && u.dateKey <= addDays(w, 6));
+  // الافتراضي: أحدث أسبوع مرفوع (عادةً القادم بعد رفعه).
+  const [week, setWeek] = useState(() => [...weeks].reverse().find(hasData) ?? weeks[0]);
+  const dates = Array.from({ length: 7 }, (_, i) => addDays(week, i));
   return (
     <Card>
-      <CardHeader><CardTitle>الجدول المعتمد للأيام القادمة</CardTitle></CardHeader>
+      <CardHeader>
+        <CardTitle>الجدول المعتمد</CardTitle>
+        <div className="flex flex-wrap gap-2 pt-2">
+          {weeks.map((w, i) => (
+            <Button key={w} size="sm" variant={w === week ? "default" : "outline"} onClick={() => setWeek(w)}>
+              {i === 0 ? "هذا الأسبوع" : i === 1 ? "الأسبوع القادم" : "بعد القادم"} ({weekLabel(w)}){!hasData(w) && " — غير مرفوع"}
+            </Button>
+          ))}
+        </div>
+      </CardHeader>
       <CardContent>
         <table className="w-full table-fixed border-collapse text-xs">
           <colgroup><col className="w-[84px]" />{SLOTS.map((s) => <col key={s.key} />)}</colgroup>
@@ -410,7 +434,7 @@ function UpcomingCard({ data }: { data: Setup }) {
             })}
           </tbody>
         </table>
-        {!data.upcoming.length && <p className="mt-2 text-sm text-amber-700">لا يوجد جدول معتمد للأيام القادمة.</p>}
+        {!hasData(week) && <p className="mt-2 text-sm text-amber-700">لم يُرفع جدول هذا الأسبوع ({weekLabel(week)}) بعد.</p>}
       </CardContent>
     </Card>
   );
