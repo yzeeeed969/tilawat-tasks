@@ -63,6 +63,15 @@ export function useCanManagePlatforms(): boolean { return usePermissions().canMa
 export function useCanManageAccounts(): boolean { return usePermissions().canManageAccounts; }
 export function useCanManageMuezzins(): boolean { return usePermissions().canManageMuezzins; }
 
+/** مشرف المؤذنين فقط: ليس مديرًا، ومعه صلاحية «جدول المؤذنين» دون غيرها ← يرى صفحة المؤذنين وحدها بلا قائمة جانبية. */
+export function isMuezzinOnlyUser(user: { role?: string; permissions?: UserPermissions | null } | null | undefined): boolean {
+  if (!user || user.role === "admin") return false;
+  const p = user.permissions ?? {};
+  if (p.canManageMuezzins !== true) return false;
+  const others: Array<keyof UserPermissions> = ["canViewMembers", "canViewReports", "canManageSettings", "canManageReciters", "canManagePlatforms", "canManageAccounts"];
+  return !others.some((k) => p[k] === true);
+}
+
 export function useCanAccessSettings(): boolean {
   const p = usePermissions();
   return p.canManageSettings || p.canManageReciters || p.canManagePlatforms || p.canManageAccounts;
