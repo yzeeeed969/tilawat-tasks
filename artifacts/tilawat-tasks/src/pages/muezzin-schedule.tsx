@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { useIsAdmin } from "@/lib/roles";
+import { useCanManageMuezzins } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 // «جدول المؤذنين» (للمدير): رفع صورة الجدول الأسبوعي الرسمي ← قراءة آلية ← معاينة بجانب الصورة ← إنشاء.
@@ -111,13 +111,14 @@ function StatusPill({ ok, on, off }: { ok: boolean; on: string; off: string }) {
 }
 
 export default function MuezzinSchedulePage() {
-  const isAdmin = useIsAdmin();
+  // المدير أو من مُنح صلاحية «إدارة جدول المؤذنين».
+  const isAdmin = useCanManageMuezzins();
   const { toast } = useToast();
   const qc = useQueryClient();
   const setup = useQuery({ queryKey: ["muezzin-setup"], queryFn: () => api<Setup>(`${BASE}/setup`), enabled: isAdmin });
   const refresh = () => qc.invalidateQueries({ queryKey: ["muezzin-setup"] });
 
-  if (!isAdmin) return <div className="p-10 text-center text-muted-foreground">هذه الصفحة للمدير فقط.</div>;
+  if (!isAdmin) return <div className="p-10 text-center text-muted-foreground">هذه الصفحة لمن لديه صلاحية «إدارة جدول المؤذنين».</div>;
   if (setup.isLoading) return <div className="flex justify-center p-10"><Loader2 className="h-6 w-6 animate-spin text-sidebar-primary" /></div>;
   if (setup.isError || !setup.data) return <div className="p-10 text-center text-destructive">{(setup.error as Error)?.message ?? "تعذّر التحميل"}</div>;
   const data = setup.data;
