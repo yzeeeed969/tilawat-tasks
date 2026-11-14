@@ -142,19 +142,36 @@ export default function MuezzinSchedulePage() {
         </div>
       </div>
 
-      <Tabs defaultValue="upload" dir="rtl">
+      {/* ثلاثة تبويبات: الجدول (يومي) — الردود (متابعة) — الإعدادات (نادرًا). */}
+      <Tabs defaultValue="schedule" dir="rtl">
         <TabsList>
-          <TabsTrigger value="upload">الإدخال الأسبوعي</TabsTrigger>
-          <TabsTrigger value="muezzins">المؤذنون ({data.muezzins.length})</TabsTrigger>
-          <TabsTrigger value="send">الإرسال والسجل</TabsTrigger>
+          <TabsTrigger value="schedule">الجدول</TabsTrigger>
           <TabsTrigger value="replies">الردود</TabsTrigger>
-          <TabsTrigger value="confirm">الأزرار والمشرف</TabsTrigger>
+          <TabsTrigger value="settings">الإعدادات</TabsTrigger>
         </TabsList>
-        <TabsContent value="upload"><UploadTab data={data} onSaved={refresh} toast={toast} /></TabsContent>
-        <TabsContent value="muezzins"><MuezzinsTab data={data} onChange={refresh} toast={toast} /></TabsContent>
-        <TabsContent value="send"><SendTab data={data} onChange={refresh} toast={toast} /></TabsContent>
-        <TabsContent value="replies"><RepliesTab data={data} toast={toast} /></TabsContent>
-        <TabsContent value="confirm"><ConfirmTab data={data} onChange={refresh} toast={toast} /></TabsContent>
+        <TabsContent value="schedule"><UploadTab data={data} onSaved={refresh} toast={toast} /></TabsContent>
+        <TabsContent value="replies">
+          <div className="space-y-4">
+            <RepliesTab data={data} toast={toast} />
+            <SendTab data={data} onChange={refresh} toast={toast} part="activity" />
+          </div>
+        </TabsContent>
+        <TabsContent value="settings">
+          <div className="space-y-6">
+            <section className="space-y-2">
+              <h2 className="text-lg font-bold">المؤذنون ({data.muezzins.length})</h2>
+              <MuezzinsTab data={data} onChange={refresh} toast={toast} />
+            </section>
+            <section className="space-y-2">
+              <h2 className="text-lg font-bold">الإرسال اليومي</h2>
+              <SendTab data={data} onChange={refresh} toast={toast} part="settings" />
+            </section>
+            <section className="space-y-2">
+              <h2 className="text-lg font-bold">المشرفون وربط واتساب</h2>
+              <ConfirmTab data={data} onChange={refresh} toast={toast} />
+            </section>
+          </div>
+        </TabsContent>
       </Tabs>
     </div>
   );
@@ -184,6 +201,7 @@ function NameSelect({ value, options, bad, raw, onChange }: { value: string; opt
 }
 
 function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void; toast: any }) {
+  const [showUpload, setShowUpload] = useState(false);
   const [fileUrl, setFileUrl] = useState<string | null>(null);
   const [isPdf, setIsPdf] = useState(false);
   const [upload, setUpload] = useState<{ blob: Blob; type: string } | null>(null);
@@ -225,7 +243,7 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
     }),
     onSuccess: (r) => {
       toast({ title: "تم إنشاء الجدول ✓", description: `${r.entries} خانة من ${r.weekStart} إلى ${r.weekEnd}` });
-      setPreview(null); setGrid(null); setUpload(null); setFileUrl(null); setAutoDate(false);
+      setPreview(null); setGrid(null); setUpload(null); setFileUrl(null); setAutoDate(false); setShowUpload(false);
       onSaved();
     },
     onError: (e: Error) => toast({ title: "تعذّر الإنشاء", description: e.message, variant: "destructive" }),
@@ -262,6 +280,16 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
 
   return (
     <div className="space-y-4">
+      <UpcomingCard data={data} onChanged={onSaved} toast={toast} />
+
+      <div className="flex flex-wrap items-center gap-2">
+        <Button variant={showUpload ? "secondary" : "default"} onClick={() => setShowUpload((v) => !v)}>
+          <ImageUp className="ml-2 h-4 w-4" />{showUpload ? "إخفاء رفع الجدول" : "رفع جدول أسبوع جديد"}
+        </Button>
+        {!showUpload && <span className="text-xs text-muted-foreground">صورة أو PDF — تُقرأ تلقائيًا، تراجعها، ثم تعتمدها.</span>}
+      </div>
+
+      {showUpload && <>
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><ImageUp className="h-5 w-5 text-sidebar-primary" />١) ملف الجدول الأسبوعي</CardTitle>
@@ -375,8 +403,7 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
           </CardContent>
         </Card>
       )}
-
-      <UpcomingCard data={data} onChanged={onSaved} toast={toast} />
+      </>}
     </div>
   );
 }
@@ -639,7 +666,7 @@ function MuezzinRow({ m, onChange, toast }: { m: Muezzin; onChange: () => void; 
 
 /* ───────────────────────── الإرسال والسجل ───────────────────────── */
 
-function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void; toast: any }) {
+function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () => void; toast: any; part: "settings" | "activity" }) {
   const s = data.settings;
   const [time, setTime] = useState(`${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`);
   const savedTime = `${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`;
@@ -666,7 +693,7 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
 
   return (
     <div className="space-y-4">
-      <Card>
+      {part === "settings" && <Card>
         <CardHeader><CardTitle>إعدادات الإرسال</CardTitle><CardDescription>كل يوم في الوقت المحدد يُرسل جدول اليوم التالي. مثال: الاثنين 3:00 م تُرسل مهام الثلاثاء.</CardDescription></CardHeader>
         <CardContent className="space-y-4">
           <div className="flex flex-wrap items-center gap-3">
@@ -701,7 +728,8 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
             )}
           </div>
         </CardContent>
-      </Card>
+      </Card>}
+      {part === "activity" && <>
 
       <Card>
         <CardHeader><CardTitle className="flex items-center gap-2"><Megaphone className="h-5 w-5 text-sidebar-primary" />إرسال يدوي ليوم محدد</CardTitle><CardDescription>لا يُكرر الرسالة لمن وصلته مسبقًا في نفس اليوم.</CardDescription></CardHeader>
@@ -720,7 +748,7 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
       </Card>
 
       <Card>
-        <CardHeader><CardTitle>السجل</CardTitle></CardHeader>
+        <CardHeader><CardTitle>سجل الإرسال</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto">
           {!data.log.length ? <p className="text-sm text-muted-foreground">لا توجد رسائل بعد.</p> : (
             <table className="w-full border-collapse text-sm">
@@ -743,6 +771,7 @@ function SendTab({ data, onChange, toast }: { data: Setup; onChange: () => void;
           )}
         </CardContent>
       </Card>
+      </>}
     </div>
   );
 }
