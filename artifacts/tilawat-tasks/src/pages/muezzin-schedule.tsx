@@ -3,6 +3,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { AlertTriangle, CheckCircle2, Copy, ImageUp, Loader2, Megaphone, MessageSquareReply, Plus, RefreshCw, Send, XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -41,7 +42,8 @@ type Setup = {
   settings: Settings;
   status: { vision: boolean; whatsapp: boolean; appSecret: boolean; webhookUrl: string };
   muezzins: Muezzin[];
-  upcoming: Array<{ dateKey: string; slot: Slot; role: Role; name: string }>;
+  upcoming: Array<{ dateKey: string; slot: Slot; role: Role; muezzinId: number; name: string }>;
+  sentDates?: string[];
   log: Array<{ id: number; dateKey: string; name: string; phone: string | null; testMode: boolean; ok: boolean; detail: string; createdAt: string }>;
 };
 type Cell = { raw: string; muezzinId: number | null };
@@ -371,7 +373,7 @@ function UploadTab({ data, onSaved, toast }: { data: Setup; onSaved: () => void;
         </Card>
       )}
 
-      <UpcomingCard data={data} />
+      <UpcomingCard data={data} onChanged={onSaved} toast={toast} />
     </div>
   );
 }
@@ -392,12 +394,70 @@ const CHIP = {
   jumuah: "bg-amber-100/80 text-amber-950 ring-1 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100 dark:ring-amber-800",
 } as const;
 
-function NameChip({ kind, name, label }: { kind: keyof typeof CHIP; name?: string; label?: string }) {
-  return (
-    <div className={cn("rounded-md px-2 py-1 text-center leading-tight", CHIP[kind])}>
+function NameChip({ kind, name, label, onClick }: { kind: keyof typeof CHIP; name?: string; label?: string; onClick?: () => void }) {
+  const body = (
+    <>
       {label && <div className="text-[10px] opacity-70">{label}</div>}
       <div className="truncate font-medium" title={name}>{name ?? "—"}</div>
-    </div>
+    </>
+  );
+  if (!onClick) return <div className={cn("rounded-md px-2 py-1 text-center leading-tight", CHIP[kind])}>{body}</div>;
+  return (
+    <button type="button" onClick={onClick} title="اضغط لتغيير الاسم"
+      className={cn("w-full cursor-pointer rounded-md px-2 py-1 text-center leading-tight transition hover:brightness-95 hover:ring-2", CHIP[kind])}>
+      {body}
+    </button>
+  );
+}
+
+type EditTarget = { dateKey: string; slot: Slot; role: Role; current?: { id: number; name: string } };
+
+/** نافذة تغيير اسم خانة واحدة في الجدول المعتمد. */
+function EditSlotDialog({ target, data, onClose, onSaved, toast }: {
+  target: EditTarget | null; data: Setup; onClose: () => void; onSaved: () => void; toast: any;
+}) {
+  const [choice, setChoice] = useState("");
+  const options = data.muezzins.filter((m) => m.isActive).sort((a, b) => a.name.localeCompare(b.name, "ar"));
+  const save = useMutation({
+    mutationFn: () => api(`${BASE}/slot`, {
+      method: "PATCH",
+      body: JSON.stringify({ dateKey: target!.dateKey, slot: target!.slot, role: target!.role, muezzinId: choice === "none" ? null : Number(choice) }),
+    }),
+    onSuccess: () => { toast({ title: "تم تعديل الخانة ✓" }); onClose(); onSaved(); },
+    onError: (e: Error) => toast({ title: "تعذّر التعديل", description: e.message, variant: "destructive" }),
+  });
+  if (!target) return null;
+  const dow = new Date(`${target.dateKey}T12:00:00Z`).getUTCDay();
+  const roleName = target.role === "mulazim" ? "الملازم" : "المؤذن";
+  const unchanged = !choice || (target.current && String(target.current.id) === choice) || (!target.current && choice === "none");
+  return (
+    <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
+      <DialogContent dir="rtl" className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle className="text-right">تغيير {roleName}</DialogTitle>
+          <DialogDescription className="text-right">
+            {SLOT_NAME[target.slot]} — يوم {DAY_NAMES[dow]} {target.dateKey.split("-").reverse().join("/")}
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-3 text-sm">
+          <div>الحالي: <span className="font-semibold">{target.current?.name ?? "— لا أحد —"}</span></div>
+          <select className="w-full rounded-md border bg-background p-2" value={choice} onChange={(e) => setChoice(e.target.value)}>
+            <option value="">اختر البديل…</option>
+            {target.role === "mulazim" && <option value="none">— بلا ملازم —</option>}
+            {options.map((m) => (
+              <option key={m.id} value={m.id}>{m.name}{m.phone ? "" : " (بلا رقم جوال)"}</option>
+            ))}
+          </select>
+          <p className="text-xs text-muted-foreground">تتغير هذه الخانة وحدها، ولا يتأثر بقية الجدول. تصل الرسالة للاسم الجديد في موعد الإرسال اليومي.</p>
+        </div>
+        <DialogFooter className="gap-2 sm:justify-start">
+          <Button disabled={unchanged || save.isPending} onClick={() => save.mutate()}>
+            {save.isPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}حفظ
+          </Button>
+          <Button variant="outline" onClick={onClose}>إلغاء</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -413,8 +473,17 @@ function hijriShort(dateKey: string) {
   }
 }
 
-function UpcomingCard({ data }: { data: Setup }) {
-  const find = (d: string, s: Slot, r: Role) => data.upcoming.find((u) => u.dateKey === d && u.slot === s && u.role === r)?.name;
+function UpcomingCard({ data, onChanged, toast }: { data: Setup; onChanged: () => void; toast: any }) {
+  const entry = (d: string, s: Slot, r: Role) => data.upcoming.find((u) => u.dateKey === d && u.slot === s && u.role === r);
+  const find = (d: string, s: Slot, r: Role) => entry(d, s, r)?.name;
+  const [edit, setEdit] = useState<EditTarget | null>(null);
+  const sent = new Set(data.sentDates ?? []);
+  // يُعدَّل اليوم إن كان له جدول، ولم يمضِ، ولم تُرسل رسائله بعد.
+  const editable = (d: string) => d >= data.today && !sent.has(d) && data.upcoming.some((u) => u.dateKey === d);
+  const open = (d: string, s: Slot, r: Role) => {
+    if (!editable(d)) return undefined;
+    return () => { const e = entry(d, s, r); setEdit({ dateKey: d, slot: s, role: r, current: e ? { id: e.muezzinId, name: e.name } : undefined }); };
+  };
   // أسابيع كاملة من الأحد إلى السبت: الحالي والقادمان.
   const thisSunday = addDays(data.today, -new Date(`${data.today}T12:00:00Z`).getUTCDay());
   const weeks = [0, 7, 14].map((n) => addDays(thisSunday, n));
@@ -459,7 +528,7 @@ function UpcomingCard({ data }: { data: Setup }) {
                 return (
                   <tr key={d} className={cn("align-top", isToday && "bg-sidebar-primary/5", !any && "text-muted-foreground")}>
                     <th className={cn("border-b p-2 text-right", isToday && "border-r-4 border-r-sidebar-primary")}>
-                      <div className="font-bold">{DAY_NAMES[dow]}{isToday && <span className="mr-1 text-[10px] font-normal text-sidebar-primary">اليوم</span>}</div>
+                      <div className="font-bold">{DAY_NAMES[dow]}{isToday && <span className="mr-1 text-[10px] font-normal text-sidebar-primary">اليوم</span>}{sent.has(d) && <span className="mr-1 text-[10px] font-normal" title="أُرسلت رسائل هذا اليوم">🔒</span>}</div>
                       <div className="whitespace-nowrap text-[11px] font-normal text-muted-foreground">{hijriShort(d)} هـ</div>
                       <div className="text-[11px] font-normal text-muted-foreground" dir="ltr">{d.split("-").reverse().join("/")}</div>
                     </th>
@@ -473,12 +542,15 @@ function UpcomingCard({ data }: { data: Setup }) {
                           <div className="flex flex-col gap-1">
                             {(j1 || j2) && (
                               <>
-                                <NameChip kind="jumuah" label="الجمعة ١" name={j1} />
-                                <NameChip kind="jumuah" label="الجمعة ٢" name={j2} />
+                                <NameChip kind="jumuah" label="الجمعة ١" name={j1} onClick={open(d, "jumuah1", "muezzin")} />
+                                <NameChip kind="jumuah" label="الجمعة ٢" name={j2} onClick={open(d, "jumuah2", "muezzin")} />
                               </>
                             )}
-                            {m && <NameChip kind="muezzin" name={m} />}
-                            {z && <NameChip kind="mulazim" name={z} />}
+                            {m && <NameChip kind="muezzin" name={m} onClick={open(d, s.key, "muezzin")} />}
+                            {z && <NameChip kind="mulazim" name={z} onClick={open(d, s.key, "mulazim")} />}
+                            {m && !z && !(isFriday && s.key === "dhuhr") && editable(d) && (
+                              <button type="button" onClick={open(d, s.key, "mulazim")} className="rounded-md border border-dashed px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted">+ ملازم</button>
+                            )}
                             {!m && !z && !j1 && !j2 && any && <span className="py-1 text-center text-muted-foreground">—</span>}
                           </div>
                         </td>
@@ -490,7 +562,13 @@ function UpcomingCard({ data }: { data: Setup }) {
             </tbody>
           </table>
         </div>
+        {hasData(week) && (
+          <p className="text-xs text-muted-foreground">
+            ✏️ لتغيير اسم: اضغط عليه واختر البديل. الأيام التي أُرسلت رسائلها 🔒 تُغيَّر من زر «إسناد» في تبويب «الردود».
+          </p>
+        )}
         {!hasData(week) && <p className="mt-2 text-sm text-amber-700">لم يُرفع جدول هذا الأسبوع ({weekLabel(week)}) بعد.</p>}
+        <EditSlotDialog key={edit ? `${edit.dateKey}-${edit.slot}-${edit.role}` : "none"} target={edit} data={data} onClose={() => setEdit(null)} onSaved={onChanged} toast={toast} />
       </CardContent>
     </Card>
   );

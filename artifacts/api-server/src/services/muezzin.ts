@@ -320,19 +320,70 @@ export async function saveWeek(input: {
   return { entries: rows.length, weekStart, weekEnd: addDays(weekStart, 6) };
 }
 
+/**
+ * تعديل خانة واحدة في الجدول المعتمد (مؤذن أو ملازم لصلاة في يوم) دون مسّ بقية الجدول.
+ * لا يُسمح إن كانت رسائل ذلك اليوم قد أُرسلت — حينها يُستخدم «إسناد» كي يطابق الجدولُ ما وصل للمؤذنين.
+ */
+export async function updateSlot(input: { dateKey?: unknown; slot?: unknown; role?: unknown; muezzinId?: unknown }) {
+  await ensureMuezzinSchema();
+  const dateKey = String(input.dateKey ?? "");
+  const slot = String(input.slot ?? "") as Slot;
+  const role = String(input.role ?? "") as Role;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) throw new MuezzinError(400, "تاريخ غير صحيح");
+  if (!(ALL_SLOTS as readonly string[]).includes(slot)) throw new MuezzinError(400, "الصلاة غير صحيحة");
+  if (!(ROLES as readonly string[]).includes(role)) throw new MuezzinError(400, "الدور غير صحيح");
+  const dow = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
+  if ((JUMUAH_SLOTS as readonly string[]).includes(slot) && (dow !== FRIDAY_INDEX || role !== "muezzin")) {
+    throw new MuezzinError(400, "أذانا الجمعة ليوم الجمعة فقط وبلا ملازم");
+  }
+  if (dow === FRIDAY_INDEX && slot === "dhuhr") throw new MuezzinError(400, "يوم الجمعة بلا ظهر — عدّل أذاني الجمعة");
+  if (dateKey < riyadhDayKey(new Date())) throw new MuezzinError(400, "لا يمكن تعديل يوم مضى");
+
+  const hasDay = rowsOf(await db.execute(sql`SELECT 1 FROM muezzin_schedule WHERE date_key = ${dateKey} LIMIT 1`)).length > 0;
+  if (!hasDay) throw new MuezzinError(400, "لا يوجد جدول معتمد لهذا اليوم — ارفع جدول الأسبوع أولًا");
+  const sent = rowsOf(await db.execute(sql`SELECT 1 FROM muezzin_duties WHERE date_key = ${dateKey} AND test_mode = false LIMIT 1`)).length > 0;
+  if (sent) throw new MuezzinError(409, "أُرسلت رسائل هذا اليوم للمؤذنين — للتغيير استخدم «إسناد» في تبويب «الردود» كي تصل البديلَ رسالته");
+
+  const raw = input.muezzinId;
+  const muezzinId = raw === null || raw === "" || raw === undefined ? null : Number(raw);
+  if (muezzinId !== null) {
+    const m = (await listMuezzins()).find((x) => x.id === muezzinId);
+    if (!m) throw new MuezzinError(400, "المؤذن غير موجود");
+    if (!m.isActive) throw new MuezzinError(400, "هذا المؤذن موقوف");
+  } else if (role === "muezzin") {
+    throw new MuezzinError(400, "لا بد من مؤذن لهذه الخانة");
+  }
+
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`DELETE FROM muezzin_schedule WHERE date_key = ${dateKey} AND slot = ${slot} AND role = ${role}`);
+    if (muezzinId !== null) {
+      await tx.execute(sql`INSERT INTO muezzin_schedule (date_key, slot, role, muezzin_id) VALUES (${dateKey}, ${slot}, ${role}, ${muezzinId})`);
+    }
+  });
+  return { ok: true, dateKey, slot, role, muezzinId };
+}
+
 export async function getScheduleRange(fromKey: string, days: number) {
   await ensureMuezzinSchema();
   const toKey = addDays(fromKey, days - 1);
   return rowsOf(await db.execute(sql`
-    SELECT s.date_key, s.slot, s.role, m.name
+    SELECT s.date_key, s.slot, s.role, s.muezzin_id, m.name
     FROM muezzin_schedule s JOIN muezzins m ON m.id = s.muezzin_id
     WHERE s.date_key BETWEEN ${fromKey} AND ${toKey}
     ORDER BY s.date_key`)).map((r) => ({
     dateKey: String(r.date_key),
     slot: String(r.slot) as Slot,
     role: (String(r.role ?? "muezzin") as Role),
+    muezzinId: Number(r.muezzin_id),
     name: String(r.name),
   }));
+}
+
+/** الأيام التي أُرسلت رسائلها فعلًا (غير التجربة) — لا تُعدَّل خاناتها إلا بـ«إسناد». */
+export async function sentDateKeys(fromKey: string) {
+  await ensureMuezzinSchema();
+  return rowsOf(await db.execute(sql`
+    SELECT DISTINCT date_key FROM muezzin_duties WHERE test_mode = false AND date_key >= ${fromKey}`)).map((r) => String(r.date_key));
 }
 
 /* ───────────────────────── الإعدادات ───────────────────────── */

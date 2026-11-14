@@ -16,6 +16,8 @@ import {
   sendForDate,
   updateMuezzin,
   updateSettings,
+  updateSlot,
+  sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
 import { assignSubstitute, dutiesForDate, dutyStats, prepareMeta, recentEvents, sendPreview, templateStatuses } from "../services/muezzin-confirm";
@@ -61,6 +63,7 @@ router.get("/muezzin-schedule/setup", requireMuezzinAccess, handle(async (_req: 
     muezzins: await listMuezzins(),
     // من أحد الأسبوع الحالي، ثلاثة أسابيع كاملة (أحد ← سبت) ليُعرض الجدول أسبوعًا أسبوعًا.
     upcoming: await getScheduleRange(addDays(today, -new Date(`${today}T12:00:00Z`).getUTCDay()), 21),
+    sentDates: await sentDateKeys(addDays(today, -new Date(`${today}T12:00:00Z`).getUTCDay())),
     log: await recentLog(),
   });
 }));
@@ -91,6 +94,13 @@ router.post(
 router.post("/muezzin-schedule/week", requireMuezzinAccess, handle(async (req, res) => {
   const result = await saveWeek({ ...(req.body ?? {}), userId: req.currentUser?.id ?? null });
   await logWeeklyActivity(req, "muezzin_schedule_created", "muezzin_schedule", null, `جدول المؤذنين ${result.weekStart}`, result).catch(() => {});
+  res.json(result);
+}));
+
+// تعديل خانة واحدة في الجدول المعتمد (قبل إرسال رسائل ذلك اليوم).
+router.patch("/muezzin-schedule/slot", requireMuezzinAccess, handle(async (req, res) => {
+  const result = await updateSlot(req.body ?? {});
+  await logWeeklyActivity(req, "muezzin_schedule_slot_updated", "muezzin_schedule", null, `تعديل خانة ${result.dateKey} ${result.slot} ${result.role}`, result).catch(() => {});
   res.json(result);
 }));
 
