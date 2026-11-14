@@ -93,9 +93,11 @@ const TASK_ABC: Record<string, string> = {
   maghrib: "أذان المغرب", isha: "أذان العشاء", jumuah1: "الأذان الأول للجمعة", jumuah2: "الأذان الثاني للجمعة",
 };
 export type DutyCtx = { name: string; slot: string; role: string; dateKey: string; original?: string };
-const roleWord = (role: string) => (role === "mulazim" ? "ملازم" : "مؤذن");
+const roleWord = (role: string) => (role === "mulazim" ? "ملازم" : role === "reserve" ? "احتياطي" : "مؤذن");
 // المؤذن: «( أذان الفجر الأول )» — الملازم: «( ملازم ) أذان الفجر الأول» (صيغة المدير المعتمدة).
-export const taskD = (c: DutyCtx) => (c.role === "mulazim" ? `( ملازم ) ${TASK_D[c.slot] ?? c.slot}` : `( ${TASK_D[c.slot] ?? c.slot} )`);
+// الاحتياطي: «( احتياطي ) أذان العصر» بنفس قالب الملازم.
+export const taskD = (c: DutyCtx) =>
+  c.role === "mulazim" || c.role === "reserve" ? `( ${roleWord(c.role)} ) ${TASK_D[c.slot] ?? c.slot}` : `( ${TASK_D[c.slot] ?? c.slot} )`;
 
 export function dutyTemplate(w: Wording) {
   if (w.duty === "d") {
