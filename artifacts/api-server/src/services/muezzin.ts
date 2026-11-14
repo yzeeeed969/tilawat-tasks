@@ -16,7 +16,8 @@ export const SLOTS = ["fajr1", "fajr2", "dhuhr", "asr", "maghrib", "isha"] as co
 export const JUMUAH_SLOTS = ["jumuah1", "jumuah2"] as const;
 export const ALL_SLOTS = [...SLOTS, ...JUMUAH_SLOTS] as const;
 export type Slot = (typeof ALL_SLOTS)[number];
-export const ROLES = ["muezzin", "mulazim"] as const;
+// «reserve» (احتياطي): يُضاف يدويًا من الموقع، لا يأتي من ملف الجدول، ولا يُحذف عند إعادة رفع الأسبوع.
+export const ROLES = ["muezzin", "mulazim", "reserve"] as const;
 export type Role = (typeof ROLES)[number];
 const FRIDAY_INDEX = 5;
 export const SLOT_LABELS: Record<Slot, string> = {
@@ -39,7 +40,7 @@ export const SLOT_MESSAGE: Record<Slot, string> = {
   jumuah1: "الأذان الأول للجمعة",
   jumuah2: "الأذان الثاني للجمعة",
 };
-export const ROLE_LABEL: Record<Role, string> = { muezzin: "مؤذن", mulazim: "ملازم" };
+export const ROLE_LABEL: Record<Role, string> = { muezzin: "مؤذن", mulazim: "ملازم", reserve: "احتياطي" };
 // ترتيب زمني: الجمعة مكان الظهر.
 export const ALL_SLOT_ORDER: Record<Slot, number> = { fajr1: 0, fajr2: 1, jumuah1: 2, jumuah2: 3, dhuhr: 4, asr: 5, maghrib: 6, isha: 7 };
 
@@ -292,11 +293,11 @@ export async function saveWeek(input: {
       const isJumuah = (JUMUAH_SLOTS as readonly string[]).includes(slot);
       const v = d?.slots?.[slot];
       const ids: Record<Role, number | null | undefined> =
-        v && typeof v === "object" ? { muezzin: v.muezzin, mulazim: v.mulazim } : { muezzin: v as number | null | undefined, mulazim: null };
+        v && typeof v === "object" ? { muezzin: v.muezzin, mulazim: v.mulazim, reserve: null } : { muezzin: v as number | null | undefined, mulazim: null, reserve: null };
       for (const role of ROLES) {
         const id = ids[role];
         if (id == null) continue;
-        if (isJumuah && (i !== FRIDAY_INDEX || role === "mulazim")) throw new MuezzinError(400, "أذانا الجمعة ليوم الجمعة فقط وبلا ملازم");
+        if (isJumuah && (i !== FRIDAY_INDEX || role !== "muezzin")) throw new MuezzinError(400, "أذانا الجمعة ليوم الجمعة فقط وبلا ملازم");
         if (!valid.has(Number(id))) throw new MuezzinError(400, `مؤذن غير معروف في ${DAYS[i]} / ${SLOT_LABELS[slot]} / ${ROLE_LABEL[role]}`);
         rows.push({ dateKey: addDays(weekStart, i), slot, role, muezzinId: Number(id) });
       }
@@ -310,7 +311,8 @@ export async function saveWeek(input: {
       INSERT INTO muezzin_schedule_batches (week_start, entries, source_title, created_by_user_id)
       VALUES (${weekStart}, ${rows.length}, ${input.title ?? null}, ${input.userId ?? null}) RETURNING id`))[0];
     // استبدال جدول الأسبوع نفسه إن أُنشئ سابقًا.
-    for (const key of dateKeys) await tx.execute(sql`DELETE FROM muezzin_schedule WHERE date_key = ${key}`);
+    // الاحتياطي يبقى (يُضاف يدويًا وليس في ملف الجدول).
+    for (const key of dateKeys) await tx.execute(sql`DELETE FROM muezzin_schedule WHERE date_key = ${key} AND role <> 'reserve'`);
     for (const r of rows) {
       await tx.execute(sql`
         INSERT INTO muezzin_schedule (date_key, slot, role, muezzin_id, batch_id)
@@ -334,13 +336,17 @@ export async function updateSlot(input: { dateKey?: unknown; slot?: unknown; rol
   if (!(ROLES as readonly string[]).includes(role)) throw new MuezzinError(400, "الدور غير صحيح");
   const dow = new Date(`${dateKey}T12:00:00Z`).getUTCDay();
   if ((JUMUAH_SLOTS as readonly string[]).includes(slot) && (dow !== FRIDAY_INDEX || role !== "muezzin")) {
-    throw new MuezzinError(400, "أذانا الجمعة ليوم الجمعة فقط وبلا ملازم");
+    throw new MuezzinError(400, "أذانا الجمعة ليوم الجمعة فقط وبلا ملازم ولا احتياطي");
   }
   if (dow === FRIDAY_INDEX && slot === "dhuhr") throw new MuezzinError(400, "يوم الجمعة بلا ظهر — عدّل أذاني الجمعة");
   if (dateKey < riyadhDayKey(new Date())) throw new MuezzinError(400, "لا يمكن تعديل يوم مضى");
 
   const hasDay = rowsOf(await db.execute(sql`SELECT 1 FROM muezzin_schedule WHERE date_key = ${dateKey} LIMIT 1`)).length > 0;
   if (!hasDay) throw new MuezzinError(400, "لا يوجد جدول معتمد لهذا اليوم — ارفع جدول الأسبوع أولًا");
+  if (role !== "muezzin") {
+    const hasMain = rowsOf(await db.execute(sql`SELECT 1 FROM muezzin_schedule WHERE date_key = ${dateKey} AND slot = ${slot} AND role = 'muezzin' LIMIT 1`)).length > 0;
+    if (!hasMain) throw new MuezzinError(400, "لا يوجد مؤذن أساسي لهذه الصلاة");
+  }
   const sent = rowsOf(await db.execute(sql`SELECT 1 FROM muezzin_duties WHERE date_key = ${dateKey} AND test_mode = false LIMIT 1`)).length > 0;
   if (sent) throw new MuezzinError(409, "أُرسلت رسائل هذا اليوم للمؤذنين — للتغيير استخدم «إسناد» في تبويب «الردود» كي تصل البديلَ رسالته");
 

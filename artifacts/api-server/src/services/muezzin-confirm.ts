@@ -364,7 +364,10 @@ async function onApologyReason(duty: Duty, from: string, reasonRaw: string, quie
   const reason = param(reasonRaw).slice(0, 300);
   if (duty.replacedByDutyId) return;
   await db.execute(sql`UPDATE muezzin_duties SET response = 'apology', reason = ${reason}, responded_at = now() WHERE id = ${duty.id}`);
-  if (!quiet) await sendMessage(from, textMsg(`تم تسجيل اعتذاركم عن ${dutyText(duty)}، وسيتولى المشرف ترتيب البديل. جزاكم الله خيرًا.`));
+  if (!quiet) {
+    const tail = duty.role === "reserve" ? "" : "، وسيتولى المشرف ترتيب البديل";
+    await sendMessage(from, textMsg(`تم تسجيل اعتذاركم عن ${dutyText(duty)}${tail}. جزاكم الله خيرًا.`));
+  }
 
   const s = await getSettings();
   const sups = await supervisorTargets(duty.testMode);
@@ -384,6 +387,11 @@ async function onApologyReason(duty: Duty, from: string, reasonRaw: string, quie
 
 /** المشرف ضغط «اختيار البديل» ← قوائم واتساب (10 أسماء لكل قائمة، حد ميتا) بكل المؤذنين عدا المعتذر. */
 async function onPickTap(duty: Duty, from: string) {
+  // الاحتياطي: يكفي تنبيه المشرف بالاعتذار، بلا قائمة بديل (زر القالب ثابت فيظهر، فنردّ بتوضيح).
+  if (duty.role === "reserve") {
+    await sendMessage(from, textMsg(`هذا اعتذار عن مهمة احتياطي (${dutyText(duty)}) — لا يلزم اختيار بديل. ويمكن إضافة احتياطي آخر من الموقع.`));
+    return;
+  }
   if (duty.replacedByDutyId) {
     const sub = await getDuty(duty.replacedByDutyId);
     await sendMessage(from, textMsg(`سبق إسناد هذه المهمة إلى الشيخ ${sub?.name ?? ""}.`));
@@ -411,6 +419,7 @@ async function onPickTap(duty: Duty, from: string) {
 export async function assignSubstitute(dutyId: number, substituteId: number, replyTo?: string | null) {
   const duty = await getDuty(dutyId);
   if (!duty) throw new MuezzinError(404, "المهمة غير موجودة");
+  if (duty.role === "reserve") throw new MuezzinError(400, "مهمة الاحتياطي لا تحتاج بديلًا — أضف احتياطيًا آخر من الجدول المعتمد");
   if (duty.replacedByDutyId) {
     // عدة مشرفين: أول اختيار هو المعتمد.
     const prev = await getDuty(duty.replacedByDutyId);

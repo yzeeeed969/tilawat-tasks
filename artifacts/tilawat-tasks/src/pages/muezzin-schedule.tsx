@@ -16,6 +16,9 @@ import { cn } from "@/lib/utils";
 
 type Slot = "fajr1" | "fajr2" | "dhuhr" | "asr" | "maghrib" | "isha" | "jumuah1" | "jumuah2";
 type Role = "muezzin" | "mulazim";
+/** يشمل «الاحتياطي» الذي يُضاف يدويًا من الجدول المعتمد (لا يأتي من ملف الجدول). */
+type AnyRole = Role | "reserve";
+const ROLE_NAME: Record<AnyRole, string> = { muezzin: "مؤذن", mulazim: "ملازم", reserve: "احتياطي" };
 const SLOTS: Array<{ key: Slot; label: string }> = [
   { key: "fajr1", label: "الفجر الأول" },
   { key: "fajr2", label: "الفجر الثاني" },
@@ -42,7 +45,7 @@ type Setup = {
   settings: Settings;
   status: { vision: boolean; whatsapp: boolean; appSecret: boolean; webhookUrl: string };
   muezzins: Muezzin[];
-  upcoming: Array<{ dateKey: string; slot: Slot; role: Role; muezzinId: number; name: string }>;
+  upcoming: Array<{ dateKey: string; slot: Slot; role: AnyRole; muezzinId: number; name: string }>;
   sentDates?: string[];
   log: Array<{ id: number; dateKey: string; name: string; phone: string | null; testMode: boolean; ok: boolean; detail: string; createdAt: string }>;
 };
@@ -391,6 +394,7 @@ function weekLabel(sunday: string) {
 const CHIP = {
   muezzin: "bg-emerald-100/80 text-emerald-950 ring-1 ring-emerald-300 dark:bg-emerald-950/50 dark:text-emerald-100 dark:ring-emerald-800",
   mulazim: "bg-sky-100/80 text-sky-950 ring-1 ring-sky-300 dark:bg-sky-950/50 dark:text-sky-100 dark:ring-sky-800",
+  reserve: "bg-violet-100/80 text-violet-950 ring-1 ring-violet-300 dark:bg-violet-950/50 dark:text-violet-100 dark:ring-violet-800",
   jumuah: "bg-amber-100/80 text-amber-950 ring-1 ring-amber-300 dark:bg-amber-950/40 dark:text-amber-100 dark:ring-amber-800",
 } as const;
 
@@ -410,7 +414,7 @@ function NameChip({ kind, name, label, onClick }: { kind: keyof typeof CHIP; nam
   );
 }
 
-type EditTarget = { dateKey: string; slot: Slot; role: Role; current?: { id: number; name: string } };
+type EditTarget = { dateKey: string; slot: Slot; role: AnyRole; current?: { id: number; name: string } };
 
 /** نافذة تغيير اسم خانة واحدة في الجدول المعتمد. */
 function EditSlotDialog({ target, data, onClose, onSaved, toast }: {
@@ -428,7 +432,7 @@ function EditSlotDialog({ target, data, onClose, onSaved, toast }: {
   });
   if (!target) return null;
   const dow = new Date(`${target.dateKey}T12:00:00Z`).getUTCDay();
-  const roleName = target.role === "mulazim" ? "الملازم" : "المؤذن";
+  const roleName = target.role === "mulazim" ? "الملازم" : target.role === "reserve" ? "الاحتياطي" : "المؤذن";
   const unchanged = !choice || (target.current && String(target.current.id) === choice) || (!target.current && choice === "none");
   return (
     <Dialog open onOpenChange={(o) => { if (!o) onClose(); }}>
@@ -444,6 +448,7 @@ function EditSlotDialog({ target, data, onClose, onSaved, toast }: {
           <select className="w-full rounded-md border bg-background p-2" value={choice} onChange={(e) => setChoice(e.target.value)}>
             <option value="">اختر البديل…</option>
             {target.role === "mulazim" && <option value="none">— بلا ملازم —</option>}
+            {target.role === "reserve" && target.current && <option value="none">— حذف الاحتياطي —</option>}
             {options.map((m) => (
               <option key={m.id} value={m.id}>{m.name}{m.phone ? "" : " (بلا رقم جوال)"}</option>
             ))}
@@ -474,13 +479,13 @@ function hijriShort(dateKey: string) {
 }
 
 function UpcomingCard({ data, onChanged, toast }: { data: Setup; onChanged: () => void; toast: any }) {
-  const entry = (d: string, s: Slot, r: Role) => data.upcoming.find((u) => u.dateKey === d && u.slot === s && u.role === r);
-  const find = (d: string, s: Slot, r: Role) => entry(d, s, r)?.name;
+  const entry = (d: string, s: Slot, r: AnyRole) => data.upcoming.find((u) => u.dateKey === d && u.slot === s && u.role === r);
+  const find = (d: string, s: Slot, r: AnyRole) => entry(d, s, r)?.name;
   const [edit, setEdit] = useState<EditTarget | null>(null);
   const sent = new Set(data.sentDates ?? []);
   // يُعدَّل اليوم إن كان له جدول، ولم يمضِ، ولم تُرسل رسائله بعد.
   const editable = (d: string) => d >= data.today && !sent.has(d) && data.upcoming.some((u) => u.dateKey === d);
-  const open = (d: string, s: Slot, r: Role) => {
+  const open = (d: string, s: Slot, r: AnyRole) => {
     if (!editable(d)) return undefined;
     return () => { const e = entry(d, s, r); setEdit({ dateKey: d, slot: s, role: r, current: e ? { id: e.muezzinId, name: e.name } : undefined }); };
   };
@@ -508,6 +513,7 @@ function UpcomingCard({ data, onChanged, toast }: { data: Setup; onChanged: () =
         <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
           <span className="flex items-center gap-1.5"><span className={cn("inline-block h-3 w-3 rounded-sm", CHIP.muezzin)} />مؤذن</span>
           <span className="flex items-center gap-1.5"><span className={cn("inline-block h-3 w-3 rounded-sm", CHIP.mulazim)} />ملازم</span>
+          <span className="flex items-center gap-1.5"><span className={cn("inline-block h-3 w-3 rounded-sm", CHIP.reserve)} />احتياطي</span>
           <span className="flex items-center gap-1.5"><span className={cn("inline-block h-3 w-3 rounded-sm", CHIP.jumuah)} />أذانا الجمعة</span>
         </div>
         <div className="overflow-x-auto rounded-lg border">
@@ -535,6 +541,7 @@ function UpcomingCard({ data, onChanged, toast }: { data: Setup; onChanged: () =
                     {SLOTS.map((s) => {
                       const m = find(d, s.key, "muezzin");
                       const z = find(d, s.key, "mulazim");
+                      const rv = find(d, s.key, "reserve");
                       const j1 = s.key === "dhuhr" && isFriday ? find(d, "jumuah1", "muezzin") : undefined;
                       const j2 = s.key === "dhuhr" && isFriday ? find(d, "jumuah2", "muezzin") : undefined;
                       return (
@@ -551,6 +558,10 @@ function UpcomingCard({ data, onChanged, toast }: { data: Setup; onChanged: () =
                             {m && !z && !(isFriday && s.key === "dhuhr") && editable(d) && (
                               <button type="button" onClick={open(d, s.key, "mulazim")} className="rounded-md border border-dashed px-2 py-0.5 text-[11px] text-muted-foreground hover:bg-muted">+ ملازم</button>
                             )}
+                            {rv && <NameChip kind="reserve" label="احتياطي" name={rv} onClick={open(d, s.key, "reserve")} />}
+                            {m && !rv && !(isFriday && s.key === "dhuhr") && editable(d) && (
+                              <button type="button" onClick={open(d, s.key, "reserve")} className="rounded-md border border-dashed border-violet-300 px-2 py-0.5 text-[11px] text-violet-700 hover:bg-violet-50 dark:text-violet-300 dark:hover:bg-violet-950/40">+ احتياطي</button>
+                            )}
                             {!m && !z && !j1 && !j2 && any && <span className="py-1 text-center text-muted-foreground">—</span>}
                           </div>
                         </td>
@@ -564,7 +575,7 @@ function UpcomingCard({ data, onChanged, toast }: { data: Setup; onChanged: () =
         </div>
         {hasData(week) && (
           <p className="text-xs text-muted-foreground">
-            ✏️ لتغيير اسم: اضغط عليه واختر البديل. الأيام التي أُرسلت رسائلها 🔒 تُغيَّر من زر «إسناد» في تبويب «الردود».
+            ✏️ لتغيير اسم: اضغط عليه واختر البديل. ولإضافة مؤذن احتياطي: اضغط «+ احتياطي» تحت الصلاة (لا يُحذف عند إعادة رفع الجدول). الأيام التي أُرسلت رسائلها 🔒 تُغيَّر من زر «إسناد» في تبويب «الردود».
           </p>
         )}
         {!hasData(week) && <p className="mt-2 text-sm text-amber-700">لم يُرفع جدول هذا الأسبوع ({weekLabel(week)}) بعد.</p>}
@@ -745,7 +756,7 @@ function fmtTime(v: string) {
 }
 
 type DutyRow = {
-  id: number; dateKey: string; slot: Slot; role: Role; muezzinId: number | null; name: string; phone: string | null; testMode: boolean;
+  id: number; dateKey: string; slot: Slot; role: AnyRole; muezzinId: number | null; name: string; phone: string | null; testMode: boolean;
   sendOk: boolean; sendDetail: string | null; deliveryStatus: string | null; deliveryError: string | null;
   response: string | null; reason: string | null; respondedAt: string | null; substituteForDutyId: number | null; replacedByDutyId: number | null;
 };
@@ -827,12 +838,12 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
                     return (
                       <tr key={d.id} className={cn(d.replacedByDutyId && "text-muted-foreground")}>
                         <td className="border p-1.5 whitespace-nowrap">{SLOT_NAME[d.slot]}</td>
-                        <td className="border p-1.5">{d.role === "mulazim" ? "ملازم" : "مؤذن"}</td>
+                        <td className={cn("border p-1.5", d.role === "reserve" && "text-violet-700 dark:text-violet-300")}>{ROLE_NAME[d.role] ?? d.role}</td>
                         <td className="border p-1.5">{d.name}{original && <div className="text-[11px] text-muted-foreground">بديل عن {original.name}</div>}{d.testMode && <span className="mr-1 text-[11px] text-muted-foreground">(تجربة)</span>}</td>
                         <td className="border p-1.5"><DutyStatus d={d} />{!d.sendOk && d.sendDetail && <div className="text-[11px] text-red-700">{d.sendDetail}</div>}{d.deliveryError && <div className="text-[11px] text-red-700">{d.deliveryError}</div>}</td>
                         <td className="border p-1.5 text-xs">{d.reason ?? "—"}</td>
                         <td className="border p-1.5 text-xs">
-                          {replacement ? replacement.name : d.response === "apology" ? (
+                          {replacement ? replacement.name : d.response === "apology" && d.role === "reserve" ? <span className="text-muted-foreground">احتياطي — لا يلزم بديل</span> : d.response === "apology" ? (
                             <div className="flex items-center gap-1">
                               <select className="rounded border bg-background px-1 py-0.5 text-xs" value={pick[d.id] ?? ""} onChange={(e) => setPick((p) => ({ ...p, [d.id]: e.target.value }))}>
                                 <option value="">اختر البديل…</option>
