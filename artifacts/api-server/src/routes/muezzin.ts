@@ -20,7 +20,7 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, dutiesForDate, dutyStats, eventsForDate, prepareMeta, sendPreview, templateStatuses } from "../services/muezzin-confirm";
+import { assignSubstitute, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, sendSummary, templateStatuses } from "../services/muezzin-confirm";
 import { addDays } from "../services/muezzin";
 
 // «جدول المؤذنين» — للمدير ولمن مُنح صلاحية «إدارة جدول المؤذنين» (requireMuezzinAccess على كل مسار).
@@ -102,6 +102,16 @@ router.patch("/muezzin-schedule/slot", requireMuezzinAccess, handle(async (req, 
   const result = await updateSlot(req.body ?? {});
   await logWeeklyActivity(req, "muezzin_schedule_slot_updated", "muezzin_schedule", null, `تعديل خانة ${result.dateKey} ${result.slot} ${result.role}`, result).catch(() => {});
   res.json(result);
+}));
+
+// الملخص المسائي: إنشاء قالبه (مرة) وإرساله يدويًا ليوم محدد.
+router.post("/muezzin-schedule/summary/prepare", requireMuezzinAccess, handle(async (_req, res) => {
+  res.json(await prepareSummaryTemplate());
+}));
+router.post("/muezzin-schedule/summary/send", requireMuezzinAccess, handle(async (req, res) => {
+  const date = String(req.body?.date ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new MuezzinError(400, "تاريخ غير صحيح");
+  res.json(await sendSummary(date));
 }));
 
 router.patch("/muezzin-schedule/settings", requireMuezzinAccess, handle(async (req, res) => {
