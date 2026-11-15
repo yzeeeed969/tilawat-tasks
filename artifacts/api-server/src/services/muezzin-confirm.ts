@@ -573,6 +573,26 @@ export async function dutyStats(fromKey: string, toKey: string, testMode: boolea
   }));
 }
 
+/**
+ * سجل واتساب ليوم مهام محدد: كل ما يخص مهام ذلك اليوم (رسائلها وردودها وتنبيهات المشرفين)،
+ * وما ليس مربوطًا بمهمة (رسائل نصية عامة) من ظهر اليوم السابق إلى نهاية اليوم بتوقيت مكة.
+ */
+export async function eventsForDate(dateKey: string) {
+  await ensureMuezzinSchema();
+  const ids = rowsOf(await db.execute(sql`SELECT id FROM muezzin_duties WHERE date_key = ${dateKey}`)).map((r) => Number(r.id));
+  const prev = new Date(`${dateKey}T00:00:00Z`); prev.setUTCDate(prev.getUTCDate() - 1);
+  const from = `${prev.toISOString().slice(0, 10)} 09:00:00`; // 12:00 ظهرًا بتوقيت مكة (UTC+3)
+  const to = `${dateKey} 20:59:59`; // 11:59 مساءً بتوقيت مكة
+  const idList = ids.length ? sql.join(ids.map((i) => sql`${i}`), sql`, `) : sql`NULL`;
+  return rowsOf(await db.execute(sql`
+    SELECT id, direction, phone, muezzin_name, kind, text, duty_id, created_at FROM muezzin_wa_events
+    WHERE kind <> 'raw' AND (duty_id IN (${idList}) OR (duty_id IS NULL AND created_at BETWEEN ${from}::timestamp AND ${to}::timestamp))
+    ORDER BY id DESC LIMIT 500`)).map((r) => ({
+    id: Number(r.id), direction: String(r.direction), phone: r.phone ? String(r.phone) : null, name: r.muezzin_name ? String(r.muezzin_name) : null,
+    kind: String(r.kind), text: r.text ? String(r.text) : "", dutyId: r.duty_id == null ? null : Number(r.duty_id), createdAt: r.created_at,
+  }));
+}
+
 export async function recentEvents(limit = 100) {
   await ensureMuezzinSchema();
   return rowsOf(await db.execute(sql`

@@ -792,7 +792,7 @@ type DutyRow = {
 type RepliesData = {
   duties: DutyRow[];
   stats: Array<{ name: string; total: number; ack: number; apology: number; noReply: number; asSubstitute: number }>;
-  events: Array<{ id: number; direction: string; phone: string | null; name: string | null; kind: string; text: string; createdAt: string }>;
+  events: Array<{ id: number; direction: string; phone: string | null; name: string | null; kind: string; text: string; dutyId: number | null; createdAt: string }>;
 };
 const SLOT_NAME: Record<Slot, string> = {
   fajr1: "الأذان الأول للفجر", fajr2: "الأذان الثاني للفجر", dhuhr: "الظهر", asr: "العصر", maghrib: "المغرب", isha: "العشاء",
@@ -814,109 +814,205 @@ function DutyStatus({ d }: { d: DutyRow }) {
   return <span className="rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground">لم يرد{d.deliveryStatus === "read" ? " (قرأها)" : d.deliveryStatus === "delivered" ? " (وصلت)" : ""}</span>;
 }
 
+const REPLY_SLOT_ORDER: Slot[] = ["fajr1", "fajr2", "dhuhr", "jumuah1", "jumuah2", "asr", "maghrib", "isha"];
+const REPLY_ROLES: AnyRole[] = ["muezzin", "mulazim", "reserve"];
+type ReplyKind = "ack" | "apology" | "pending" | "none" | "failed" | "replaced";
+const replyKind = (d: DutyRow): ReplyKind =>
+  !d.sendOk ? "failed" : d.replacedByDutyId ? "replaced" : d.response === "ack" ? "ack" : d.response === "apology" ? "apology" : d.response === "apology_pending" ? "pending" : "none";
+const REPLY_TONE: Record<ReplyKind, string> = {
+  ack: "bg-emerald-50 ring-emerald-300 dark:bg-emerald-950/40 dark:ring-emerald-800",
+  apology: "bg-red-50 ring-red-300 dark:bg-red-950/40 dark:ring-red-800",
+  pending: "bg-amber-50 ring-amber-300 dark:bg-amber-950/40 dark:ring-amber-800",
+  none: "bg-slate-50 ring-slate-300 dark:bg-slate-900/50 dark:ring-slate-700",
+  failed: "bg-red-100 ring-red-400 dark:bg-red-950/60 dark:ring-red-700",
+  replaced: "bg-slate-100 ring-slate-300 opacity-70 dark:bg-slate-900/60 dark:ring-slate-700",
+};
+const timeOnly = (v: string | null) => (v ? fmtTime(v).split(/[،,]\s*/).pop() : "");
+
+/** خانة واحدة (صلاة × دور): الشيخ وحالته وسببه، ومن أُسندت إليه إن وُجد. */
+function ReplyCell({ d, all, data, pick, setPick, assign }: {
+  d: DutyRow; all: DutyRow[]; data: Setup; pick: Record<number, string>; setPick: (f: (p: Record<number, string>) => Record<number, string>) => void; assign: any;
+}) {
+  const k = replyKind(d);
+  const sub = all.find((x) => x.id === d.replacedByDutyId);
+  return (
+    <div className="space-y-1">
+      <div className={cn("rounded-md px-2 py-1 ring-1", REPLY_TONE[k])}>
+        <div className="font-medium leading-tight">{d.name}{d.testMode && <span className="mr-1 text-[10px] text-muted-foreground">(تجربة)</span>}</div>
+        <div className="mt-0.5 flex flex-wrap items-center gap-1 text-[11px]">
+          <DutyStatus d={d} />
+          {d.respondedAt && (k === "ack" || k === "apology") && <span className="text-muted-foreground">{timeOnly(d.respondedAt)}</span>}
+        </div>
+        {d.reason && <div className="mt-0.5 text-[11px]">السبب: {d.reason}</div>}
+        {!d.sendOk && d.sendDetail && <div className="text-[11px] text-red-700">{d.sendDetail}</div>}
+        {d.deliveryError && <div className="text-[11px] text-red-700">{d.deliveryError}</div>}
+      </div>
+      {sub && (
+        <div className="pr-3 text-[11px] text-muted-foreground">↳ البديل:</div>
+      )}
+      {sub && <ReplyCell d={sub} all={all} data={data} pick={pick} setPick={setPick} assign={assign} />}
+      {!sub && d.response === "apology" && d.role !== "reserve" && (
+        <div className="flex items-center gap-1">
+          <select className="w-full min-w-0 rounded border bg-background px-1 py-0.5 text-xs" value={pick[d.id] ?? ""} onChange={(e) => setPick((p) => ({ ...p, [d.id]: e.target.value }))}>
+            <option value="">اختر البديل…</option>
+            {data.muezzins.filter((m) => m.isActive && m.id !== d.muezzinId).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
+          </select>
+          <Button size="sm" variant="outline" className="h-7 shrink-0 px-2 text-xs" disabled={!pick[d.id] || assign.isPending}
+            onClick={() => { if (window.confirm("إسناد المهمة للبديل وإرسال رسالة المهمة له؟")) assign.mutate({ id: d.id, substituteId: Number(pick[d.id]) }); }}>إسناد</Button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
   const [date, setDate] = useState(addDays(data.today, 1));
   const q = useQuery({ queryKey: ["muezzin-duties", date], queryFn: () => api<RepliesData>(`${BASE}/duties?date=${date}`), refetchInterval: 30_000 });
   const qc = useQueryClient();
   const [pick, setPick] = useState<Record<number, string>>({});
+  const [who, setWho] = useState("");
   const assign = useMutation({
     mutationFn: ({ id, substituteId }: { id: number; substituteId: number }) =>
       api<{ substitute: string; note: string }>(`${BASE}/duties/${id}/substitute`, { method: "POST", body: JSON.stringify({ substituteId }) }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["muezzin-duties"] }); toast({ title: `أُسندت المهمة إلى ${r.substitute}`, description: r.note || "وأُرسلت له رسالة المهمة" }); },
     onError: (e: Error) => toast({ title: "تعذّر الإسناد", description: e.message, variant: "destructive" }),
   });
+
+  // شريط الأسبوع (الأحد → السبت) مع التنقل بين الأسابيع.
+  const dow = new Date(`${date}T12:00:00Z`).getUTCDay();
+  const weekStart = addDays(date, -dow);
+  const weekDays = Array.from({ length: 7 }, (_, i) => addDays(weekStart, i));
+
   const duties = q.data?.duties ?? [];
-  const sent = duties.filter((d) => d.sendOk);
-  const count = (f: (d: DutyRow) => boolean) => sent.filter(f).length;
+  // المهمة «الحالية» لكل خانة = آخر من وصلته الخانة (بعد الإسناد)؛ للإحصاء نعدّ المهام الفعلية غير المستبدلة.
+  const live = duties.filter((d) => d.sendOk && !d.replacedByDutyId);
+  const groups: Array<{ k: ReplyKind; title: string; tone: string }> = [
+    { k: "ack", title: "عُلم", tone: "text-emerald-700 border-emerald-300 bg-emerald-50 dark:bg-emerald-950/40 dark:text-emerald-300" },
+    { k: "apology", title: "اعتذر", tone: "text-red-700 border-red-300 bg-red-50 dark:bg-red-950/40 dark:text-red-300" },
+    { k: "pending", title: "بانتظار السبب", tone: "text-amber-800 border-amber-300 bg-amber-50 dark:bg-amber-950/40 dark:text-amber-300" },
+    { k: "none", title: "لم يرد", tone: "text-slate-700 border-slate-300 bg-slate-50 dark:bg-slate-900/50 dark:text-slate-300" },
+  ];
+  const byKind = (k: ReplyKind) => live.filter((d) => replyKind(d) === k);
+  const failed = duties.filter((d) => !d.sendOk);
+  const doneRatio = live.length ? Math.round((byKind("ack").length / live.length) * 100) : 0;
+  const label = (d: DutyRow) => `${SLOT_NAME[d.slot]}${d.role === "muezzin" ? "" : ` (${ROLE_NAME[d.role]})`}`;
+
+  const slots = REPLY_SLOT_ORDER.filter((s) => duties.some((d) => d.slot === s));
+  const rolesUsed = REPLY_ROLES.filter((r) => duties.some((d) => d.role === r));
+  const roots = (s: Slot, r: AnyRole) => duties.filter((d) => d.slot === s && d.role === r && !d.substituteForDutyId);
+
+  const events = (q.data?.events ?? []).filter((e) => !who || e.name === who);
+  const people = [...new Set((q.data?.events ?? []).map((e) => e.name).filter(Boolean) as string[])].sort((a, b) => a.localeCompare(b, "ar"));
 
   return (
     <div className="space-y-4">
       <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2"><MessageSquareReply className="h-5 w-5 text-sidebar-primary" />ردود يوم {DAY_NAMES[dow]} {hijriShort(date)}</CardTitle>
+          <CardDescription>اختر اليوم — كل يوم بردوده وإحصائياته وسجلّه. تتحدّث تلقائيًا كل 30 ثانية.</CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button size="sm" variant="ghost" onClick={() => setDate(addDays(date, -7))} title="الأسبوع السابق">»</Button>
+            {weekDays.map((d) => {
+              const i = new Date(`${d}T12:00:00Z`).getUTCDay();
+              return (
+                <Button key={d} size="sm" variant={d === date ? "default" : "outline"} className={cn("h-auto flex-col px-2.5 py-1", d === data.today && d !== date && "ring-2 ring-sidebar-primary/40")} onClick={() => setDate(d)}>
+                  <span className="text-xs font-bold">{DAY_NAMES[i]}</span>
+                  <span className="text-[10px] opacity-80">{d.slice(8)}/{d.slice(5, 7)}</span>
+                </Button>
+              );
+            })}
+            <Button size="sm" variant="ghost" onClick={() => setDate(addDays(date, 7))} title="الأسبوع التالي">«</Button>
+            <Button size="sm" variant="outline" className="mr-auto" onClick={() => q.refetch()}><RefreshCw className="ml-1 h-4 w-4" />تحديث</Button>
+          </div>
+
+          {q.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !duties.length ? (
+            <p className="rounded-md border border-dashed p-4 text-center text-sm text-muted-foreground">
+              لم تُرسل رسائل هذا اليوم بعد. {date > data.today ? `تُرسل يوم ${DAY_NAMES[(dow + 6) % 7]} الساعة ${hhmm(data.settings.sendHour, data.settings.sendMinute)}.` : ""}
+            </p>
+          ) : (
+            <>
+              {/* ملخص اليوم */}
+              <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                {groups.map((g) => (
+                  <div key={g.k} className={cn("rounded-lg border p-2 text-center", g.tone)}>
+                    <div className="text-2xl font-bold tabular-nums">{byKind(g.k).length}</div>
+                    <div className="text-xs font-medium">{g.title}</div>
+                  </div>
+                ))}
+              </div>
+              <div>
+                <div className="mb-1 flex justify-between text-xs text-muted-foreground"><span>نسبة التأكيد</span><span className="tabular-nums">{byKind("ack").length} من {live.length} ({doneRatio}%)</span></div>
+                <div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-emerald-500 transition-all" style={{ width: `${doneRatio}%` }} /></div>
+              </div>
+              {failed.length > 0 && <p className="rounded-md bg-red-50 p-2 text-sm text-red-700 dark:bg-red-950/40">⚠️ لم تصل {failed.length} رسالة: {failed.map((d) => d.name).join("، ")}</p>}
+
+              {/* الأسماء حسب الحالة */}
+              <div className="grid gap-2 md:grid-cols-2">
+                {groups.filter((g) => g.k !== "ack" || byKind("ack").length).map((g) => byKind(g.k).length > 0 && (
+                  <div key={g.k} className={cn("rounded-lg border p-2", g.tone.split(" ").filter((c) => c.startsWith("border")).join(" "))}>
+                    <div className={cn("mb-1 text-sm font-bold", g.tone.split(" ").filter((c) => c.startsWith("text") || c.startsWith("dark:text")).join(" "))}>{g.title} ({byKind(g.k).length})</div>
+                    <ul className="space-y-0.5 text-sm">
+                      {byKind(g.k).map((d) => (
+                        <li key={d.id} className="flex flex-wrap gap-x-2">
+                          <span className="font-medium">{d.name}</span>
+                          <span className="text-muted-foreground">— {label(d)}</span>
+                          {d.reason && <span className="text-xs">«{d.reason}»</span>}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ))}
+              </div>
+
+              {/* جدول اليوم: الصلوات × الأدوار */}
+              <div className="overflow-x-auto">
+                <table className="w-full min-w-[560px] border-collapse text-sm">
+                  <thead><tr className="bg-muted/40">
+                    <th className="w-28 border p-1.5">الصلاة</th>
+                    {rolesUsed.map((r) => <th key={r} className={cn("border p-1.5", r === "reserve" && "text-violet-700 dark:text-violet-300")}>{r === "muezzin" ? "المؤذن" : r === "mulazim" ? "الملازم" : "الاحتياطي"}</th>)}
+                  </tr></thead>
+                  <tbody>
+                    {slots.map((s) => (
+                      <tr key={s} className="align-top">
+                        <td className="border bg-muted/20 p-1.5 font-bold">{SLOT_NAME[s]}</td>
+                        {rolesUsed.map((r) => (
+                          <td key={r} className="border p-1.5">
+                            {roots(s, r).length ? (
+                              <div className="space-y-2">{roots(s, r).map((d) => <ReplyCell key={d.id} d={d} all={duties} data={data} pick={pick} setPick={setPick} assign={assign} />)}</div>
+                            ) : <span className="text-muted-foreground">—</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
         <CardHeader>
-          <CardTitle className="flex items-center gap-2"><MessageSquareReply className="h-5 w-5 text-sidebar-primary" />ردود المؤذنين ليوم محدد</CardTitle>
-          <CardDescription>تتحدّث كل 30 ثانية. نفس ما يصل المشرف على واتساب.</CardDescription>
+          <CardTitle>سجل واتساب — يوم {DAY_NAMES[dow]}</CardTitle>
+          <CardDescription>رسائل مهام هذا اليوم وردودها وتنبيهات المشرفين، الأحدث أولًا.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="flex flex-wrap items-center gap-3">
-            <Input type="date" className="w-44" value={date} onChange={(e) => setDate(e.target.value)} />
-            <span className="text-sm">{DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()]}</span>
-            <Button size="sm" variant="outline" onClick={() => q.refetch()}><RefreshCw className="ml-1 h-4 w-4" />تحديث</Button>
-          </div>
-          {sent.length > 0 && (
-            <div className="flex flex-wrap gap-2 text-sm">
-              <span className="rounded-md border px-2 py-1">المهام: <b>{sent.length}</b></span>
-              <span className="rounded-md border px-2 py-1 text-emerald-700">عُلم: <b>{count((d) => d.response === "ack")}</b></span>
-              <span className="rounded-md border px-2 py-1 text-red-700">اعتذر: <b>{count((d) => d.response === "apology")}</b></span>
-              <span className="rounded-md border px-2 py-1 text-amber-800">بانتظار السبب: <b>{count((d) => d.response === "apology_pending")}</b></span>
-              <span className="rounded-md border px-2 py-1 text-muted-foreground">لم يرد: <b>{count((d) => !d.response)}</b></span>
-            </div>
+          {people.length > 0 && (
+            <select className="rounded-md border bg-background p-1.5 text-sm" value={who} onChange={(e) => setWho(e.target.value)}>
+              <option value="">كل الأشخاص</option>
+              {people.map((p) => <option key={p} value={p}>{p}</option>)}
+            </select>
           )}
-          {q.isLoading ? <Loader2 className="h-5 w-5 animate-spin" /> : !duties.length ? (
-            <p className="text-sm text-muted-foreground">لا توجد رسائل مهام لهذا اليوم بعد{data.settings.confirmMode ? "" : " — التأكيد بالأزرار غير مفعّل"}.</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full border-collapse text-sm">
-                <thead><tr className="bg-muted/40">
-                  <th className="border p-1.5">المهمة</th><th className="border p-1.5">الدور</th><th className="border p-1.5">الشيخ</th>
-                  <th className="border p-1.5">الحالة</th><th className="border p-1.5">السبب</th><th className="border p-1.5">البديل</th>
-                </tr></thead>
-                <tbody>
-                  {duties.map((d) => {
-                    const replacement = duties.find((x) => x.id === d.replacedByDutyId);
-                    const original = duties.find((x) => x.id === d.substituteForDutyId);
-                    return (
-                      <tr key={d.id} className={cn(d.replacedByDutyId && "text-muted-foreground")}>
-                        <td className="border p-1.5 whitespace-nowrap">{SLOT_NAME[d.slot]}</td>
-                        <td className={cn("border p-1.5", d.role === "reserve" && "text-violet-700 dark:text-violet-300")}>{ROLE_NAME[d.role] ?? d.role}</td>
-                        <td className="border p-1.5">{d.name}{original && <div className="text-[11px] text-muted-foreground">بديل عن {original.name}</div>}{d.testMode && <span className="mr-1 text-[11px] text-muted-foreground">(تجربة)</span>}</td>
-                        <td className="border p-1.5"><DutyStatus d={d} />{!d.sendOk && d.sendDetail && <div className="text-[11px] text-red-700">{d.sendDetail}</div>}{d.deliveryError && <div className="text-[11px] text-red-700">{d.deliveryError}</div>}</td>
-                        <td className="border p-1.5 text-xs">{d.reason ?? "—"}</td>
-                        <td className="border p-1.5 text-xs">
-                          {replacement ? replacement.name : d.response === "apology" && d.role === "reserve" ? <span className="text-muted-foreground">احتياطي — لا يلزم بديل</span> : d.response === "apology" ? (
-                            <div className="flex items-center gap-1">
-                              <select className="rounded border bg-background px-1 py-0.5 text-xs" value={pick[d.id] ?? ""} onChange={(e) => setPick((p) => ({ ...p, [d.id]: e.target.value }))}>
-                                <option value="">اختر البديل…</option>
-                                {data.muezzins.filter((m) => m.isActive && m.id !== d.muezzinId).map((m) => <option key={m.id} value={m.id}>{m.name}</option>)}
-                              </select>
-                              <Button size="sm" variant="outline" className="h-7 px-2 text-xs" disabled={!pick[d.id] || assign.isPending}
-                                onClick={() => { if (window.confirm("إسناد المهمة للبديل وإرسال رسالة المهمة له؟")) assign.mutate({ id: d.id, substituteId: Number(pick[d.id]) }); }}>إسناد</Button>
-                            </div>
-                          ) : "—"}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>إحصائيات آخر 30 يومًا</CardTitle><CardDescription>{data.settings.testMode ? "رسائل التجربة (وضع التجربة مفعّل)" : "الرسائل الفعلية"}</CardDescription></CardHeader>
-        <CardContent className="overflow-x-auto">
-          {!q.data?.stats.length ? <p className="text-sm text-muted-foreground">لا توجد بيانات بعد.</p> : (
-            <table className="w-full border-collapse text-sm">
-              <thead><tr className="bg-muted/40"><th className="border p-1.5">الشيخ</th><th className="border p-1.5">المهام</th><th className="border p-1.5">عُلم</th><th className="border p-1.5">اعتذر</th><th className="border p-1.5">لم يرد</th><th className="border p-1.5">كبديل</th></tr></thead>
-              <tbody>{q.data.stats.map((r) => (
-                <tr key={r.name} className="tabular-nums"><td className="border p-1.5">{r.name}</td><td className="border p-1.5 text-center">{r.total}</td><td className="border p-1.5 text-center text-emerald-700">{r.ack}</td><td className="border p-1.5 text-center text-red-700">{r.apology}</td><td className="border p-1.5 text-center">{r.noReply}</td><td className="border p-1.5 text-center">{r.asSubstitute}</td></tr>
-              ))}</tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>سجل واتساب</CardTitle><CardDescription>كل ما دخل وخرج عبر رقم الإرسال، الأحدث أولًا.</CardDescription></CardHeader>
-        <CardContent>
-          {!q.data?.events.length ? <p className="text-sm text-muted-foreground">لا يوجد شيء بعد.</p> : (
+          {!events.length ? <p className="text-sm text-muted-foreground">لا يوجد شيء لهذا اليوم.</p> : (
             <div className="grid gap-4 md:grid-cols-2">
               {([
                 { dir: "in", title: "⬅ الوارد", hint: "ردود المؤذنين والمشرفين", tone: "border-emerald-200 dark:border-emerald-900" },
                 { dir: "out", title: "➡ الصادر", hint: "ما أرسله النظام", tone: "border-sky-200 dark:border-sky-900" },
               ] as const).map((col) => {
-                const items = q.data!.events.filter((e) => e.direction === col.dir);
+                const items = events.filter((e) => e.direction === col.dir);
                 return (
                   <div key={col.dir} className={cn("rounded-lg border-2", col.tone)}>
                     <div className="flex items-baseline justify-between border-b px-3 py-2">
@@ -930,7 +1026,6 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
                           <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
                             <span className="rounded bg-background px-1.5 py-0.5 font-medium text-foreground">{EVENT_KIND[e.kind] ?? e.kind}</span>
                             {e.name && <span className="font-medium text-foreground">{e.name}</span>}
-                            <span dir="ltr">{e.phone}</span>
                             <span>{fmtTime(e.createdAt)}</span>
                           </div>
                           {e.text && <div className="mt-1 whitespace-pre-line">{e.text}</div>}
@@ -941,6 +1036,20 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
                 );
               })}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>إحصائيات آخر 30 يومًا لكل شيخ</CardTitle><CardDescription>{data.settings.testMode ? "رسائل التجربة (وضع التجربة مفعّل)" : "الرسائل الفعلية"}</CardDescription></CardHeader>
+        <CardContent className="overflow-x-auto">
+          {!q.data?.stats.length ? <p className="text-sm text-muted-foreground">لا توجد بيانات بعد.</p> : (
+            <table className="w-full border-collapse text-sm">
+              <thead><tr className="bg-muted/40"><th className="border p-1.5">الشيخ</th><th className="border p-1.5">المهام</th><th className="border p-1.5">عُلم</th><th className="border p-1.5">اعتذر</th><th className="border p-1.5">لم يرد</th><th className="border p-1.5">كبديل</th></tr></thead>
+              <tbody>{q.data.stats.map((r) => (
+                <tr key={r.name} className="tabular-nums"><td className="border p-1.5">{r.name}</td><td className="border p-1.5 text-center">{r.total}</td><td className="border p-1.5 text-center text-emerald-700">{r.ack}</td><td className="border p-1.5 text-center text-red-700">{r.apology}</td><td className="border p-1.5 text-center">{r.noReply}</td><td className="border p-1.5 text-center">{r.asSubstitute}</td></tr>
+              ))}</tbody>
+            </table>
           )}
         </CardContent>
       </Card>

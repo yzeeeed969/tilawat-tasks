@@ -20,7 +20,7 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, dutiesForDate, dutyStats, prepareMeta, recentEvents, sendPreview, templateStatuses } from "../services/muezzin-confirm";
+import { assignSubstitute, dutiesForDate, dutyStats, eventsForDate, prepareMeta, sendPreview, templateStatuses } from "../services/muezzin-confirm";
 import { addDays } from "../services/muezzin";
 
 // «جدول المؤذنين» — للمدير ولمن مُنح صلاحية «إدارة جدول المؤذنين» (requireMuezzinAccess على كل مسار).
@@ -118,7 +118,7 @@ router.get("/muezzin-schedule/duties", requireMuezzinAccess, handle(async (req, 
   res.json({
     duties: await dutiesForDate(date),
     stats: await dutyStats(addDays(today, -30), addDays(today, 7), settings.testMode),
-    events: await recentEvents(80),
+    events: await eventsForDate(date),
   });
 }));
 
