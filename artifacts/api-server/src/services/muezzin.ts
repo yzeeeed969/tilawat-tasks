@@ -398,7 +398,7 @@ export type MuezzinMeta = {
   rev?: number;
   apologyFlowId?: string;
   substituteFlowId?: string;
-  templates?: { duty?: string; substitute?: string; supAck?: string; supApology?: string };
+  templates?: { duty?: string; substitute?: string; supAck?: string; supApology?: string; summary?: string };
   wording?: Wording; // النص الذي أُرسل فعلًا لميتا (قد يختلف عن المختار إن لم يُرسل بعد)
   preparedAt?: string;
 };
@@ -415,6 +415,10 @@ export type MuezzinSettings = {
   wording: Wording;
   meta: MuezzinMeta;
   verifyToken: string | null;
+  summaryEnabled: boolean;
+  summaryHour: number;
+  summaryMinute: number;
+  lastSummaryDate: string | null;
 };
 
 export async function getSettings(): Promise<MuezzinSettings> {
@@ -433,6 +437,10 @@ export async function getSettings(): Promise<MuezzinSettings> {
     wording: normalizeWording(r.wording),
     meta: (r.meta && typeof r.meta === "object" ? r.meta : {}) as MuezzinMeta,
     verifyToken: r.verify_token ? String(r.verify_token) : null,
+    summaryEnabled: r.summary_enabled !== false,
+    summaryHour: Number(r.summary_hour ?? 21),
+    summaryMinute: Number(r.summary_minute ?? 0),
+    lastSummaryDate: r.last_summary_date ? String(r.last_summary_date) : null,
   };
 }
 
@@ -440,7 +448,7 @@ export async function saveMeta(meta: MuezzinMeta) {
   await db.execute(sql`UPDATE muezzin_settings SET meta = ${JSON.stringify(meta)}::jsonb, updated_at = now() WHERE id = 1`);
 }
 
-export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendHour" | "sendMinute" | "testMode" | "testPhone" | "autoSendEnabled" | "supervisorPhone" | "supervisorPhones" | "confirmMode" | "wording">>) {
+export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendHour" | "sendMinute" | "testMode" | "testPhone" | "autoSendEnabled" | "supervisorPhone" | "supervisorPhones" | "confirmMode" | "wording" | "summaryEnabled" | "summaryHour" | "summaryMinute">>) {
   await ensureMuezzinSchema();
   if (input.sendHour !== undefined) {
     const h = Number(input.sendHour);
@@ -478,6 +486,16 @@ export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendH
   }
   if (input.autoSendEnabled !== undefined) {
     await db.execute(sql`UPDATE muezzin_settings SET auto_send_enabled = ${Boolean(input.autoSendEnabled)}, updated_at = now() WHERE id = 1`);
+  }
+  if (input.summaryEnabled !== undefined) {
+    await db.execute(sql`UPDATE muezzin_settings SET summary_enabled = ${Boolean(input.summaryEnabled)}, updated_at = now() WHERE id = 1`);
+  }
+  if (input.summaryHour !== undefined || input.summaryMinute !== undefined) {
+    const cur = await getSettings();
+    const h = Number(input.summaryHour ?? cur.summaryHour), m = Number(input.summaryMinute ?? cur.summaryMinute);
+    if (!Number.isInteger(h) || h < 0 || h > 23 || !Number.isInteger(m) || m < 0 || m > 59) throw new MuezzinError(400, "وقت الملخص غير صحيح");
+    if (h * 60 + m <= cur.sendHour * 60 + cur.sendMinute) throw new MuezzinError(400, "وقت الملخص يجب أن يكون بعد وقت الإرسال اليومي");
+    await db.execute(sql`UPDATE muezzin_settings SET summary_hour = ${h}, summary_minute = ${m}, updated_at = now() WHERE id = 1`);
   }
 }
 
@@ -644,6 +662,27 @@ export async function runMuezzinTick(now = new Date()) {
   }
 }
 
+/** الملخص المسائي: مرة يوميًا بعد وقته، لردود مهام الغد (التي أُرسلت اليوم). */
+export async function runSummaryTick(now = new Date()) {
+  const s = await getSettings();
+  if (!s.summaryEnabled || !s.confirmMode || !s.meta.templates?.summary) return { ran: false };
+  const today = riyadhDayKey(now);
+  if (s.lastSummaryDate === today) return { ran: false };
+  if (riyadhMinutes(now) < s.summaryHour * 60 + s.summaryMinute) return { ran: false };
+  const claimed = rowsOf(await db.execute(sql`
+    UPDATE muezzin_settings SET last_summary_date = ${today}
+    WHERE id = 1 AND (last_summary_date IS DISTINCT FROM ${today}) RETURNING id`));
+  if (!claimed.length) return { ran: false };
+  const { sendSummary } = await import("./muezzin-confirm");
+  const tomorrow = addDays(today, 1);
+  try {
+    return { ran: true, date: tomorrow, ...(await sendSummary(tomorrow)) };
+  } catch (err) {
+    await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nتعذّر إرسال الملخص المسائي ليوم ${tomorrow}: ${err instanceof Error ? err.message : "خطأ غير معروف"}`);
+    throw err;
+  }
+}
+
 export function startMuezzinScheduler(logger?: Logger) {
   if (schedulerStarted) return;
   schedulerStarted = true;
@@ -656,6 +695,8 @@ export function startMuezzinScheduler(logger?: Logger) {
       // تذكير من ضغط «أعتذر» ولم يكتب السبب بعد 30 دقيقة.
       const { remindPendingReasons } = await import("./muezzin-confirm");
       await remindPendingReasons().catch((err) => logger?.warn({ err }, "Muezzin reason reminders failed"));
+      const sum = await runSummaryTick().catch((err) => { logger?.warn({ err }, "Muezzin evening summary failed"); return { ran: false }; });
+      if (sum.ran) logger?.info({ result: sum }, "Muezzin evening summary sent");
     } catch (err) {
       logger?.warn({ err }, "Muezzin schedule tick failed");
     } finally {

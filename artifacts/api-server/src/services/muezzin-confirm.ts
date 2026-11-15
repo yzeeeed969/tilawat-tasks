@@ -25,10 +25,13 @@ import {
   EXAMPLE_CTX,
   EXAMPLE_SUB_CTX,
   fullDayLabel,
+  gregorianDate,
+  hijriDate,
   substituteTemplate,
   SUP_ACK_TEXT,
   SUP_APOLOGY_BUTTON,
   SUP_APOLOGY_TEXT,
+  weekdayName,
 } from "./muezzin-wording";
 
 // «التأكيد بالأزرار»: لكل مهمة رسالة مستقلة فيها «عُلم / أعتذر».
@@ -151,7 +154,8 @@ export async function prepareMeta() {
   ];
   if (names.substitute) defs.push({ name: names.substitute, components: [body(substituteTemplate(w).text, substituteTemplate(w).params(EXAMPLE_SUB_CTX)), quick] });
 
-  const meta: MuezzinMeta = { ...settings.meta, rev, templates: {}, wording: w, preparedAt: new Date().toISOString() };
+  // قالب الملخص المسائي مستقل — لا يُعاد إنشاؤه هنا.
+  const meta: MuezzinMeta = { ...settings.meta, rev, templates: { summary: settings.meta.templates?.summary }, wording: w, preparedAt: new Date().toISOString() };
   for (const d of defs) {
     await graph(`${WABA_ID()}/message_templates`, { body: { name: d.name, language: "ar", category: "UTILITY", components: d.components } });
     const key = (Object.keys(names) as Array<keyof typeof names>).find((k) => names[k] === d.name)!;
@@ -182,8 +186,82 @@ export async function checkConfirmReady() {
   if (!s.supervisorPhones.length) throw new MuezzinError(400, "أضف رقم مشرف واحد على الأقل");
   if (!s.meta.templates?.duty || !s.meta.templates?.supApology) throw new MuezzinError(400, "أرسل القوالب لاعتماد ميتا أولًا");
   const statuses = await templateStatuses();
-  const pending = statuses.filter((t) => t.status !== "APPROVED");
+  const pending = statuses.filter((t) => t.status !== "APPROVED" && t.name !== s.meta.templates?.summary);
   if (pending.length) throw new MuezzinError(400, `لم تُعتمد كل القوالب بعد: ${pending.map((t) => `${t.name} (${t.status})`).join("، ")}`);
+}
+
+/* ───────────────────────── الملخص المسائي للمشرفين ───────────────────────── */
+
+export const SUMMARY_TEXT =
+  "📋 ملخص ردود المؤذنين على مهام يوم ( {{1}} )\n{{2}}\n\n✅ عُلم ( {{3}} ) :\n{{4}}\n\n❌ اعتذر ( {{5}} ) :\n{{6}}\n\n⏳ لم يرد ( {{7}} ) :\n{{8}}\n\nالتفاصيل في صفحة جدول المؤذنين.";
+const SUMMARY_EXAMPLE = [
+  "الثلاثاء", "07 / 06 / 1448 هـ — 17 / 11 / 2026 م", "10", "هاشم السقاف ، أحمد نحاس ، محمد باسعد",
+  "1", "سعيد فلاته (العصر) — السبب: سفر", "1", "علي ملا (المغرب – ملازم)",
+];
+
+/** ينشئ قالب الملخص وحده ويرسله لمراجعة ميتا (لا يمس القوالب المعتمدة). */
+export async function prepareSummaryTemplate() {
+  await ensureMuezzinSchema();
+  if (!isWhatsAppConfigured()) throw new MuezzinError(400, "واتساب غير مربوط");
+  const s = await getSettings();
+  const n = Number(String(s.meta.templates?.summary ?? "").match(/_r(\d+)$/)?.[1] ?? 0) + 1;
+  const name = `muezzin_summary_r${n}`;
+  await graph(`${WABA_ID()}/message_templates`, {
+    body: { name, language: "ar", category: "UTILITY", components: [{ type: "BODY", text: SUMMARY_TEXT, example: { body_text: [SUMMARY_EXAMPLE] } }] },
+  });
+  await saveMeta({ ...s.meta, templates: { ...(s.meta.templates ?? {}), summary: name } });
+  return { name };
+}
+
+/** معاملات القالب لا تقبل أسطرًا جديدة؛ نفصل بـ « ، » ونختصر الطويل. */
+function joinList(items: string[], max = 420) {
+  if (!items.length) return "لا أحد";
+  const out: string[] = [];
+  let len = 0;
+  for (const [i, it] of items.entries()) {
+    if (len + it.length > max) { out.push(`… و${items.length - i} غيرهم`); break; }
+    out.push(it); len += it.length + 3;
+  }
+  return out.join(" ، ");
+}
+
+export function buildSummary(duties: Array<Pick<Duty, "slot" | "role" | "name" | "response" | "reason" | "sendOk" | "replacedByDutyId">>, dateKey: string) {
+  const live = duties.filter((d) => d.sendOk && !d.replacedByDutyId);
+  const task = (d: { slot: Slot; role: Role }) => `${SLOT_SHORT[d.slot] ?? d.slot}${d.role === "muezzin" ? "" : ` – ${ROLE_LABEL[d.role]}`}`;
+  const ack = live.filter((d) => d.response === "ack");
+  const apol = live.filter((d) => d.response === "apology" || d.response === "apology_pending");
+  const none = live.filter((d) => !d.response);
+  const ackNames = [...new Set(ack.map((d) => d.name))];
+  const params = [
+    weekdayName(dateKey),
+    `${hijriDate(dateKey)} هـ — ${gregorianDate(dateKey)} م`,
+    String(ack.length), joinList(ackNames),
+    String(apol.length), joinList(apol.map((d) => `${d.name} (${task(d)})${d.response === "apology_pending" ? " — لم يكتب السبب" : d.reason ? ` — السبب: ${param(d.reason).slice(0, 80)}` : ""}`), 300),
+    String(none.length), joinList(none.map((d) => `${d.name} (${task(d)})`), 300),
+  ].map(param);
+  return { params, counts: { total: live.length, ack: ack.length, apology: apol.length, none: none.length } };
+}
+
+const SLOT_SHORT: Record<string, string> = {
+  fajr1: "الفجر الأول", fajr2: "الفجر الثاني", dhuhr: "الظهر", asr: "العصر", maghrib: "المغرب", isha: "العشاء", jumuah1: "الجمعة الأول", jumuah2: "الجمعة الثاني",
+};
+
+/** يرسل ملخص ردود يوم المهام لكل المشرفين. */
+export async function sendSummary(dateKey: string) {
+  const s = await getSettings();
+  if (!s.meta.templates?.summary) throw new MuezzinError(400, "قالب الملخص لم يُنشأ بعد");
+  const duties = rowsOf(await db.execute(sql`SELECT * FROM muezzin_duties WHERE date_key = ${dateKey} AND test_mode = ${s.testMode}`)).map(mapDuty);
+  if (!duties.length) return { sent: 0, failed: 0, noDuties: true };
+  const { params, counts } = buildSummary(duties, dateKey);
+  const sups = await supervisorTargets(s.testMode);
+  if (!sups.length) throw new MuezzinError(400, "لا يوجد مشرفون");
+  let sent = 0, failed = 0;
+  for (const sup of sups) {
+    const r = await sendMessage(sup, templatePayload(s.meta.templates.summary, params));
+    await logEvent({ direction: "out", phone: sup, name: "المشرف", kind: "supervisor_summary", text: fill(SUMMARY_TEXT, params), waId: r.wamid });
+    if (r.ok) sent++; else { failed++; await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nتعذّر إرسال الملخص للمشرف ${sup}: ${r.detail}`); }
+  }
+  return { sent, failed, counts };
 }
 
 /* ───────────────────────── الإرسال: رسالة لكل مهمة ───────────────────────── */

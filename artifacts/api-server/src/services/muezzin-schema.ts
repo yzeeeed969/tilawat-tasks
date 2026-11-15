@@ -81,6 +81,11 @@ async function runMuezzinSchemaEnsure() {
   await db.execute(sql`INSERT INTO muezzin_settings (id) VALUES (1) ON CONFLICT (id) DO NOTHING`);
   // التأكيد بالأزرار (عُلم / أعتذر) — إضافة فقط.
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS send_minute integer NOT NULL DEFAULT 0`);
+  // الملخص المسائي للمشرفين (ردود مهام الغد).
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS summary_enabled boolean NOT NULL DEFAULT true`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS summary_hour integer NOT NULL DEFAULT 21`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS summary_minute integer NOT NULL DEFAULT 0`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS last_summary_date text`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS supervisor_phone text`);
   // عدة مشرفين: القائمة الجديدة، ويُنقل إليها المشرف الحالي مرة واحدة.
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS supervisor_phones jsonb`);

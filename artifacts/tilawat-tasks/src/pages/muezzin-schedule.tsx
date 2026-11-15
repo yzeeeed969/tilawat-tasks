@@ -39,6 +39,7 @@ type Settings = {
   sendHour: number; sendMinute: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null;
   supervisorPhone: string | null; supervisorPhones: string[]; confirmMode: boolean; wording: Wording; verifyToken: string | null;
   meta: { rev?: number; templates?: Record<string, string>; preparedAt?: string; wording?: Wording };
+  summaryEnabled: boolean; summaryHour: number; summaryMinute: number; lastSummaryDate: string | null;
 };
 type Setup = {
   today: string;
@@ -153,7 +154,6 @@ export default function MuezzinSchedulePage() {
         <TabsContent value="replies">
           <div className="space-y-4">
             <RepliesTab data={data} toast={toast} />
-            <SendTab data={data} onChange={refresh} toast={toast} part="activity" />
           </div>
         </TabsContent>
         <TabsContent value="settings">
@@ -666,7 +666,80 @@ function MuezzinRow({ m, onChange, toast }: { m: Muezzin; onChange: () => void; 
 
 /* ───────────────────────── الإرسال والسجل ───────────────────────── */
 
-function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () => void; toast: any; part: "settings" | "activity" }) {
+/** الملخص المسائي للمشرفين: قالب مستقل يعتمده ميتا مرة، ثم يُرسل يوميًا في وقته. */
+function SummaryCard({ data, onChange, toast, saveSettings }: { data: Setup; onChange: () => void; toast: any; saveSettings: any }) {
+  const s = data.settings;
+  const saved = `${String(s.summaryHour).padStart(2, "0")}:${String(s.summaryMinute).padStart(2, "0")}`;
+  const [time, setTime] = useState(saved);
+  const [date, setDate] = useState(addDays(data.today, 1));
+  const tpl = s.meta.templates?.summary;
+  const statuses = useQuery({
+    queryKey: ["muezzin-templates"],
+    queryFn: () => api<{ templates: Array<{ name: string; status: string; reason: string | null }> }>(`${BASE}/meta/templates`),
+    enabled: Boolean(tpl),
+  });
+  const st = statuses.data?.templates.find((t) => t.name === tpl);
+  const prepare = useMutation({
+    mutationFn: () => api<{ name: string }>(`${BASE}/summary/prepare`, { method: "POST" }),
+    onSuccess: () => { onChange(); statuses.refetch(); toast({ title: "أُرسل قالب الملخص لمراجعة ميتا", description: "الاعتماد يأخذ عادة من ساعات إلى يوم." }); },
+    onError: (e: Error) => toast({ title: "تعذّر الإرسال لميتا", description: e.message, variant: "destructive" }),
+  });
+  const sendNow = useMutation({
+    mutationFn: () => api<{ sent: number; failed: number; noDuties?: boolean }>(`${BASE}/summary/send`, { method: "POST", body: JSON.stringify({ date }) }),
+    onSuccess: (r) => toast({ title: r.noDuties ? "لا توجد رسائل مهام لهذا اليوم" : `أُرسل الملخص لـ ${r.sent} مشرف${r.failed ? ` · فشل ${r.failed}` : ""}`, variant: r.failed || r.noDuties ? "destructive" : undefined }),
+    onError: (e: Error) => toast({ title: "تعذّر إرسال الملخص", description: e.message, variant: "destructive" }),
+  });
+  const approved = st?.status === "APPROVED";
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>📋 الملخص المسائي للمشرفين</CardTitle>
+        <CardDescription>رسالة واحدة يوميًا لكل مشرف بردود مهام الغد: من ضغط «عُلم»، ومن اعتذر (مع السبب)، ومن لم يرد.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <div className="flex flex-wrap items-center gap-3">
+          <span className="w-40 text-sm font-medium">قالب ميتا</span>
+          {!tpl ? (
+            <Button size="sm" disabled={prepare.isPending} onClick={() => prepare.mutate()}>
+              {prepare.isPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}إرسال القالب لاعتماد ميتا
+            </Button>
+          ) : (
+            <span className={cn("rounded-full px-2 py-0.5 text-sm", approved ? "bg-emerald-50 text-emerald-700" : st?.status === "REJECTED" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800")}>
+              {statuses.isLoading ? "…" : TEMPLATE_STATUS[st?.status ?? ""] ?? st?.status ?? "—"}{st?.reason ? ` — ${st.reason}` : ""}
+            </span>
+          )}
+          {st?.status === "REJECTED" && <Button size="sm" variant="outline" disabled={prepare.isPending} onClick={() => prepare.mutate()}>إعادة الإرسال</Button>}
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="w-40 text-sm font-medium">وقت الملخص</label>
+          <Input type="time" className="w-36" dir="ltr" value={time} onChange={(e) => setTime(e.target.value)} />
+          <Button size="sm" variant="outline" disabled={!time || time === saved}
+            onClick={() => { const [h, m] = time.split(":").map(Number); saveSettings.mutate({ summaryHour: h, summaryMinute: m }); }}>حفظ</Button>
+          <span className="text-sm text-muted-foreground">يوميًا {hhmm(s.summaryHour, s.summaryMinute)} — بعد الإرسال اليومي ({hhmm(s.sendHour, s.sendMinute)})</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-3">
+          <label className="w-40 text-sm font-medium">الإرسال التلقائي للملخص</label>
+          <Switch checked={s.summaryEnabled} onCheckedChange={(v) => saveSettings.mutate({ summaryEnabled: v })} />
+          <span className="text-sm text-muted-foreground">
+            {!approved ? "يبدأ تلقائيًا بعد اعتماد ميتا للقالب" : s.lastSummaryDate ? `آخر إرسال: ${s.lastSummaryDate}` : "لم يُرسل بعد"}
+          </span>
+        </div>
+        {approved && (
+          <div className="flex flex-wrap items-center gap-3 border-t pt-3">
+            <label className="w-40 text-sm font-medium">إرسال ملخص الآن</label>
+            <Input type="date" className="w-44" value={date} onChange={(e) => setDate(e.target.value)} />
+            <Button size="sm" variant="outline" disabled={sendNow.isPending}
+              onClick={() => { if (window.confirm(`إرسال ملخص ردود يوم ${DAY_NAMES[new Date(`${date}T12:00:00Z`).getUTCDay()]} ${date} للمشرفين الآن؟`)) sendNow.mutate(); }}>
+              {sendNow.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Send className="ml-2 h-4 w-4" />}إرسال
+            </Button>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
+function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () => void; toast: any; part: "settings" }) {
   const s = data.settings;
   const [time, setTime] = useState(`${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`);
   const savedTime = `${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`;
@@ -729,46 +802,32 @@ function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () =>
           </div>
         </CardContent>
       </Card>}
-      {part === "activity" && <>
+      {part === "settings" && <>
+      <SummaryCard data={data} onChange={onChange} toast={toast} saveSettings={saveSettings} />
 
-      <Card>
-        <CardHeader><CardTitle className="flex items-center gap-2"><Megaphone className="h-5 w-5 text-sidebar-primary" />إرسال يدوي ليوم محدد</CardTitle><CardDescription>لا يُكرر الرسالة لمن وصلته مسبقًا في نفس اليوم.</CardDescription></CardHeader>
+      <Card className="border-amber-300 dark:border-amber-800">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2"><Megaphone className="h-5 w-5 text-amber-600" />إرسال طارئ ليوم محدد</CardTitle>
+          <CardDescription>
+            للطوارئ فقط: إذا رُفع الجدول بعد موعد الإرسال اليومي، أو لم تخرج الرسائل لعطل. يرسل رسائل ذلك اليوم <b>فورًا</b>، ولا يكرّرها لمن وصلته مسبقًا.
+          </CardDescription>
+        </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           <Input type="date" className="w-44" value={sendDate} onChange={(e) => setSendDate(e.target.value)} />
           <Button
+            variant="outline"
             disabled={sendNow.isPending || !data.status.whatsapp}
             onClick={() => {
-              if (window.confirm(`إرسال جدول ${sendDate}${s.testMode ? " إلى رقم التجربة فقط" : " إلى المؤذنين فعليًا"}؟`)) sendNow.mutate();
+              const n = data.upcoming.filter((u) => u.dateKey === sendDate).length;
+              const day = DAY_NAMES[new Date(`${sendDate}T12:00:00Z`).getUTCDay()];
+              const msg = n
+                ? `ستُرسل رسائل يوم ${day} ${sendDate} الآن لـ ${n} مهمة${s.testMode ? " (إلى رقم التجربة فقط)" : " — تصل المؤذنين فعليًا"}.\nمن وصلته رسالته مسبقًا لن تتكرر له.\n\nهل أنت متأكد؟`
+                : `لا أرى جدولًا معتمدًا ليوم ${day} ${sendDate}. هل تريد المحاولة مع ذلك؟`;
+              if (window.confirm(msg)) sendNow.mutate();
             }}
           >
-            {sendNow.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Send className="ml-2 h-4 w-4" />}إرسال
+            {sendNow.isPending ? <Loader2 className="ml-2 h-4 w-4 animate-spin" /> : <Send className="ml-2 h-4 w-4" />}إرسال الآن
           </Button>
-          {!data.status.whatsapp && <span className="text-sm text-amber-700">اربط واتساب أولًا.</span>}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader><CardTitle>سجل الإرسال</CardTitle></CardHeader>
-        <CardContent className="overflow-x-auto">
-          {!data.log.length ? <p className="text-sm text-muted-foreground">لا توجد رسائل بعد.</p> : (
-            <table className="w-full border-collapse text-sm">
-              <thead><tr className="bg-muted/40"><th className="border p-1.5">اليوم</th><th className="border p-1.5">المؤذن</th><th className="border p-1.5">الرقم</th><th className="border p-1.5">النتيجة</th><th className="border p-1.5">التفاصيل</th></tr></thead>
-              <tbody>
-                {data.log.map((l) => (
-                  <tr key={l.id}>
-                    <td className="border p-1.5 whitespace-nowrap">{l.dateKey}</td>
-                    <td className="border p-1.5">{l.name}</td>
-                    <td className="border p-1.5" dir="ltr">{l.phone ?? "—"}</td>
-                    <td className="border p-1.5 whitespace-nowrap">
-                      {l.ok ? <span className="text-emerald-700"><CheckCircle2 className="inline h-4 w-4" /> تم</span> : <span className="text-red-700"><XCircle className="inline h-4 w-4" /> فشل</span>}
-                      {l.testMode && <span className="mr-1 text-xs text-muted-foreground">(تجربة)</span>}
-                    </td>
-                    <td className="border p-1.5 text-xs text-muted-foreground">{l.detail}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
         </CardContent>
       </Card>
       </>}
@@ -801,7 +860,7 @@ const SLOT_NAME: Record<Slot, string> = {
 const EVENT_KIND: Record<string, string> = {
   duty: "رسالة مهمة", substitute_duty: "رسالة مهمة (بديل)", ack: "ضغط «عُلم»", apology_tap: "ضغط «أعتذر»", apology_form: "نموذج السبب", apology_prompt: "طلب كتابة السبب", apology_reminder: "تذكير بالسبب", pick_tap: "ضغط «اختيار البديل»", substitute_list: "قائمة البدلاء", list_unknown: "اختيار غير معروف",
   apology_reason: "سبب الاعتذار", supervisor_ack: "تنبيه المشرف (علم)", supervisor_apology: "تنبيه المشرف (اعتذار)",
-  substitute_pick: "اختيار البديل", message: "رسالة نصية", button_unknown: "زر غير معروف", form_unknown: "نموذج غير معروف", error: "خطأ",
+  substitute_pick: "اختيار البديل", supervisor_summary: "الملخص المسائي", message: "رسالة نصية", button_unknown: "زر غير معروف", form_unknown: "نموذج غير معروف", error: "خطأ",
 };
 
 function DutyStatus({ d }: { d: DutyRow }) {
