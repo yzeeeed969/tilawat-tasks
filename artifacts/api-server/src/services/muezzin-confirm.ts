@@ -308,7 +308,7 @@ async function sendDutyMessage(duty: Duty, to: string, originalName?: string) {
     { type: "button", sub_type: "quick_reply", index: "1", parameters: [{ type: "payload", payload: `apol:${duty.id}` }] },
   ];
   const r = await sendMessage(to, templatePayload(name, params, buttons));
-  await db.execute(sql`UPDATE muezzin_duties SET phone = ${to}, wamid = ${r.wamid}, send_ok = ${r.ok}, send_detail = ${r.detail} WHERE id = ${duty.id}`);
+  await db.execute(sql`UPDATE muezzin_duties SET phone = ${to}, wamid = ${r.wamid}, send_ok = ${r.ok}, send_detail = ${r.detail}, delivery_status = NULL, delivery_error = NULL WHERE id = ${duty.id}`);
   await logEvent({ direction: "out", phone: to, name: duty.name, kind: useSub ? "substitute_duty" : "duty", text: fill(tpl.text, params), dutyId: duty.id, waId: r.wamid });
   return r;
 }
@@ -336,7 +336,8 @@ export async function sendDutiesForDate(dateKey: string) {
     const existing = rowsOf(await db.execute(sql`
       SELECT * FROM muezzin_duties WHERE date_key = ${dateKey} AND slot = ${e.slot} AND role = ${e.role}
         AND muezzin_id = ${m.id} AND test_mode = ${testMode} ORDER BY id DESC LIMIT 1`))[0];
-    if (existing?.send_ok) { skipped++; continue; }
+    // ما قبلته ميتا ثم فشل تسليمه (رقم خاطئ مثلًا) يُعاد إرساله — بالرقم الحالي في القائمة.
+    if (existing?.send_ok && existing.delivery_status !== "failed") { skipped++; continue; }
     const to = testMode ? settings.testPhone! : m.phone;
     // من لا رقم له يُتجاوز بهدوء (الإطلاق تدريجي: يُضاف رقم المؤذن متى اتُّفق معه).
     if (!to) { skipped++; continue; }

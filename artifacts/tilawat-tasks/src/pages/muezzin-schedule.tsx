@@ -809,7 +809,7 @@ function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () =>
         <CardHeader>
           <CardTitle className="flex items-center gap-2"><Megaphone className="h-5 w-5 text-amber-600" />إرسال طارئ ليوم محدد</CardTitle>
           <CardDescription>
-            للطوارئ فقط: إذا رُفع الجدول بعد موعد الإرسال اليومي، أو لم تخرج الرسائل لعطل. يرسل رسائل ذلك اليوم <b>فورًا</b>، ولا يكرّرها لمن وصلته مسبقًا.
+            للطوارئ فقط: إذا رُفع الجدول بعد موعد الإرسال اليومي، أو لم تخرج الرسائل لعطل، أو «لم تصل» لرقم خاطئ ثم صُحّح الرقم. يرسل رسائل ذلك اليوم <b>فورًا</b> لمن لم تصله فقط، ولا يكرّرها لمن وصلته.
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
