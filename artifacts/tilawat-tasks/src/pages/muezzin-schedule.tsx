@@ -39,8 +39,13 @@ type Wording = { duty: "a" | "b" | "c" | "d"; buttons: "a" | "b" | "c"; form: "a
 type Settings = {
   sendHour: number; sendMinute: number; testMode: boolean; testPhone: string | null; autoSendEnabled: boolean; lastAutoRunDate: string | null;
   supervisorPhone: string | null; supervisorPhones: string[]; confirmMode: boolean; wording: Wording; verifyToken: string | null;
-  meta: { rev?: number; templates?: Record<string, string>; preparedAt?: string; wording?: Wording };
+  meta: {
+    rev?: number; templates?: Record<string, string>; preparedAt?: string; wording?: Wording;
+    textVersion?: "live" | "draft";
+    v2?: { templates: Record<string, string>; preparedAt?: string; promotedAt?: string };
+  };
   summaryEnabled: boolean; summaryHour: number; summaryMinute: number; lastSummaryDate: string | null;
+  remindEnabled: boolean; remindAfterMin: number; remindSubAfterMin: number;
 };
 type Setup = {
   today: string;
@@ -670,6 +675,81 @@ function MuezzinRow({ m, onChange, toast }: { m: Muezzin; onChange: () => void; 
 
 /* ───────────────────────── الإرسال والسجل ───────────────────────── */
 
+/** صياغة المشرف (قوالبها بانتظار ميتا ثم تحول تلقائي) + تذكير من لم يرد. */
+function V2Card({ data, onChange, toast, saveSettings }: { data: Setup; onChange: () => void; toast: any; saveSettings: any }) {
+  const s = data.settings;
+  const v2 = s.meta.v2;
+  const statuses = useQuery({
+    queryKey: ["muezzin-templates"],
+    queryFn: () => api<{ templates: Array<{ name: string; status: string; reason: string | null }> }>(`${BASE}/meta/templates`),
+    enabled: Boolean(v2),
+  });
+  const prepare = useMutation({
+    mutationFn: () => api(`${BASE}/meta/prepare-v2`, { method: "POST" }),
+    onSuccess: () => { onChange(); statuses.refetch(); toast({ title: "أُرسلت قوالب صياغة المشرف لمراجعة ميتا" }); },
+    onError: (e: Error) => toast({ title: "تعذّر الإرسال لميتا", description: e.message, variant: "destructive" }),
+  });
+  const [after, setAfter] = useState(String(s.remindAfterMin));
+  const [subAfter, setSubAfter] = useState(String(s.remindSubAfterMin));
+  const st = (n?: string) => statuses.data?.templates.find((t) => t.name === n);
+  const label: Record<string, string> = { substitute: "رسالة البديل الطارئ", supAck: "تنبيه «عُلم» للمشرف", supApology: "تنبيه الاعتذار للمشرف", remind: "تذكير من لم يرد" };
+  const pill = (n?: string) => {
+    const t = st(n);
+    const ok = t?.status === "APPROVED";
+    return <span className={cn("rounded-full px-2 py-0.5 text-xs", ok ? "bg-emerald-50 text-emerald-700" : t?.status === "REJECTED" ? "bg-red-50 text-red-700" : "bg-amber-50 text-amber-800")}>
+      {statuses.isLoading ? "…" : TEMPLATE_STATUS[t?.status ?? ""] ?? t?.status ?? "—"}{t?.reason ? ` — ${t.reason}` : ""}
+    </span>;
+  };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>✍️ صياغة المشرف وتذكير من لم يرد</CardTitle>
+        <CardDescription>
+          {s.meta.textVersion === "draft"
+            ? "✅ الرسائل تُرسل الآن بصياغة المشرف."
+            : v2 ? "⏳ الرسائل الحالية مستمرة كما هي، وتتحول كلها إلى صياغة المشرف تلقائيًا فور اعتماد ميتا للقوالب الثلاثة الأولى." : "لم تُرسل قوالب صياغة المشرف لميتا بعد."}
+          {" "}جرّبها في <Link href="/muezzin-schedule/simulator" className="underline">محاكي الرسائل</Link>.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        {!v2 ? (
+          <Button size="sm" disabled={prepare.isPending} onClick={() => prepare.mutate()}>
+            {prepare.isPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}إرسال قوالب صياغة المشرف لاعتماد ميتا
+          </Button>
+        ) : (
+          <ul className="space-y-1.5 text-sm">
+            {(["substitute", "supAck", "supApology", "remind"] as const).map((k) => (
+              <li key={k} className="flex flex-wrap items-center gap-2"><span className="w-44">{label[k]}</span>{pill(v2.templates[k])}</li>
+            ))}
+          </ul>
+        )}
+        {v2 && statuses.data?.templates.some((t) => Object.values(v2.templates).includes(t.name) && t.status === "REJECTED") && (
+          <Button size="sm" variant="outline" disabled={prepare.isPending} onClick={() => prepare.mutate()}>إعادة الإرسال لميتا</Button>
+        )}
+        <div className="space-y-3 border-t pt-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="w-44 text-sm font-medium">تذكير من لم يرد</label>
+            <Switch checked={s.remindEnabled} onCheckedChange={(v) => saveSettings.mutate({ remindEnabled: v })} />
+            <span className="text-sm text-muted-foreground">{s.meta.templates?.remind ? "يعمل" : "يبدأ بعد اعتماد ميتا لقالبه"}</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="w-44 text-sm font-medium">المؤذن الأصلي بعد (دقيقة)</label>
+            <Input type="number" min={10} max={720} className="w-24" dir="ltr" value={after} onChange={(e) => setAfter(e.target.value)} />
+            <span className="text-xs text-muted-foreground">120 = ساعتان بعد إرسال المهمة</span>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            <label className="w-44 text-sm font-medium">البديل الطارئ بعد (دقيقة)</label>
+            <Input type="number" min={10} max={720} className="w-24" dir="ltr" value={subAfter} onChange={(e) => setSubAfter(e.target.value)} />
+            <Button size="sm" variant="outline" disabled={after === String(s.remindAfterMin) && subAfter === String(s.remindSubAfterMin)}
+              onClick={() => saveSettings.mutate({ remindAfterMin: Number(after), remindSubAfterMin: Number(subAfter) })}>حفظ</Button>
+          </div>
+          <p className="text-xs text-muted-foreground">تذكير واحد فقط لكل مهمة، بنفس زرّي «عُلم» و«أعتذر». لا يُرسل لمن ردّ، ولا لمن لم تصله الرسالة الأولى.</p>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}
+
 /** الملخص المسائي للمشرفين: قالب مستقل يعتمده ميتا مرة، ثم يُرسل يوميًا في وقته. */
 function SummaryCard({ data, onChange, toast, saveSettings }: { data: Setup; onChange: () => void; toast: any; saveSettings: any }) {
   const s = data.settings;
@@ -807,6 +887,7 @@ function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () =>
         </CardContent>
       </Card>}
       {part === "settings" && <>
+      <V2Card data={data} onChange={onChange} toast={toast} saveSettings={saveSettings} />
       <SummaryCard data={data} onChange={onChange} toast={toast} saveSettings={saveSettings} />
 
       <Card className="border-amber-300 dark:border-amber-800">

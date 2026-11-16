@@ -86,6 +86,10 @@ async function runMuezzinSchemaEnsure() {
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS summary_hour integer NOT NULL DEFAULT 21`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS summary_minute integer NOT NULL DEFAULT 0`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS last_summary_date text`);
+  // تذكير من لم يرد: بعد ساعتين للأصلي، ونصف ساعة للبديل الطارئ.
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS remind_enabled boolean NOT NULL DEFAULT true`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS remind_after_min integer NOT NULL DEFAULT 120`);
+  await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS remind_sub_after_min integer NOT NULL DEFAULT 30`);
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS supervisor_phone text`);
   // عدة مشرفين: القائمة الجديدة، ويُنقل إليها المشرف الحالي مرة واحدة.
   await db.execute(sql`ALTER TABLE muezzin_settings ADD COLUMN IF NOT EXISTS supervisor_phones jsonb`);
@@ -122,6 +126,9 @@ async function runMuezzinSchemaEnsure() {
   `);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_muezzin_duties_date ON muezzin_duties(date_key)`);
   await db.execute(sql`ALTER TABLE muezzin_duties ADD COLUMN IF NOT EXISTS reason_reminded boolean NOT NULL DEFAULT false`);
+  // تذكير من لم يرد (مرة واحدة) + وقت آخر إرسال للمهمة.
+  await db.execute(sql`ALTER TABLE muezzin_duties ADD COLUMN IF NOT EXISTS noreply_reminded boolean NOT NULL DEFAULT false`);
+  await db.execute(sql`ALTER TABLE muezzin_duties ADD COLUMN IF NOT EXISTS sent_at timestamp`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_muezzin_duties_wamid ON muezzin_duties(wamid)`);
 
   // كل ما يدخل ويخرج عبر واتساب (للعرض في الموقع والمرجع).

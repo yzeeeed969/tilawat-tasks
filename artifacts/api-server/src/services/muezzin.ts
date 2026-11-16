@@ -398,7 +398,11 @@ export type MuezzinMeta = {
   rev?: number;
   apologyFlowId?: string;
   substituteFlowId?: string;
-  templates?: { duty?: string; substitute?: string; supAck?: string; supApology?: string; summary?: string };
+  templates?: { duty?: string; substitute?: string; supAck?: string; supApology?: string; summary?: string; remind?: string };
+  /** نسخة نصوص الرسائل المستعملة الآن: "live" (السابقة) أو "draft" (صياغة المشرف) — تتحول تلقائيًا عند اعتماد قوالبها. */
+  textVersion?: "live" | "draft";
+  /** قوالب صياغة المشرف بانتظار اعتماد ميتا؛ عند اعتمادها كلها تُنقل إلى templates. */
+  v2?: { templates: { substitute?: string; supAck?: string; supApology?: string; remind?: string }; preparedAt?: string; promotedAt?: string; rejectedNotified?: boolean };
   wording?: Wording; // النص الذي أُرسل فعلًا لميتا (قد يختلف عن المختار إن لم يُرسل بعد)
   preparedAt?: string;
 };
@@ -419,7 +423,14 @@ export type MuezzinSettings = {
   summaryHour: number;
   summaryMinute: number;
   lastSummaryDate: string | null;
+  remindEnabled: boolean;
+  remindAfterMin: number;
+  remindSubAfterMin: number;
 };
+
+// آخر نسخة نصوص قُرئت من الإعدادات (تُحدَّث مع كل getSettings) — تقرؤها muezzin-messages.
+let textVersionCache: "live" | "draft" = "live";
+export const currentTextVersion = () => textVersionCache;
 
 export async function getSettings(): Promise<MuezzinSettings> {
   await ensureMuezzinSchema();
@@ -435,12 +446,15 @@ export async function getSettings(): Promise<MuezzinSettings> {
     supervisorPhone: (Array.isArray(r.supervisor_phones) ? r.supervisor_phones.map(String)[0] : r.supervisor_phone) ?? null,
     confirmMode: Boolean(r.confirm_mode),
     wording: normalizeWording(r.wording),
-    meta: (r.meta && typeof r.meta === "object" ? r.meta : {}) as MuezzinMeta,
+    meta: ((m) => { textVersionCache = m.textVersion === "draft" ? "draft" : "live"; return m; })((r.meta && typeof r.meta === "object" ? r.meta : {}) as MuezzinMeta),
     verifyToken: r.verify_token ? String(r.verify_token) : null,
     summaryEnabled: r.summary_enabled !== false,
     summaryHour: Number(r.summary_hour ?? 21),
     summaryMinute: Number(r.summary_minute ?? 0),
     lastSummaryDate: r.last_summary_date ? String(r.last_summary_date) : null,
+    remindEnabled: r.remind_enabled !== false,
+    remindAfterMin: Number(r.remind_after_min ?? 120),
+    remindSubAfterMin: Number(r.remind_sub_after_min ?? 30),
   };
 }
 
@@ -448,7 +462,7 @@ export async function saveMeta(meta: MuezzinMeta) {
   await db.execute(sql`UPDATE muezzin_settings SET meta = ${JSON.stringify(meta)}::jsonb, updated_at = now() WHERE id = 1`);
 }
 
-export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendHour" | "sendMinute" | "testMode" | "testPhone" | "autoSendEnabled" | "supervisorPhone" | "supervisorPhones" | "confirmMode" | "wording" | "summaryEnabled" | "summaryHour" | "summaryMinute">>) {
+export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendHour" | "sendMinute" | "testMode" | "testPhone" | "autoSendEnabled" | "supervisorPhone" | "supervisorPhones" | "confirmMode" | "wording" | "summaryEnabled" | "summaryHour" | "summaryMinute" | "remindEnabled" | "remindAfterMin" | "remindSubAfterMin">>) {
   await ensureMuezzinSchema();
   if (input.sendHour !== undefined) {
     const h = Number(input.sendHour);
@@ -486,6 +500,16 @@ export async function updateSettings(input: Partial<Pick<MuezzinSettings, "sendH
   }
   if (input.autoSendEnabled !== undefined) {
     await db.execute(sql`UPDATE muezzin_settings SET auto_send_enabled = ${Boolean(input.autoSendEnabled)}, updated_at = now() WHERE id = 1`);
+  }
+  if (input.remindEnabled !== undefined) {
+    await db.execute(sql`UPDATE muezzin_settings SET remind_enabled = ${Boolean(input.remindEnabled)}, updated_at = now() WHERE id = 1`);
+  }
+  for (const [key, col] of [["remindAfterMin", "remind_after_min"], ["remindSubAfterMin", "remind_sub_after_min"]] as const) {
+    const v = input[key];
+    if (v === undefined) continue;
+    const n = Number(v);
+    if (!Number.isInteger(n) || n < 10 || n > 720) throw new MuezzinError(400, "مدة التذكير بين 10 دقائق و12 ساعة");
+    await db.execute(sql`UPDATE muezzin_settings SET ${sql.raw(col)} = ${n}, updated_at = now() WHERE id = 1`);
   }
   if (input.summaryEnabled !== undefined) {
     await db.execute(sql`UPDATE muezzin_settings SET summary_enabled = ${Boolean(input.summaryEnabled)}, updated_at = now() WHERE id = 1`);
@@ -695,6 +719,9 @@ export function startMuezzinScheduler(logger?: Logger) {
       // تذكير من ضغط «أعتذر» ولم يكتب السبب بعد 30 دقيقة.
       const { remindPendingReasons } = await import("./muezzin-confirm");
       await remindPendingReasons().catch((err) => logger?.warn({ err }, "Muezzin reason reminders failed"));
+      const { remindNoReply, checkV2Promotion } = await import("./muezzin-confirm");
+      await remindNoReply().catch((err) => logger?.warn({ err }, "Muezzin no-reply reminders failed"));
+      await checkV2Promotion().catch((err) => logger?.warn({ err }, "Muezzin v2 template check failed"));
       const sum = await runSummaryTick().catch((err) => { logger?.warn({ err }, "Muezzin evening summary failed"); return { ran: false }; });
       if (sum.ran) logger?.info({ result: sum }, "Muezzin evening summary sent");
     } catch (err) {
