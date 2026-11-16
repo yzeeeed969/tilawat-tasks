@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { AlertTriangle, CheckCircle2, Copy, ImageUp, Loader2, Megaphone, MessageSquareReply, Plus, RefreshCw, Send, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Copy, ImageUp, Loader2, Megaphone, MessageSquareReply, Plus, RefreshCw, Send, Smartphone, XCircle } from "lucide-react";
+import { Link } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -132,7 +133,10 @@ export default function MuezzinSchedulePage() {
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
       <div>
-        <h2 className="text-3xl font-bold text-foreground tracking-tight">جدول المؤذنين</h2>
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <h2 className="text-3xl font-bold text-foreground tracking-tight">جدول المؤذنين</h2>
+          <Link href="/muezzin-schedule/simulator"><Button variant="outline" size="sm"><Smartphone className="ml-1 h-4 w-4" />محاكي الرسائل</Button></Link>
+        </div>
         <p className="text-muted-foreground mt-2">ارفع الجدول الأسبوعي (صورة أو PDF)، راجع القراءة بجانبه، ثم «إنشاء». يصل كل مؤذن مهامه يوميًا على واتساب.</p>
         <div className="mt-3 flex flex-wrap gap-2">
           <StatusPill ok={data.status.vision} on="قراءة الصور جاهزة" off="قراءة الصور غير مفعّلة" />
