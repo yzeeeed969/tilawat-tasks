@@ -1,5 +1,5 @@
 import express, { Router } from "express";
-import { requireMuezzinAccess } from "../middlewares/auth";
+import { requireAdmin, requireMuezzinAccess } from "../middlewares/auth";
 import { riyadhDayKey } from "../lib/hijri";
 import { ensureMuezzinSchema } from "../services/muezzin-schema";
 import {
@@ -20,7 +20,7 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, buildSummary, checkV2Promotion, phoneStatus, prepareV2, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
+import { assignSubstitute, buildSummary, checkV2Promotion, phoneStatus, prepareV2, reregisterPhone, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
 import { addDays, ALL_SLOTS, ROLES, type Role, type Slot } from "../services/muezzin";
 import { activeVersion, messages, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
 
@@ -196,6 +196,13 @@ router.post("/muezzin-schedule/meta/prepare", requireMuezzinAccess, handle(async
 // حالة رقم الإرسال (اسم العرض وطلب تغييره) — قراءة فقط.
 router.get("/muezzin-schedule/meta/phone", requireMuezzinAccess, handle(async (_req, res) => {
   res.json(await phoneStatus());
+}));
+
+// إعادة تسجيل الرقم لتطبيق اسم العرض المعتمد — للمدير فقط، والرمز لا يُحفظ.
+router.post("/muezzin-schedule/meta/reregister", requireAdmin, handle(async (req, res) => {
+  const result = await reregisterPhone(req.body?.pin);
+  await logWeeklyActivity(req, "muezzin_phone_reregistered", "muezzin_settings", null, "إعادة تسجيل رقم الإرسال لتطبيق اسم العرض", { name: (result.after as any)?.verified_name }).catch(() => {});
+  res.json(result);
 }));
 
 router.get("/muezzin-schedule/meta/templates", requireMuezzinAccess, handle(async (_req, res) => {
