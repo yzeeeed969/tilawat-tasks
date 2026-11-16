@@ -5,7 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
-import { recoveryChatId, createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
+import { setPageOverride, recoveryChatId, createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
@@ -159,6 +159,9 @@ router.delete("/crosspost/manual-links/:channelId", async (req, res) => {
 // مسار تيليجرام ← فيسبوك (الإصدار 76).
 router.get("/crosspost/tg/overview", async (_req, res) => {
   res.json(await tgCrosspostOverview());
+});
+router.post("/crosspost/tg/page-override", async (req, res) => {
+  res.json(await setPageOverride(Number(req.body?.reciterId), String(req.body?.fbPageId ?? "")));
 });
 router.post("/crosspost/tg/pair", async (_req, res) => {
   res.json(await createPairCode());

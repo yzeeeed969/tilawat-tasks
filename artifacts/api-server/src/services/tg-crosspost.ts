@@ -73,6 +73,8 @@ export function ensureTgCrosspostSchema() {
       await db.execute(sql`ALTER TABLE tg_fb_uploads ADD COLUMN IF NOT EXISTS retry_requested boolean NOT NULL DEFAULT false`);
       // محادثة الاسترجاع الخاصة (المدير مع البوت) + رمز الربط المؤقت (الإصدار 78).
       await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS recovery_chat_id text`);
+      // ربط يدوي: قارئ ← صفحة فيسبوك، لمن ليس له حساب إنستقرام مربوط (مثل السديس) — الإصدار 82.
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS tg_fb_page_overrides (reciter_id integer PRIMARY KEY, fb_page_id text NOT NULL, created_at timestamp NOT NULL DEFAULT now())`);
       await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_code text`);
       await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_expires timestamp`);
     })().catch((err) => { schemaReady = null; throw err; });
@@ -107,7 +109,10 @@ export async function resolveTarget(username: string | null): Promise<{ ok: true
   if (reciters.length > 1) return { ok: false, reason: `القناة @${handle} مسجّلة لأكثر من قارئ — لا تخمين` };
   const [reciterId, reciterName] = reciters[0];
   await ensureInstagramSchema();
-  const fb = rowsOf(await db.execute(sql`
+  await ensureTgCrosspostSchema();
+  const [override] = rowsOf(await db.execute(sql`
+    SELECT fp.fb_page_id, fp.name, fp.status FROM tg_fb_page_overrides o JOIN facebook_pages fp ON fp.fb_page_id = o.fb_page_id WHERE o.reciter_id = ${reciterId}`));
+  const fb = override ? [override] : rowsOf(await db.execute(sql`
     SELECT DISTINCT fp.fb_page_id, fp.name, fp.status FROM instagram_accounts a JOIN facebook_pages fp ON fp.fb_page_id = a.fb_page_id
     WHERE a.reciter_id = ${reciterId} AND a.fb_page_id IS NOT NULL`));
   const unique = [...new Map(fb.map((p) => [String(p.fb_page_id), p])).values()];
@@ -232,6 +237,14 @@ export async function performTgUpload(uploadId: number, filePath: string, fileSi
   if (!result.ok) return fail(`[${result.stage}] ${result.message}${result.metaError ? ` — ${JSON.stringify(result.metaError)}` : ""}`);
   await db.execute(sql`UPDATE tg_fb_uploads SET status = 'uploaded', fb_video_id = ${result.videoId}, uploaded_at = now(), reason = NULL, file_size = ${fileSize} WHERE id = ${uploadId}`);
   return { ok: true, fbVideoId: result.videoId };
+}
+
+export async function setPageOverride(reciterId: number, fbPageId: string) {
+  await ensureTgCrosspostSchema();
+  const [page] = rowsOf(await db.execute(sql`SELECT name FROM facebook_pages WHERE fb_page_id = ${fbPageId}`));
+  if (!page) return { ok: false, message: "هذه الصفحة غير مربوطة بالموقع — أعد «ربط فيسبوك برمز» مع اختيارها" };
+  await db.execute(sql`INSERT INTO tg_fb_page_overrides (reciter_id, fb_page_id) VALUES (${reciterId}, ${fbPageId}) ON CONFLICT (reciter_id) DO UPDATE SET fb_page_id = EXCLUDED.fb_page_id`);
+  return { ok: true, page: page.name };
 }
 
 // ── إعادة المحاولة (الإصدار 77) ─────────────────────────────────────────────────────────────────
