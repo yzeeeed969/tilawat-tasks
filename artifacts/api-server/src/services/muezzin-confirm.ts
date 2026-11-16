@@ -186,6 +186,10 @@ export async function reregisterPhone(pin: unknown) {
   if (!/^\d{6}$/.test(p)) throw new MuezzinError(400, "رمز التحقق 6 أرقام");
   const id = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
   const before = await graph(`${id}?fields=verified_name,new_display_name,new_name_status`);
+  // نعيّن الرمز الذي كتبه المدير أولًا (لا يمكن معرفة القديم، وتبويبه لم يعد يظهر في مدير واتساب)،
+  // ثم نعيد التسجيل بنفس الرمز. إن كانت ميتا ألغت الرمز لهذا الرقم فالخطوة الأولى تُتجاهل.
+  let pinSet = false;
+  try { await graph(`${id}`, { body: { pin: p } }); pinSet = true; } catch { /* قد لا يلزم رمز لهذا الرقم */ }
   try {
     await graph(`${id}/register`, { body: { messaging_product: "whatsapp", pin: p } });
   } catch (err) {
@@ -194,7 +198,7 @@ export async function reregisterPhone(pin: unknown) {
   }
   await new Promise((r) => setTimeout(r, 3000));
   const after = await graph(`${id}?fields=verified_name,new_display_name,new_name_status,status,quality_rating`);
-  return { before, after };
+  return { before, after, pinSet };
 }
 
 export async function templateStatuses() {

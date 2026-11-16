@@ -704,7 +704,7 @@ function DisplayNameCard({ toast }: { toast: any }) {
         )}
         {ready && (
           <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/30">
-            <p>لتطبيق الاسم الجديد يلزم <b>إعادة تسجيل الرقم</b> خلال 14 يومًا من الموافقة. اكتب <b>رمز التحقق بخطوتين</b> (6 أرقام) الخاص برقم الإرسال — لا يُحفظ في أي مكان.</p>
+            <p>لتطبيق الاسم الجديد يلزم <b>إعادة تسجيل الرقم</b> خلال 14 يومًا من الموافقة. <b>اختر 6 أرقام من عندك</b> — تصير هي رمز التحقق بخطوتين للرقم، ثم يُعاد التسجيل بها. احفظها عندك؛ لا تُحفظ في الموقع.</p>
             <div className="flex flex-wrap items-center gap-2">
               <Input type="password" inputMode="numeric" autoComplete="off" maxLength={6} className="w-36" dir="ltr" placeholder="••••••"
                 value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} />
