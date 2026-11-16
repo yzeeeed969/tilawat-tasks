@@ -24,6 +24,7 @@ type Bundle = {
   main: Record<"duty" | "ackReply" | "apologyPrompt" | "reasonReminder" | "apologyRecorded" | "alreadyApologized" | "replacedAfterApology" | "supAck" | "supApology" | "pickListHeader" | "assigned" | "alreadyAssigned" | "reservePick", string>;
   sub: Record<"duty" | "ackReply" | "apologyPrompt" | "apologyRecorded" | "supAck" | "supApology", string>;
   summaries: Record<"ack" | "none" | "apologyPending" | "apology" | "subNone" | "subAck", string>;
+  pickLists: Array<{ header: string; names: string[] }>;
 };
 type Muezzin = { id: number; name: string; isActive: boolean };
 
@@ -174,14 +175,18 @@ export default function MuezzinSimulatorPage() {
         if (role === "reserve") {
           push([{ phone: "s", from: "user", text: "اختيار البديل" }, { phone: "s", from: "sys", kind: "text", text: b.main.reservePick }]);
         } else {
+          // كما في الواقع: تصل المشرفَ عدة قوائم متتالية (10 أسماء لكل قائمة).
           push([
             { phone: "s", from: "user", text: "اختيار البديل" },
-            { phone: "s", from: "sys", kind: "list", text: b.main.pickListHeader, buttons: [{ label: "☰ قائمة المؤذنين", action: "list" }] },
+            ...b.pickLists.map((l, i) => ({ phone: "s" as Phone, from: "sys" as const, kind: "list" as const, text: l.header, buttons: [{ label: "☰ قائمة المؤذنين", action: `list:${i}` }] })),
           ]);
         }
-      } else if (action === "list") {
-        const names = muezzins.filter((m) => m.name !== name).slice(0, 10);
-        push([{ phone: "s", from: "sys", kind: "list", text: "المؤذنون (اختر واحدًا):", buttons: names.map((m) => ({ label: m.name, action: `sub:${m.name}` })) }]);
+      } else if (action.startsWith("list:")) {
+        const i = Number(action.slice(5));
+        const l = b.pickLists[i];
+        if (l) push([{ phone: "s", from: "sys", kind: "list", text: `المؤذنون — القائمة ${i + 1} من ${b.pickLists.length} (اختر واحدًا):`, buttons: l.names.map((n) => ({ label: n, action: `sub:${n}` })) }]);
+      } else if (action.startsWith("sub:") && sub) {
+        push([{ phone: "s", from: "user", text: action.slice(4) }, { phone: "s", from: "sys", kind: "text", text: b.main.alreadyAssigned }]);
       } else if (action.startsWith("sub:")) {
         const subName = action.slice(4);
         setSub(subName);

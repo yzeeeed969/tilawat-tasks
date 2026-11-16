@@ -22,7 +22,7 @@ import {
 import { logWeeklyActivity } from "./weekly-schedule";
 import { assignSubstitute, buildSummary, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
 import { addDays, ALL_SLOTS, ROLES, type Role, type Slot } from "../services/muezzin";
-import { ACTIVE_VERSION, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
+import { ACTIVE_VERSION, messages, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
 
 const fillText = (t: string, v: string[]) => t.replace(/\{\{(\d+)\}\}/g, (_, n) => v[Number(n) - 1] ?? "");
 
@@ -137,8 +137,15 @@ router.get("/muezzin-schedule/simulator", requireMuezzinAccess, handle(async (re
   const one = (response: string | null, r: string | null = null) => ({ slot, role, name, response, reason: r, sendOk: true, replacedByDutyId: null });
   const subDuty = (response: string | null) => ({ slot, role, name: sub, response, reason: null, sendOk: true, replacedByDutyId: null });
   const summary = (list: any[]) => fillText(SUMMARY_TEXT, buildSummary(list, dateKey).params);
+  // قوائم البديل كما في الواقع: كل المؤذنين النشطين عدا المعتذر، 10 أسماء لكل قائمة (حد ميتا).
+  const pool = (await listMuezzins()).filter((m) => m.isActive && m.name !== name).map((m) => m.name);
+  const chunks: string[][] = [];
+  for (let i = 0; i < pool.length; i += 10) chunks.push(pool.slice(i, i + 10));
+  const msgs = messages(version);
+  const pickLists = chunks.map((names, i) => ({ header: msgs.pickListHeader(ctx, i + 1, chunks.length), names }));
   res.json({
     ...bundle,
+    pickLists,
     active: ACTIVE_VERSION,
     summaries: {
       ack: summary([one("ack")]),
