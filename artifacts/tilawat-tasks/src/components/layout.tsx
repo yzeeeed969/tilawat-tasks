@@ -42,7 +42,7 @@ import {
   useCanViewMembers,
   useCanViewReports,
   useCanAccessSettings,
-  useCanManageMuezzins,
+  useCanManageMuezzins, useCanManageWeeklySchedule, useCanManagePublishingTemplate,
   getRoleLabel,
   getRoleBadgeClass,
   type UserRole,
@@ -289,6 +289,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const isAdmin = useIsAdmin();
   const canManageMuezzins = useCanManageMuezzins();
+  const canManageWeekly = useCanManageWeeklySchedule();
+  const canManageTemplate = useCanManagePublishingTemplate();
   const role = useRole();
   const canViewMembers = useCanViewMembers();
   const canViewReports = useCanViewReports();
@@ -311,8 +313,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
       items: [
         { href: "/reciters", label: "القراء", icon: BookOpen, show: canManageSettings },
         { href: "/platforms", label: "المنصات والصفحات", icon: Layers, show: canManageSettings },
-        { href: "/weekly-schedule", label: "إنشاء الجدول الأسبوعي", icon: CalendarPlus, show: isAdmin },
-        { href: "/publishing-template", label: "قالب النشر", icon: ClipboardList, show: isAdmin },
+        { href: "/weekly-schedule", label: "إنشاء الجدول الأسبوعي", icon: CalendarPlus, show: isAdmin || canManageWeekly },
+        { href: "/publishing-template", label: "قالب النشر", icon: ClipboardList, show: isAdmin || canManageTemplate },
         { href: "/muezzin-schedule", label: "جدول المؤذنين", icon: Megaphone, show: isAdmin || canManageMuezzins },
         { href: "/settings/telegram", label: "إشعارات Telegram", icon: Bell, show: canManageSettings },
         { href: "/settings/general", label: "المستخدمون والصلاحيات", icon: ShieldCheck, show: canManageSettings },

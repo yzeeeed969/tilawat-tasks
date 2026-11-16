@@ -1,6 +1,8 @@
 import { Router } from "express";
 import { db, activityLogTable } from "@workspace/db";
-import { requireAdmin } from "../middlewares/auth";
+import { requirePermission } from "../middlewares/auth";
+const requireWeekly = requirePermission("canManageWeeklySchedule");
+const requireTemplate = requirePermission("canManagePublishingTemplate");
 import { ensureWeeklyScheduleSchema } from "../services/weekly-schedule-schema";
 import {
   applyImport,
@@ -18,7 +20,7 @@ import {
   setPreviewEnabled,
 } from "../services/weekly-schedule-engine";
 
-// قالب النشر والجدول الأسبوعي — للمدير فقط (requireAdmin على كل مسار في الخادم، لا إخفاء في الواجهة فقط).
+// قالب النشر والجدول الأسبوعي — للمدير أو لمن مُنح صلاحية التبويب (الإصدار 82)، والتحقق في الخادم على كل مسار.
 // هذا المسار للإنشاء فقط: لا يعدّل أي مهمة قائمة. تعديل المهام يبقى حصريًا عبر النيابة.
 const router = Router();
 
@@ -54,7 +56,7 @@ export async function logWeeklyActivity(req: any, action: string, entityType: st
 }
 
 // ── إدارة صفوف القالب ───────────────────────────────────────────────────────────────────────
-router.get("/weekly-schedule/template", requireAdmin, async (_req, res) => {
+router.get("/weekly-schedule/template", requireTemplate, async (_req, res) => {
   try {
     res.json(await listTemplate());
   } catch (error) {
@@ -62,7 +64,7 @@ router.get("/weekly-schedule/template", requireAdmin, async (_req, res) => {
   }
 });
 
-router.post("/weekly-schedule/template", requireAdmin, async (req, res) => {
+router.post("/weekly-schedule/template", requireTemplate, async (req, res) => {
   try {
     const row = await createTemplateRow(req.body);
     await logWeeklyActivity(req, "publishing_template_row_created", "publishing_template", row.id, null, { ...row }).catch(() => {});
@@ -72,7 +74,7 @@ router.post("/weekly-schedule/template", requireAdmin, async (req, res) => {
   }
 });
 
-router.patch("/weekly-schedule/template/:id", requireAdmin, async (req, res) => {
+router.patch("/weekly-schedule/template/:id", requireTemplate, async (req, res) => {
   try {
     const row = await updateTemplateRow(Number(req.params.id), req.body);
     await logWeeklyActivity(req, "publishing_template_row_updated", "publishing_template", row.id, null, { ...row }).catch(() => {});
@@ -82,7 +84,7 @@ router.patch("/weekly-schedule/template/:id", requireAdmin, async (req, res) => 
   }
 });
 
-router.delete("/weekly-schedule/template/:id", requireAdmin, async (req, res) => {
+router.delete("/weekly-schedule/template/:id", requireTemplate, async (req, res) => {
   try {
     const result = await deleteTemplateRow(Number(req.params.id));
     await logWeeklyActivity(req, "publishing_template_row_deleted", "publishing_template", result.deleted, null).catch(() => {});
@@ -93,7 +95,7 @@ router.delete("/weekly-schedule/template/:id", requireAdmin, async (req, res) =>
 });
 
 // ── إنشاء الجدول الأسبوعي (إنشاء فقط — لا تعديل لأي مهمة قائمة) ───────────────────────────────
-router.get("/weekly-schedule/setup", requireAdmin, async (_req, res) => {
+router.get("/weekly-schedule/setup", requireWeekly, async (_req, res) => {
   try {
     res.json(await getScheduleSetup());
   } catch (error) {
@@ -101,7 +103,7 @@ router.get("/weekly-schedule/setup", requireAdmin, async (_req, res) => {
   }
 });
 
-router.patch("/weekly-schedule/settings", requireAdmin, async (req, res) => {
+router.patch("/weekly-schedule/settings", requireWeekly, async (req, res) => {
   try {
     if (typeof req.body?.previewEnabled !== "boolean") throw new TemplateError(400, "invalid_input", "قيمة غير صالحة");
     res.json(await setPreviewEnabled(req.body.previewEnabled));
@@ -111,7 +113,7 @@ router.patch("/weekly-schedule/settings", requireAdmin, async (req, res) => {
 });
 
 // معاينة: قراءة فقط.
-router.post("/weekly-schedule/preview", requireAdmin, async (req, res) => {
+router.post("/weekly-schedule/preview", requireWeekly, async (req, res) => {
   try {
     res.json(await previewWeeklySchedule({ weekStart: req.body?.weekStart, assignments: req.body?.assignments }));
   } catch (error) {
@@ -120,7 +122,7 @@ router.post("/weekly-schedule/preview", requireAdmin, async (req, res) => {
 });
 
 // إنشاء: معاملة واحدة، يعيد حساب الخطة ومنع التكرار داخلها.
-router.post("/weekly-schedule/create", requireAdmin, async (req, res) => {
+router.post("/weekly-schedule/create", requireWeekly, async (req, res) => {
   try {
     const result = await createWeeklySchedule(
       { weekStart: req.body?.weekStart, assignments: req.body?.assignments },

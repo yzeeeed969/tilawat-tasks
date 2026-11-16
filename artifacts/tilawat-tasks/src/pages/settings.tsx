@@ -68,6 +68,8 @@ interface UserPerms {
   canManagePlatforms?: boolean;
   canManageAccounts?: boolean;
   canManageMuezzins?: boolean;
+  canManageWeeklySchedule?: boolean;
+  canManagePublishingTemplate?: boolean;
 }
 
 interface AppUser {
@@ -278,8 +280,8 @@ function PermCheckbox({ label, checked, onChange }: { label: string; checked: bo
 }
 
 const DEFAULT_PERMS: Record<UserRole, Required<UserPerms>> = {
-  admin: { canViewMembers: true, canViewReports: true, canCreateTasks: true, canEditTasks: true, canDeleteTasks: true, canManageSettings: true, canManageReciters: true, canManagePlatforms: true, canManageAccounts: true, canManageMuezzins: true },
-  editor: { canViewMembers: false, canViewReports: false, canCreateTasks: true, canEditTasks: true, canDeleteTasks: false, canManageSettings: false, canManageReciters: false, canManagePlatforms: false, canManageAccounts: false, canManageMuezzins: false },
+  admin: { canViewMembers: true, canViewReports: true, canCreateTasks: true, canEditTasks: true, canDeleteTasks: true, canManageSettings: true, canManageReciters: true, canManagePlatforms: true, canManageAccounts: true, canManageMuezzins: true, canManageWeeklySchedule: true, canManagePublishingTemplate: true },
+  editor: { canViewMembers: false, canViewReports: false, canCreateTasks: true, canEditTasks: true, canDeleteTasks: false, canManageSettings: false, canManageReciters: false, canManagePlatforms: false, canManageAccounts: false, canManageMuezzins: false, canManageWeeklySchedule: false, canManagePublishingTemplate: false },
 };
 
 function resolvePerms(role: UserRole, custom: UserPerms | null): Required<UserPerms> {
@@ -297,6 +299,8 @@ function resolvePerms(role: UserRole, custom: UserPerms | null): Required<UserPe
     canManagePlatforms: custom.canManagePlatforms ?? base.canManagePlatforms,
     canManageAccounts: custom.canManageAccounts ?? base.canManageAccounts,
     canManageMuezzins: custom.canManageMuezzins ?? base.canManageMuezzins,
+    canManageWeeklySchedule: custom.canManageWeeklySchedule ?? base.canManageWeeklySchedule,
+    canManagePublishingTemplate: custom.canManagePublishingTemplate ?? base.canManagePublishingTemplate,
   };
 }
 
@@ -422,6 +426,8 @@ function UserRow({ u, onUpdate, onDelete }: {
                   <PermCheckbox label="إدارة المنصات" checked={perms.canManagePlatforms ?? false} onChange={(v) => setPerm("canManagePlatforms", v)} />
                   <PermCheckbox label="إدارة الحسابات" checked={perms.canManageAccounts ?? false} onChange={(v) => setPerm("canManageAccounts", v)} />
                   <PermCheckbox label="إدارة جدول المؤذنين (كاملة)" checked={perms.canManageMuezzins ?? false} onChange={(v) => setPerm("canManageMuezzins", v)} />
+                  <PermCheckbox label="إنشاء الجدول الأسبوعي" checked={perms.canManageWeeklySchedule ?? false} onChange={(v) => setPerm("canManageWeeklySchedule", v)} />
+                  <PermCheckbox label="قالب النشر" checked={perms.canManagePublishingTemplate ?? false} onChange={(v) => setPerm("canManagePublishingTemplate", v)} />
                 </div>
               )}
             </div>

@@ -22,12 +22,12 @@ function resolvePermissions(role: UserRole, custom?: UserPermissions | null): Re
     admin: {
       canViewMembers: true, canViewReports: true, canCreateTasks: true,
       canEditTasks: true, canDeleteTasks: true, canManageSettings: true,
-      canManageReciters: true, canManagePlatforms: true, canManageAccounts: true, canManageMuezzins: true,
+      canManageReciters: true, canManagePlatforms: true, canManageAccounts: true, canManageMuezzins: true, canManageWeeklySchedule: true, canManagePublishingTemplate: true,
     },
     editor: {
       canViewMembers: false, canViewReports: false, canCreateTasks: false,
       canEditTasks: false, canDeleteTasks: false, canManageSettings: false,
-      canManageReciters: false, canManagePlatforms: false, canManageAccounts: false, canManageMuezzins: false,
+      canManageReciters: false, canManagePlatforms: false, canManageAccounts: false, canManageMuezzins: false, canManageWeeklySchedule: false, canManagePublishingTemplate: false,
     },
   };
   if (role === "admin") return defaults.admin;
@@ -44,6 +44,8 @@ function resolvePermissions(role: UserRole, custom?: UserPermissions | null): Re
     canManagePlatforms: custom.canManagePlatforms ?? base.canManagePlatforms,
     canManageAccounts: custom.canManageAccounts ?? base.canManageAccounts,
     canManageMuezzins: custom.canManageMuezzins ?? base.canManageMuezzins,
+    canManageWeeklySchedule: custom.canManageWeeklySchedule ?? base.canManageWeeklySchedule,
+    canManagePublishingTemplate: custom.canManagePublishingTemplate ?? base.canManagePublishingTemplate,
   };
 }
 
@@ -62,13 +64,16 @@ export function useCanManageReciters(): boolean { return usePermissions().canMan
 export function useCanManagePlatforms(): boolean { return usePermissions().canManagePlatforms; }
 export function useCanManageAccounts(): boolean { return usePermissions().canManageAccounts; }
 export function useCanManageMuezzins(): boolean { return usePermissions().canManageMuezzins; }
+// صلاحيات لكل تبويب (الإصدار 82).
+export function useCanManageWeeklySchedule(): boolean { return usePermissions().canManageWeeklySchedule; }
+export function useCanManagePublishingTemplate(): boolean { return usePermissions().canManagePublishingTemplate; }
 
 /** مشرف المؤذنين فقط: ليس مديرًا، ومعه صلاحية «جدول المؤذنين» دون غيرها ← يرى صفحة المؤذنين وحدها بلا قائمة جانبية. */
 export function isMuezzinOnlyUser(user: { role?: string; permissions?: UserPermissions | null } | null | undefined): boolean {
   if (!user || user.role === "admin") return false;
   const p = user.permissions ?? {};
   if (p.canManageMuezzins !== true) return false;
-  const others: Array<keyof UserPermissions> = ["canViewMembers", "canViewReports", "canManageSettings", "canManageReciters", "canManagePlatforms", "canManageAccounts"];
+  const others: Array<keyof UserPermissions> = ["canViewMembers", "canViewReports", "canManageSettings", "canManageReciters", "canManagePlatforms", "canManageAccounts", "canManageWeeklySchedule", "canManagePublishingTemplate"];
   return !others.some((k) => p[k] === true);
 }
 

@@ -11,6 +11,8 @@ export interface UserPermissions {
   canManagePlatforms?: boolean;
   canManageAccounts?: boolean;
   canManageMuezzins?: boolean;
+  canManageWeeklySchedule?: boolean;
+  canManagePublishingTemplate?: boolean;
 }
 
 export interface AuthUser {

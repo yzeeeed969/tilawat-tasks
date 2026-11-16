@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 82, date: "2026-11-16",
+    items: [
+      { text: "صلاحيات لكل تبويب: يمكن منح أي عضو «إنشاء الجدول الأسبوعي» أو «قالب النشر» وحده من «تخصيص الصلاحيات التفصيلية»، دون أن يكون مديرًا.", adminOnly: true },
+    ],
+  },
+  {
     version: 81, date: "2026-11-13",
     items: [
       { text: "نشر الجمعة آليًا: قراءة منشور «خطباء الحرمين» صارت تتحمّل المسافات الزائدة، ونقص البيانات يُرد عليه برمز 400 حتى لا يكرر الجهاز المحاولة بلا فائدة.", adminOnly: true },
