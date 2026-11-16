@@ -20,7 +20,7 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, buildSummary, checkV2Promotion, prepareV2, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
+import { assignSubstitute, buildSummary, checkV2Promotion, phoneStatus, prepareV2, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
 import { addDays, ALL_SLOTS, ROLES, type Role, type Slot } from "../services/muezzin";
 import { activeVersion, messages, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
 
@@ -191,6 +191,11 @@ router.post("/muezzin-schedule/duties/:id/substitute", requireMuezzinAccess, han
 // إنشاء نماذج واتساب وإرسال القوالب لاعتماد ميتا بالنص المختار.
 router.post("/muezzin-schedule/meta/prepare", requireMuezzinAccess, handle(async (_req, res) => {
   res.json(await prepareMeta());
+}));
+
+// حالة رقم الإرسال (اسم العرض وطلب تغييره) — قراءة فقط.
+router.get("/muezzin-schedule/meta/phone", requireMuezzinAccess, handle(async (_req, res) => {
+  res.json(await phoneStatus());
 }));
 
 router.get("/muezzin-schedule/meta/templates", requireMuezzinAccess, handle(async (_req, res) => {

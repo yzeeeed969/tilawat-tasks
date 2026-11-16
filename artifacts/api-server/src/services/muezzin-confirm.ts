@@ -169,6 +169,13 @@ export async function prepareMeta() {
   return { steps, meta };
 }
 
+/** حالة رقم الإرسال عند ميتا (للقراءة فقط): اسم العرض الحالي وطلب تغييره وتقييم الجودة. */
+export async function phoneStatus() {
+  if (!isWhatsAppConfigured()) throw new MuezzinError(400, "واتساب غير مربوط");
+  const id = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+  return graph(`${id}?fields=display_phone_number,verified_name,name_status,new_name_status,new_display_name,quality_rating,messaging_limit_tier,status`);
+}
+
 export async function templateStatuses() {
   const settings = await getSettings();
   const wanted = [...new Set([...Object.values(settings.meta.templates ?? {}), ...Object.values(settings.meta.v2?.templates ?? {})].filter(Boolean) as string[])];
