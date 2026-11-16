@@ -33,6 +33,7 @@ import {
   SUP_APOLOGY_TEXT,
   weekdayName,
 } from "./muezzin-wording";
+import { ACTIVE_VERSION, messages, type MsgCtx } from "./muezzin-messages";
 
 // «التأكيد بالأزرار»: لكل مهمة رسالة مستقلة فيها «عُلم / أعتذر».
 // - «عُلم» ← يُسجَّل ويصل المشرفَ تنبيه.
@@ -292,6 +293,10 @@ const dutyLabel = (d: { slot: Slot }) => SLOT_MESSAGE[d.slot];
 const roleLabel = (d: { slot: Slot; role: Role }) => ROLE_LABEL[d.role];
 const dayLabel = (dateKey: string) => fullDayLabel(dateKey);
 const dutyText = (d: { slot: Slot; role: Role; dateKey: string }) => `${dutyLabel(d)} (${roleLabel(d)}) — ${dayLabel(d.dateKey)}`;
+/** سياق النصوص من المهمة — كل النصوص من muezzin-messages (المصدر الواحد مع المحاكي). */
+const ctxOf = (d: { name: string; slot: Slot; role: Role; dateKey: string; substituteForDutyId?: number | null }): MsgCtx =>
+  ({ name: d.name, slot: d.slot, role: d.role, dateKey: d.dateKey, original: d.substituteForDutyId ? "بديل" : null });
+const M = () => messages(ACTIVE_VERSION);
 
 /** يرسل رسالة مهمة واحدة (أصلية أو بديلة) ويحدّث صفّها. */
 async function sendDutyMessage(duty: Duty, to: string, originalName?: string) {
@@ -377,36 +382,36 @@ async function supervisorTargets(testMode: boolean): Promise<string[]> {
 
 async function onAck(duty: Duty, from: string) {
   if (duty.replacedByDutyId) {
-    await sendMessage(from, textMsg("أُسندت هذه المهمة لغيركم بعد اعتذاركم. جزاكم الله خيرًا."));
+    await sendMessage(from, textMsg(M().replacedAfterApology()));
     return;
   }
   const already = duty.response === "ack";
   await db.execute(sql`UPDATE muezzin_duties SET response = 'ack', responded_at = now() WHERE id = ${duty.id}`);
-  await sendMessage(from, textMsg(`تم تسجيل علمكم بمهمة ${dutyLabel(duty)} (${roleLabel(duty)}) يوم ${dayLabel(duty.dateKey)}. جزاكم الله خيرًا.`));
+  await sendMessage(from, textMsg(M().ackReply(ctxOf(duty))));
   if (already) return;
   const s = await getSettings();
   // المشرف نفسه لا يصله تنبيه عن ردّه هو (إلا في التجربة حيث الكل رقم واحد).
   const sups = (await supervisorTargets(duty.testMode)).filter((p) => duty.testMode || p !== from);
   if (!sups.length || !s.meta.templates?.supAck) return;
-  const params = [duty.name, dutyLabel(duty), roleLabel(duty), dayLabel(duty.dateKey)];
+  const { text: supAckText, params } = M().supAck(ctxOf(duty));
   for (const sup of sups) {
   const r = await sendMessage(sup, templatePayload(s.meta.templates.supAck, params));
-  await logEvent({ direction: "out", phone: sup, name: "المشرف", kind: "supervisor_ack", text: fill(SUP_ACK_TEXT, params), dutyId: duty.id, waId: r.wamid });
+  await logEvent({ direction: "out", phone: sup, name: "المشرف", kind: "supervisor_ack", text: fill(supAckText, params), dutyId: duty.id, waId: r.wamid });
   }
 }
 
 async function onApologyTap(duty: Duty, from: string) {
   if (duty.replacedByDutyId) {
-    await sendMessage(from, textMsg("سبق تسجيل اعتذاركم وأُسندت المهمة لغيركم. جزاكم الله خيرًا."));
+    await sendMessage(from, textMsg(M().replacedOnApologyTap()));
     return;
   }
   if (duty.response === "apology") {
-    await sendMessage(from, textMsg(`سبق تسجيل اعتذاركم عن ${dutyText(duty)}، والمشرف يرتّب البديل. جزاكم الله خيرًا.`));
+    await sendMessage(from, textMsg(M().alreadyApologized(ctxOf(duty))));
     return;
   }
   // لا يُسجَّل الاعتذار إلا بعد وصول السبب: ننتظر رسالته النصية التالية.
   await db.execute(sql`UPDATE muezzin_duties SET response = 'apology_pending', responded_at = now(), reason_reminded = false WHERE id = ${duty.id}`);
-  const text = `فضلا اكتب سبب الاعتذار عن ${dutyText(duty)} في رسالة هنا.\nلن يُسجَّل الاعتذار إلا بعد وصول السبب.`;
+  const text = M().apologyPrompt(ctxOf(duty));
   const r = await sendMessage(from, textMsg(text));
   await logEvent({ direction: "out", phone: from, name: duty.name, kind: "apology_prompt", text, dutyId: duty.id, waId: r.wamid });
 }
@@ -418,7 +423,7 @@ async function onTextMaybeReason(from: string, text: string) {
       AND responded_at > now() - interval '24 hours' ORDER BY id`)).map(mapDuty);
   if (!pending.length || !text.trim()) return [];
   for (const d of pending) await onApologyReason(d, from, text, pending.length > 1);
-  if (pending.length > 1) await sendMessage(from, textMsg(`تم تسجيل اعتذاركم عن ${pending.length} مهام، وسيتولى المشرف ترتيب البدلاء. جزاكم الله خيرًا.`));
+  if (pending.length > 1) await sendMessage(from, textMsg(M().apologyRecordedMulti(pending.length)));
   return pending;
 }
 
@@ -432,7 +437,7 @@ export async function remindPendingReasons() {
     RETURNING *`)).map(mapDuty);
   for (const d of rows) {
     if (!d.phone) continue;
-    const text = `تذكير: لم يصلنا سبب اعتذاركم عن ${dutyText(d)}.\nفضلا اكتبه في رسالة هنا ليُسجَّل الاعتذار.`;
+    const text = M().reasonReminder(ctxOf(d));
     const r = await sendMessage(d.phone, textMsg(text));
     await logEvent({ direction: "out", phone: d.phone, name: d.name, kind: "apology_reminder", text, dutyId: d.id, waId: r.wamid });
   }
@@ -444,8 +449,7 @@ async function onApologyReason(duty: Duty, from: string, reasonRaw: string, quie
   if (duty.replacedByDutyId) return;
   await db.execute(sql`UPDATE muezzin_duties SET response = 'apology', reason = ${reason}, responded_at = now() WHERE id = ${duty.id}`);
   if (!quiet) {
-    const tail = duty.role === "reserve" ? "" : "، وسيتولى المشرف ترتيب البديل";
-    await sendMessage(from, textMsg(`تم تسجيل اعتذاركم عن ${dutyText(duty)}${tail}. جزاكم الله خيرًا.`));
+    await sendMessage(from, textMsg(M().apologyRecorded(ctxOf(duty))));
   }
 
   const s = await getSettings();
@@ -454,12 +458,12 @@ async function onApologyReason(duty: Duty, from: string, reasonRaw: string, quie
     await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nاعتذر ${duty.name} عن ${dutyText(duty)}\nالسبب: ${reason}\n(لم يُضبط رقم المشرف)`);
     return;
   }
-  const params = [duty.name, dutyLabel(duty), roleLabel(duty), dayLabel(duty.dateKey), reason];
+  const { text: supApologyText, params } = M().supApology(ctxOf(duty), reason);
   for (const sup of sups) {
   const r = await sendMessage(sup, templatePayload(s.meta.templates.supApology, params, [
     { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: `pick:${duty.id}` }] },
   ]));
-  await logEvent({ direction: "out", phone: sup, name: "المشرف", kind: "supervisor_apology", text: fill(SUP_APOLOGY_TEXT, params), dutyId: duty.id, waId: r.wamid });
+  await logEvent({ direction: "out", phone: sup, name: "المشرف", kind: "supervisor_apology", text: fill(supApologyText, params), dutyId: duty.id, waId: r.wamid });
   if (!r.ok) await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nتعذّر تنبيه المشرف ${sup} باعتذار ${duty.name} عن ${dutyText(duty)}: ${r.detail}`);
   }
 }
@@ -468,12 +472,12 @@ async function onApologyReason(duty: Duty, from: string, reasonRaw: string, quie
 async function onPickTap(duty: Duty, from: string) {
   // الاحتياطي: يكفي تنبيه المشرف بالاعتذار، بلا قائمة بديل (زر القالب ثابت فيظهر، فنردّ بتوضيح).
   if (duty.role === "reserve") {
-    await sendMessage(from, textMsg(`هذا اعتذار عن مهمة احتياطي (${dutyText(duty)}) — لا يلزم اختيار بديل. ويمكن إضافة احتياطي آخر من الموقع.`));
+    await sendMessage(from, textMsg(M().reservePick(ctxOf(duty))));
     return;
   }
   if (duty.replacedByDutyId) {
     const sub = await getDuty(duty.replacedByDutyId);
-    await sendMessage(from, textMsg(`سبق إسناد هذه المهمة إلى الشيخ ${sub?.name ?? ""}.`));
+    await sendMessage(from, textMsg(M().alreadyAssigned(sub?.name ?? "")));
     return;
   }
   const options = (await listMuezzins()).filter((m) => m.isActive && m.id !== duty.muezzinId);
@@ -484,7 +488,7 @@ async function onPickTap(duty: Duty, from: string) {
       type: "interactive",
       interactive: {
         type: "list",
-        body: { text: `اختر البديل عن الشيخ ${duty.name}\n${dutyText(duty)}${chunks.length > 1 ? `\n(القائمة ${n + 1} من ${chunks.length})` : ""}` },
+        body: { text: M().pickListHeader(ctxOf(duty), n + 1, chunks.length) },
         action: {
           button: chunks.length > 1 ? `المؤذنون ${n + 1}` : "المؤذنون",
           sections: [{ title: "المؤذنون", rows: chunk.map((m) => ({ id: `sub:${duty.id}:${m.id}`, title: m.name.slice(0, 24) })) }],
@@ -527,7 +531,7 @@ export async function assignSubstitute(dutyId: number, substituteId: number, rep
     const r = await sendDutyMessage(newDuty, to, duty.name);
     if (!r.ok) note = ` (تعذّر إرسال رسالته: ${r.detail})`;
   }
-  if (replyTo) await sendMessage(replyTo, textMsg(`تم إسناد ${dutyText(duty)} إلى الشيخ ${sub.name} بدلًا عن الشيخ ${duty.name}${note || "، وأُرسلت له رسالة المهمة"}.`));
+  if (replyTo) await sendMessage(replyTo, textMsg(M().assigned(ctxOf(duty), sub.name, note)));
   return { substitute: sub.name, note };
 }
 

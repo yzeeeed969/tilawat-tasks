@@ -20,8 +20,11 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, templateStatuses } from "../services/muezzin-confirm";
-import { addDays } from "../services/muezzin";
+import { assignSubstitute, buildSummary, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
+import { addDays, ALL_SLOTS, ROLES, type Role, type Slot } from "../services/muezzin";
+import { ACTIVE_VERSION, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
+
+const fillText = (t: string, v: string[]) => t.replace(/\{\{(\d+)\}\}/g, (_, n) => v[Number(n) - 1] ?? "");
 
 // «جدول المؤذنين» — للمدير ولمن مُنح صلاحية «إدارة جدول المؤذنين» (requireMuezzinAccess على كل مسار).
 const router = Router();
@@ -117,6 +120,35 @@ router.post("/muezzin-schedule/summary/send", requireMuezzinAccess, handle(async
 // تجربة حيّة للصيغ الجديدة على جوال التجربة.
 router.post("/muezzin-schedule/sim/start", requireMuezzinAccess, handle(async (_req, res) => {
   res.json(await startSimulation());
+}));
+
+// «محاكي الرسائل»: نصوص سيناريو كامل من نفس مصدر الرسائل الفعلية — لا يرسل شيئًا.
+router.get("/muezzin-schedule/simulator", requireMuezzinAccess, handle(async (req, res) => {
+  const q = req.query as Record<string, string | undefined>;
+  const version: MsgVersion = q.version === "live" ? "live" : "draft";
+  const slot = (ALL_SLOTS as readonly string[]).includes(String(q.slot)) ? (q.slot as Slot) : "dhuhr";
+  const role = (ROLES as readonly string[]).includes(String(q.role)) ? (q.role as Role) : "muezzin";
+  const dateKey = /^\d{4}-\d{2}-\d{2}$/.test(String(q.date)) ? String(q.date) : addDays(riyadhDayKey(new Date()), 1);
+  const name = String(q.name || "يزيد").slice(0, 60);
+  const sub = String(q.sub || "أحمد نحاس").slice(0, 60);
+  const reason = String(q.reason || "").slice(0, 300);
+  const ctx = { name, slot, role, dateKey };
+  const bundle = simulatorBundle(version, ctx, reason, sub);
+  const one = (response: string | null, r: string | null = null) => ({ slot, role, name, response, reason: r, sendOk: true, replacedByDutyId: null });
+  const subDuty = (response: string | null) => ({ slot, role, name: sub, response, reason: null, sendOk: true, replacedByDutyId: null });
+  const summary = (list: any[]) => fillText(SUMMARY_TEXT, buildSummary(list, dateKey).params);
+  res.json({
+    ...bundle,
+    active: ACTIVE_VERSION,
+    summaries: {
+      ack: summary([one("ack")]),
+      none: summary([one(null)]),
+      apologyPending: summary([one("apology_pending")]),
+      apology: summary([one("apology", reason || "—")]),
+      subNone: summary([subDuty(null)]),
+      subAck: summary([subDuty("ack")]),
+    },
+  });
 }));
 
 router.patch("/muezzin-schedule/settings", requireMuezzinAccess, handle(async (req, res) => {
