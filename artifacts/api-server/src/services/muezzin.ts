@@ -707,6 +707,40 @@ export async function runSummaryTick(now = new Date()) {
   }
 }
 
+/**
+ * تقرير تشخيص لمرة واحدة (للمدير على تيليجرام): من اعتمد/عدّل جدول هذا الأسبوع ومتى،
+ * والخانات التي ليس لها ملازم من الأربعاء إلى السبت. للقراءة فقط — لا يغيّر شيئًا.
+ */
+let diagDone = false;
+export async function sendScheduleDiagnosisOnce() {
+  if (diagDone) return;
+  diagDone = true;
+  const s = await getSettings();
+  const meta = s.meta as MuezzinMeta & { diagMulazim?: string };
+  if (meta.diagMulazim) return;
+  const tz = (col: string) => sql.raw(`to_char(${col} AT TIME ZONE 'UTC' AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD HH24:MI')`);
+  const batches = rowsOf(await db.execute(sql`
+    SELECT b.id, b.week_start, b.entries, ${tz("b.created_at")} AS at, COALESCE(u.display_name, u.username, '?') AS who
+    FROM muezzin_schedule_batches b LEFT JOIN app_users u ON u.id = b.created_by_user_id
+    WHERE b.week_start = '2026-11-15' ORDER BY b.id`)).map((r) => `• ${r.at} — ${r.who} — ${r.entries} خانة`);
+  const acts = rowsOf(await db.execute(sql`
+    SELECT ${tz("created_at")} AS at, user_name, action, entity_name FROM activity_log
+    WHERE action LIKE 'muezzin_schedule%' AND created_at > '2026-11-14' ORDER BY id`)).map((r) => `• ${r.at} — ${r.user_name} — ${r.action === "muezzin_schedule_created" ? "اعتماد جدول أسبوع" : String(r.entity_name ?? r.action)}`);
+  const gaps = rowsOf(await db.execute(sql`
+    SELECT m.date_key, m.slot FROM muezzin_schedule m
+    WHERE m.role = 'muezzin' AND m.date_key BETWEEN '2026-11-18' AND '2026-11-21' AND m.slot NOT LIKE 'jumuah%'
+      AND NOT EXISTS (SELECT 1 FROM muezzin_schedule z WHERE z.date_key = m.date_key AND z.slot = m.slot AND z.role = 'mulazim')
+    ORDER BY m.date_key, m.slot`)).map((r) => `${r.date_key} ${SLOT_LABELS[String(r.slot) as Slot] ?? r.slot}`);
+  const text = [
+    "🔎 <b>جدول المؤذنين — تشخيص اختفاء الملازمين</b>",
+    "", "<b>اعتماد جدول أسبوع 15–21 نوفمبر:</b>", ...(batches.length ? batches : ["• لا يوجد"]),
+    "", "<b>سجل التعديلات منذ 14 نوفمبر:</b>", ...(acts.length ? acts.slice(-40) : ["• لا يوجد"]),
+    "", `<b>خانات بلا ملازم (الأربعاء–السبت): ${gaps.length}</b>`, ...gaps.map((g) => `• ${g}`),
+  ].join("\n");
+  await alertAdmins(text);
+  await saveMeta({ ...s.meta, diagMulazim: new Date().toISOString() } as MuezzinMeta);
+}
+
 export function startMuezzinScheduler(logger?: Logger) {
   if (schedulerStarted) return;
   schedulerStarted = true;
@@ -714,6 +748,7 @@ export function startMuezzinScheduler(logger?: Logger) {
     if (tickRunning) return;
     tickRunning = true;
     try {
+      await sendScheduleDiagnosisOnce().catch((err) => logger?.warn({ err }, "Muezzin diagnosis failed"));
       const r = await runMuezzinTick();
       if (r.ran) logger?.info({ result: r }, "Muezzin schedule daily send completed");
       // تذكير من ضغط «أعتذر» ولم يكتب السبب بعد 30 دقيقة.
