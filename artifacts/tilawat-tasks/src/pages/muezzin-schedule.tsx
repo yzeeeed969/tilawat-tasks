@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
-import { useCanManageMuezzins } from "@/lib/roles";
+import { useCanManageMuezzins, useIsAdmin } from "@/lib/roles";
 import { cn } from "@/lib/utils";
 
 // «جدول المؤذنين» (للمدير): رفع صورة الجدول الأسبوعي الرسمي ← قراءة آلية ← معاينة بجانب الصورة ← إنشاء.
@@ -675,6 +675,51 @@ function MuezzinRow({ m, onChange, toast }: { m: Muezzin; onChange: () => void; 
 
 /* ───────────────────────── الإرسال والسجل ───────────────────────── */
 
+/** اسم العرض لرقم الإرسال: حالته عند ميتا، وإعادة التسجيل لتطبيق الاسم المعتمد (للمدير فقط). */
+function DisplayNameCard({ toast }: { toast: any }) {
+  type Phone = { verified_name?: string; new_display_name?: string; new_name_status?: string; quality_rating?: string; status?: string };
+  const q = useQuery({ queryKey: ["muezzin-phone"], queryFn: () => api<Phone>(`${BASE}/meta/phone`) });
+  const [pin, setPin] = useState("");
+  const rereg = useMutation({
+    mutationFn: () => api<{ after: Phone }>(`${BASE}/meta/reregister`, { method: "POST", body: JSON.stringify({ pin }) }),
+    onSuccess: (r) => { setPin(""); q.refetch(); toast({ title: "تمت إعادة التسجيل", description: `الاسم الظاهر الآن: ${r.after?.verified_name ?? "—"}` }); },
+    onError: (e: Error) => { setPin(""); toast({ title: "لم تتم إعادة التسجيل", description: e.message, variant: "destructive" }); },
+  });
+  const p = q.data;
+  const ready = p?.new_display_name && ["APPROVED", "AVAILABLE_WITHOUT_REVIEW"].includes(String(p.new_name_status)) && p.new_display_name !== p.verified_name;
+  const STATUS: Record<string, string> = { APPROVED: "معتمد", AVAILABLE_WITHOUT_REVIEW: "معتمد (بلا مراجعة)", PENDING_REVIEW: "قيد المراجعة", DECLINED: "مرفوض", EXPIRED: "انتهت مهلته — يُقدَّم من جديد", NONE: "لا يوجد طلب" };
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>🏷️ اسم العرض لرقم الإرسال</CardTitle>
+        <CardDescription>الاسم الذي يظهر للمؤذنين بجانب رقم 0557578627 إن لم يحفظوه.</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        {q.isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : q.isError ? <p className="text-red-700">تعذّر جلب الحالة من ميتا.</p> : (
+          <ul className="space-y-1">
+            <li>الاسم الظاهر الآن: <b>{p?.verified_name ?? "—"}</b></li>
+            {p?.new_display_name && <li>الاسم المطلوب: <b>{p.new_display_name}</b> — {STATUS[String(p.new_name_status)] ?? p.new_name_status}</li>}
+            <li>تقييم الجودة: {p?.quality_rating === "GREEN" ? "🟢 مرتفع" : p?.quality_rating === "YELLOW" ? "🟡 متوسط" : p?.quality_rating === "RED" ? "🔴 منخفض" : p?.quality_rating ?? "—"}</li>
+          </ul>
+        )}
+        {ready && (
+          <div className="space-y-2 rounded-md border border-amber-300 bg-amber-50/60 p-3 dark:border-amber-800 dark:bg-amber-950/30">
+            <p>لتطبيق الاسم الجديد يلزم <b>إعادة تسجيل الرقم</b> خلال 14 يومًا من الموافقة. اكتب <b>رمز التحقق بخطوتين</b> (6 أرقام) الخاص برقم الإرسال — لا يُحفظ في أي مكان.</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Input type="password" inputMode="numeric" autoComplete="off" maxLength={6} className="w-36" dir="ltr" placeholder="••••••"
+                value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, "").slice(0, 6))} />
+              <Button size="sm" disabled={pin.length !== 6 || rereg.isPending}
+                onClick={() => { if (window.confirm(`إعادة تسجيل الرقم لتطبيق اسم «${p?.new_display_name}»؟\nإن كان الرمز خاطئًا فلن يتغير شيء.`)) rereg.mutate(); }}>
+                {rereg.isPending && <Loader2 className="ml-2 h-4 w-4 animate-spin" />}تطبيق الاسم الجديد
+              </Button>
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 /** صياغة المشرف (قوالبها بانتظار ميتا ثم تحول تلقائي) + تذكير من لم يرد. */
 function V2Card({ data, onChange, toast, saveSettings }: { data: Setup; onChange: () => void; toast: any; saveSettings: any }) {
   const s = data.settings;
@@ -824,6 +869,7 @@ function SummaryCard({ data, onChange, toast, saveSettings }: { data: Setup; onC
 }
 
 function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () => void; toast: any; part: "settings" }) {
+  const isAdmin = useIsAdmin();
   const s = data.settings;
   const [time, setTime] = useState(`${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`);
   const savedTime = `${String(s.sendHour).padStart(2, "0")}:${String(s.sendMinute).padStart(2, "0")}`;
@@ -888,6 +934,7 @@ function SendTab({ data, onChange, toast, part }: { data: Setup; onChange: () =>
       </Card>}
       {part === "settings" && <>
       <V2Card data={data} onChange={onChange} toast={toast} saveSettings={saveSettings} />
+      {isAdmin && <DisplayNameCard toast={toast} />}
       <SummaryCard data={data} onChange={onChange} toast={toast} saveSettings={saveSettings} />
 
       <Card className="border-amber-300 dark:border-amber-800">

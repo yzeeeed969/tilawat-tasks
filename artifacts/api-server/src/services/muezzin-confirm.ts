@@ -176,6 +176,27 @@ export async function phoneStatus() {
   return graph(`${id}?fields=display_phone_number,verified_name,name_status,new_name_status,new_display_name,quality_rating,messaging_limit_tier,status`);
 }
 
+/**
+ * إعادة تسجيل رقم الإرسال لتطبيق اسم العرض المعتمد. يكتب المدير رمز التحقق بخطوتين في الموقع
+ * (لا يُحفظ ولا يُسجَّل في أي مكان) ويُمرَّر لميتا مرة واحدة.
+ */
+export async function reregisterPhone(pin: unknown) {
+  if (!isWhatsAppConfigured()) throw new MuezzinError(400, "واتساب غير مربوط");
+  const p = String(pin ?? "").trim();
+  if (!/^\d{6}$/.test(p)) throw new MuezzinError(400, "رمز التحقق 6 أرقام");
+  const id = process.env.WHATSAPP_PHONE_NUMBER_ID?.trim();
+  const before = await graph(`${id}?fields=verified_name,new_display_name,new_name_status`);
+  try {
+    await graph(`${id}/register`, { body: { messaging_product: "whatsapp", pin: p } });
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err);
+    throw new MuezzinError(400, /pin|two.?step|PIN/i.test(msg) ? "رمز التحقق غير صحيح — لم يتغير شيء، والرسائل مستمرة." : `تعذّرت إعادة التسجيل: ${msg}`);
+  }
+  await new Promise((r) => setTimeout(r, 3000));
+  const after = await graph(`${id}?fields=verified_name,new_display_name,new_name_status,status,quality_rating`);
+  return { before, after };
+}
+
 export async function templateStatuses() {
   const settings = await getSettings();
   const wanted = [...new Set([...Object.values(settings.meta.templates ?? {}), ...Object.values(settings.meta.v2?.templates ?? {})].filter(Boolean) as string[])];
