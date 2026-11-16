@@ -20,7 +20,7 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, sendSummary, templateStatuses } from "../services/muezzin-confirm";
+import { assignSubstitute, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, templateStatuses } from "../services/muezzin-confirm";
 import { addDays } from "../services/muezzin";
 
 // «جدول المؤذنين» — للمدير ولمن مُنح صلاحية «إدارة جدول المؤذنين» (requireMuezzinAccess على كل مسار).
@@ -112,6 +112,11 @@ router.post("/muezzin-schedule/summary/send", requireMuezzinAccess, handle(async
   const date = String(req.body?.date ?? "");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new MuezzinError(400, "تاريخ غير صحيح");
   res.json(await sendSummary(date));
+}));
+
+// تجربة حيّة للصيغ الجديدة على جوال التجربة.
+router.post("/muezzin-schedule/sim/start", requireMuezzinAccess, handle(async (_req, res) => {
+  res.json(await startSimulation());
 }));
 
 router.patch("/muezzin-schedule/settings", requireMuezzinAccess, handle(async (req, res) => {
