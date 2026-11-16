@@ -560,6 +560,19 @@ export async function handleWebhook(body: any) {
           db.execute(sql`UPDATE muezzin_wa_events SET kind = ${kind}, text = ${text}, duty_id = ${dutyId ?? null}, muezzin_name = ${name ?? null} WHERE id = ${eventId}`);
 
         try {
+          // تجربة الصيغ الجديدة (رقم التجربة فقط): ضغطات sim:… ونص السبب أثناء التجربة.
+          {
+            const { handleSim } = await import("./muezzin-sim");
+            const simId = msg.type === "interactive" ? String(msg.interactive?.button_reply?.id ?? msg.interactive?.list_reply?.id ?? "") : null;
+            const simText = msg.type === "text" ? String(msg.text?.body ?? "") : null;
+            const isTest = (await getSettings()).testPhone === from;
+            if (isTest && ((simId && simId.startsWith("sim:")) || (simId === null && simText !== null))) {
+              if (await handleSim(from, simId && simId.startsWith("sim:") ? simId : null, simText, sendMessage)) {
+                await setEvent("sim", simText ?? simId ?? "", null, "تجربة");
+                continue;
+              }
+            }
+          }
           if (msg.type === "button") {
             const payload = String(msg.button?.payload ?? "");
             const [kind, idStr] = payload.split(":");
@@ -689,6 +702,11 @@ export async function recentEvents(limit = 100) {
  * يرسل لرقم التجربة شكل الرسائل بالنص المختار، كرسائل تفاعلية بلا قالب (لا تحتاج اعتماد ميتا).
  * شرط ميتا: أن يكون رقم التجربة راسل رقم الإرسال خلال آخر 24 ساعة. الأزرار هنا للعرض فقط.
  */
+export async function startSimulation() {
+  const { startSim } = await import("./muezzin-sim");
+  return startSim(sendMessage);
+}
+
 export async function sendPreview(input: unknown) {
   const { normalizeWording } = await import("./muezzin-wording");
   const s = await getSettings();
