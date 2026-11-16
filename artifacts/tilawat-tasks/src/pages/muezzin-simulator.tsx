@@ -128,8 +128,16 @@ export default function MuezzinSimulatorPage() {
   const date = tomorrowKey();
   const effSlot: Slot = slot.startsWith("jumuah") && role !== "muezzin" ? "dhuhr" : slot;
 
-  const load = (extra: { reason?: string; sub?: string } = {}) =>
-    api<Bundle>(`${BASE}/simulator?${new URLSearchParams({ version, role, slot: effSlot, date, name, reason: extra.reason ?? reason, sub: extra.sub ?? sub ?? "أحمد نحاس" })}`);
+  // «صاحب المهمة الحالي»: المؤذن الأصلي، ثم كل بديل يُسند إليه (بديل البديل… كما في الواقع).
+  type Holder = { name: string; orig: string | null; level: number };
+  const holderRef = useRef<Holder>({ name, orig: null, level: 0 });
+  const phoneOf = (h: Holder): Phone => (h.level === 0 ? "m" : "b");
+
+  const load = (extra: { reason?: string; sub?: string } = {}, h: Holder = holderRef.current) =>
+    api<Bundle>(`${BASE}/simulator?${new URLSearchParams({
+      version, role, slot: effSlot, date, name: h.name, ...(h.orig ? { orig: h.orig } : {}),
+      reason: extra.reason ?? reason, sub: extra.sub ?? sub ?? "أحمد نحاس",
+    })}`);
 
   const push = (list: Array<Omit<Bubble, "id">>) => setBubbles((prev) => [...prev, ...list.map((b) => ({ ...b, id: nextId.current++ }))]);
   const markUsed = (id: number) => setBubbles((prev) => prev.map((b) => (b.id === id ? { ...b, used: true } : b)));
@@ -137,7 +145,8 @@ export default function MuezzinSimulatorPage() {
   const start = async () => {
     setBusy(true);
     try {
-      const b = await load();
+      holderRef.current = { name, orig: null, level: 0 };
+      const b = await load({}, holderRef.current);
       nextId.current = 1;
       setBubbles([]); setWaitingReason(null); setReason(""); setSub(null); setOutcome("none");
       push([
@@ -151,31 +160,35 @@ export default function MuezzinSimulatorPage() {
   useEffect(() => { void start(); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [version, role, slot, name]);
 
   const onAction = async (bubble: Bubble, action: string) => {
-    markUsed(bubble.id);
+    if (bubble.id > 0) markUsed(bubble.id);
     setBusy(true);
     try {
+      const h = holderRef.current;
+      const ph = phoneOf(h);
       const b = await load();
+      const who = h.level === 0 ? `الشيخ ${h.name}` : `البديل ${h.name}`;
       if (action === "ack") {
         push([
-          { phone: "m", from: "user", text: "عُلم" },
-          { phone: "m", from: "sys", kind: "text", text: b.main.ackReply },
-          { phone: "s", from: "note", text: `ضغط الشيخ ${name} «عُلم»` },
+          { phone: ph, from: "user", text: "عُلم" },
+          { phone: ph, from: "sys", kind: "text", text: b.main.ackReply },
+          { phone: "s", from: "note", text: `ضغط ${who} «عُلم»` },
           { phone: "s", from: "sys", kind: "template", text: b.main.supAck },
-          { phone: "m", from: "note", text: "في الموقع: تصبح خانته خضراء «✓ عُلم» في تبويب الردود" },
+          { phone: ph, from: "note", text: "في الموقع: تصبح خانته خضراء «✓ عُلم» في تبويب الردود" },
         ]);
-        setOutcome("ack");
+        setOutcome(h.level === 0 ? "ack" : "subAck");
       } else if (action === "apol") {
         push([
-          { phone: "m", from: "user", text: "أعتذر" },
-          { phone: "m", from: "sys", kind: "text", text: b.main.apologyPrompt },
-          { phone: "s", from: "note", text: "لا يصل المشرف شيء حتى يكتب المؤذن السبب" },
+          { phone: ph, from: "user", text: "أعتذر" },
+          { phone: ph, from: "sys", kind: "text", text: b.main.apologyPrompt },
+          { phone: "s", from: "note", text: "لا يصل المشرف شيء حتى يُكتب السبب" },
         ]);
-        setWaitingReason("main"); setOutcome("apologyPending");
+        setWaitingReason(ph === "m" ? "main" : "sub"); setOutcome(h.level === 0 ? "apologyPending" : "subNone");
       } else if (action === "pick") {
         if (role === "reserve") {
           push([{ phone: "s", from: "user", text: "اختيار البديل" }, { phone: "s", from: "sys", kind: "text", text: b.main.reservePick }]);
         } else {
-          // كما في الواقع: تصل المشرفَ عدة قوائم متتالية (10 أسماء لكل قائمة).
+          setSub(null);
+          // كما في الواقع: تصل المشرفَ عدة قوائم متتالية (10 أسماء لكل قائمة)، بلا اسم المعتذر.
           push([
             { phone: "s", from: "user", text: "اختيار البديل" },
             ...b.pickLists.map((l, i) => ({ phone: "s" as Phone, from: "sys" as const, kind: "list" as const, text: l.header, buttons: [{ label: "☰ قائمة المؤذنين", action: `list:${i}` }] })),
@@ -194,26 +207,16 @@ export default function MuezzinSimulatorPage() {
         push([
           { phone: "s", from: "user", text: subName },
           { phone: "s", from: "sys", kind: "text", text: bb.main.assigned, buttons: [{ label: "ماذا لو ضغط المشرف الآخر «اختيار البديل»؟", action: "other" }] },
-          { phone: "m", from: "note", text: "في الموقع: يتغير الاسم في الجدول المعتمد تلقائيًا إلى البديل" },
-          { phone: "b", from: "note", text: `الشيخ ${subName} — يصله فورًا` },
-          { phone: "b", from: "sys", kind: "template", text: bb.sub.duty, buttons: [{ label: "عُلم", action: "sack" }, { label: "أعتذر", action: "sapol" }] },
+          { phone: "s", from: "note", text: "في الموقع: يتغير الاسم في الجدول المعتمد تلقائيًا إلى البديل" },
+          { phone: "b", from: "note", text: h.level === 0 ? `الشيخ ${subName} — يصله فورًا` : `بديل ثانٍ: الشيخ ${subName} — يصله فورًا` },
+          { phone: "b", from: "sys", kind: "template", text: bb.sub.duty, buttons: [{ label: "عُلم", action: "ack" }, { label: "أعتذر", action: "apol" }] },
         ]);
+        holderRef.current = { name: subName, orig: h.name, level: h.level + 1 };
         setOutcome("subNone");
       } else if (action === "other") {
         push([{ phone: "s", from: "note", text: "المشرف الآخر يضغط «اختيار البديل» بعد الإسناد:" }, { phone: "s", from: "sys", kind: "text", text: b.main.alreadyAssigned }]);
-      } else if (action === "sack") {
-        push([
-          { phone: "b", from: "user", text: "عُلم" },
-          { phone: "b", from: "sys", kind: "text", text: b.sub.ackReply },
-          { phone: "s", from: "note", text: `البديل ${sub} ضغط «عُلم»` },
-          { phone: "s", from: "sys", kind: "template", text: b.sub.supAck },
-        ]);
-        setOutcome("subAck");
-      } else if (action === "sapol") {
-        push([{ phone: "b", from: "user", text: "أعتذر" }, { phone: "b", from: "sys", kind: "text", text: b.sub.apologyPrompt }]);
-        setWaitingReason("sub");
       } else if (action === "remind") {
-        push([{ phone: "m", from: "note", text: "مرّت 30 دقيقة ولم يكتب السبب — تذكير واحد فقط" }, { phone: "m", from: "sys", kind: "text", text: b.main.reasonReminder }]);
+        push([{ phone: ph, from: "note", text: "مرّت 30 دقيقة ولم يُكتب السبب — تذكير واحد فقط" }, { phone: ph, from: "sys", kind: "text", text: b.main.reasonReminder }]);
       }
     } finally { setBusy(false); }
   };
@@ -223,24 +226,16 @@ export default function MuezzinSimulatorPage() {
     if (!r || !waitingReason) return;
     setBusy(true);
     try {
+      const h = holderRef.current;
+      const ph = phoneOf(h);
       const b = await load({ reason: r });
-      if (waitingReason === "main") {
-        push([
-          { phone: "m", from: "user", text: r },
-          { phone: "m", from: "sys", kind: "text", text: b.main.apologyRecorded },
-          { phone: "s", from: "note", text: `اعتذر الشيخ ${name} وكتب السبب` },
-          { phone: "s", from: "sys", kind: "template", text: b.main.supApology, buttons: [{ label: "اختيار البديل", action: "pick" }] },
-        ]);
-        setOutcome("apology");
-      } else {
-        push([
-          { phone: "b", from: "user", text: r },
-          { phone: "b", from: "sys", kind: "text", text: b.sub.apologyRecorded },
-          { phone: "s", from: "note", text: `اعتذر البديل ${sub} أيضًا` },
-          { phone: "s", from: "sys", kind: "template", text: b.sub.supApology },
-          { phone: "s", from: "note", text: "ويختار المشرف بديلًا آخر بنفس الطريقة" },
-        ]);
-      }
+      push([
+        { phone: ph, from: "user", text: r },
+        { phone: ph, from: "sys", kind: "text", text: b.main.apologyRecorded },
+        { phone: "s", from: "note", text: h.level === 0 ? `اعتذر الشيخ ${h.name} وكتب السبب` : `اعتذر البديل ${h.name} أيضًا وكتب السبب` },
+        { phone: "s", from: "sys", kind: "template", text: b.main.supApology, buttons: [{ label: "اختيار البديل", action: "pick" }] },
+      ]);
+      setOutcome(h.level === 0 ? "apology" : "subNone");
       setWaitingReason(null); setReason("");
     } finally { setBusy(false); }
   };
@@ -324,7 +319,12 @@ export default function MuezzinSimulatorPage() {
         <div className="space-y-1">
           <div className="text-sm font-bold">③ جوال البديل (الطارئ)</div>
           <PhoneView title="جدول الأذان" subtitle={sub ? `عند الشيخ ${sub}` : "يظهر بعد اختيار المشرف للبديل"} tone="bg-[#b4442f]" bubbles={bubbles.filter((b) => b.phone === "b")} onAction={onAction}
-            footer={reasonBox("sub") ?? undefined} />
+            footer={waitingReason === "sub" ? (
+              <div className="space-y-1.5">
+                {reasonBox("sub")}
+                <button type="button" className="w-full text-[11px] text-zinc-500 underline" onClick={() => void onAction({ id: -1 } as Bubble, "remind")}>ماذا لو لم يكتب السبب 30 دقيقة؟</button>
+              </div>
+            ) : undefined} />
         </div>
       </div>
     </div>

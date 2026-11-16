@@ -132,7 +132,9 @@ router.get("/muezzin-schedule/simulator", requireMuezzinAccess, handle(async (re
   const name = String(q.name || "يزيد").slice(0, 60);
   const sub = String(q.sub || "أحمد نحاس").slice(0, 60);
   const reason = String(q.reason || "").slice(0, 300);
-  const ctx = { name, slot, role, dateKey };
+  // orig: إن كانت المهمة نفسها لبديل (طارئ) — اسم من اعتذر قبله، لمحاكاة بديل البديل.
+  const orig = q.orig ? String(q.orig).slice(0, 60) : null;
+  const ctx = { name, slot, role, dateKey, original: orig };
   const bundle = simulatorBundle(version, ctx, reason, sub);
   const one = (response: string | null, r: string | null = null) => ({ slot, role, name, response, reason: r, sendOk: true, replacedByDutyId: null });
   const subDuty = (response: string | null) => ({ slot, role, name: sub, response, reason: null, sendOk: true, replacedByDutyId: null });
