@@ -6,12 +6,12 @@
  * - "live"  : ما يُرسل الآن فعلًا (مطابق للقوالب المعتمدة من ميتا).
  * - "draft" : صياغة المشرف المقترحة — تُعرض في المحاكي فقط حتى تُعتمد.
  */
-import { SLOT_MESSAGE, ROLE_LABEL, type Role, type Slot } from "./muezzin";
+import { SLOT_MESSAGE, ROLE_LABEL, currentTextVersion, type Role, type Slot } from "./muezzin";
 import { DUTY_TEXT, SUBSTITUTE_TEXT_D, SUP_ACK_TEXT, SUP_APOLOGY_TEXT, fullDayLabel, gregorianDate, hijriDate, taskD, weekdayName } from "./muezzin-wording";
 
 export type MsgVersion = "live" | "draft";
-/** الحالية: ما يرسله النظام الآن. تتغير إلى "draft" عند اعتماد الصياغة الجديدة. */
-export const ACTIVE_VERSION: MsgVersion = "live";
+/** النسخة المستعملة الآن في الإرسال — تتحول إلى "draft" تلقائيًا عند اعتماد ميتا لقوالب صياغة المشرف. */
+export const activeVersion = (): MsgVersion => currentTextVersion();
 
 export type MsgCtx = {
   name: string;
@@ -61,7 +61,15 @@ const DRAFT_SUP_APOLOGY_TEXT = [
 const liveTask = (c: MsgCtx) => `${SLOT_MESSAGE[c.slot]} (${ROLE_LABEL[c.role]})`;
 const liveDutyText = (c: MsgCtx) => `${liveTask(c)} — ${fullDayLabel(c.dateKey)}`;
 
-export function messages(v: MsgVersion = ACTIVE_VERSION) {
+// تذكير من لم يرد — بأسلوب المشرف، وبنفس زرّي رسالة المهمة.
+export const REMIND_TEXT = [
+  "فضيلة الشيخ : ( {{1}} )", "", "🔔 تذكير : لم يصلنا ردك على مهمة :", "{{2}}", "",
+  "🗓️ يوم : ( {{3}} )", "{{4}} هـ", "{{5}} م", "", "فضلاً اختر عُلم أو أعتذر",
+].join("\n");
+/** نصوص قوالب صياغة المشرف (تُرسل لميتا عند الاعتماد). */
+export const DRAFT_TEMPLATES = { substitute: DRAFT_SUB_TEXT, supAck: DRAFT_SUP_ACK_TEXT, supApology: DRAFT_SUP_APOLOGY_TEXT, remind: REMIND_TEXT };
+
+export function messages(v: MsgVersion = activeVersion()) {
   const draft = v === "draft";
   return {
     version: v,
@@ -83,6 +91,11 @@ export function messages(v: MsgVersion = ACTIVE_VERSION) {
     supApology(c: MsgCtx, reason: string): Template {
       if (draft) return { text: DRAFT_SUP_APOLOGY_TEXT, params: [c.name, taskLine(c), `${weekdayName(c.dateKey)} ${hijriDate(c.dateKey)}`, gregorianDate(c.dateKey), reason] };
       return { text: SUP_APOLOGY_TEXT, params: [c.name, SLOT_MESSAGE[c.slot], ROLE_LABEL[c.role], fullDayLabel(c.dateKey), reason] };
+    },
+
+    /** تذكير من لم يرد (قالب واحد بأسلوب المشرف). */
+    reminder(c: MsgCtx): Template {
+      return { text: REMIND_TEXT, params: [c.name, `( ${roleD(c)} ) ${PRAYER_LI[c.slot]}`, weekdayName(c.dateKey), hijriDate(c.dateKey), gregorianDate(c.dateKey)] };
     },
 
     /* رسائل نصية (لا تحتاج اعتماد ميتا) — للمؤذن */
@@ -137,13 +150,13 @@ export function simulatorBundle(v: MsgVersion, c: MsgCtx, reason: string, substi
   return {
     version: v,
     main: {
-      duty: t(m.duty(c)), ackReply: m.ackReply(c), apologyPrompt: m.apologyPrompt(c), reasonReminder: m.reasonReminder(c),
+      duty: t(m.duty(c)), reminder: t(m.reminder(c)), ackReply: m.ackReply(c), apologyPrompt: m.apologyPrompt(c), reasonReminder: m.reasonReminder(c),
       apologyRecorded: m.apologyRecorded(c), alreadyApologized: m.alreadyApologized(c), replacedAfterApology: m.replacedAfterApology(),
       supAck: t(m.supAck(c)), supApology: t(m.supApology(c, reason || "—")),
       pickListHeader: m.pickListHeader(c, 1, 3), assigned: m.assigned(c, substitute), alreadyAssigned: m.alreadyAssigned(substitute), reservePick: m.reservePick(c),
     },
     sub: {
-      duty: t(m.duty(sub)), ackReply: m.ackReply(sub), apologyPrompt: m.apologyPrompt(sub), apologyRecorded: m.apologyRecorded(sub),
+      duty: t(m.duty(sub)), reminder: t(m.reminder(sub)), ackReply: m.ackReply(sub), apologyPrompt: m.apologyPrompt(sub), apologyRecorded: m.apologyRecorded(sub),
       supAck: t(m.supAck(sub)), supApology: t(m.supApology(sub, reason || "—")),
     },
   };

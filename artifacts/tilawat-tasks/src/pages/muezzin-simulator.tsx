@@ -21,8 +21,8 @@ type Phone = "m" | "s" | "b";
 type Bundle = {
   version: Version;
   active: Version;
-  main: Record<"duty" | "ackReply" | "apologyPrompt" | "reasonReminder" | "apologyRecorded" | "alreadyApologized" | "replacedAfterApology" | "supAck" | "supApology" | "pickListHeader" | "assigned" | "alreadyAssigned" | "reservePick", string>;
-  sub: Record<"duty" | "ackReply" | "apologyPrompt" | "apologyRecorded" | "supAck" | "supApology", string>;
+  main: Record<"duty" | "reminder" | "ackReply" | "apologyPrompt" | "reasonReminder" | "apologyRecorded" | "alreadyApologized" | "replacedAfterApology" | "supAck" | "supApology" | "pickListHeader" | "assigned" | "alreadyAssigned" | "reservePick", string>;
+  sub: Record<"duty" | "reminder" | "ackReply" | "apologyPrompt" | "apologyRecorded" | "supAck" | "supApology", string>;
   summaries: Record<"ack" | "none" | "apologyPending" | "apology" | "subNone" | "subAck", string>;
   pickLists: Array<{ header: string; names: string[] }>;
 };
@@ -151,7 +151,7 @@ export default function MuezzinSimulatorPage() {
       setBubbles([]); setWaitingReason(null); setReason(""); setSub(null); setOutcome("none");
       push([
         { phone: "m", from: "note", text: "الساعة 3:00 عصرًا — يصل المؤذن رسالة مهمة الغد" },
-        { phone: "m", from: "sys", kind: "template", text: b.main.duty, buttons: [{ label: "عُلم", action: "ack" }, { label: "أعتذر", action: "apol" }] },
+        { phone: "m", from: "sys", kind: "template", text: b.main.duty, buttons: [{ label: "عُلم", action: "ack" }, { label: "أعتذر", action: "apol" }, { label: "⏱ ماذا لو لم يرد ساعتين؟", action: "noreply" }] },
       ]);
     } finally { setBusy(false); }
   };
@@ -209,12 +209,17 @@ export default function MuezzinSimulatorPage() {
           { phone: "s", from: "sys", kind: "text", text: bb.main.assigned, buttons: [{ label: "ماذا لو ضغط المشرف الآخر «اختيار البديل»؟", action: "other" }] },
           { phone: "s", from: "note", text: "في الموقع: يتغير الاسم في الجدول المعتمد تلقائيًا إلى البديل" },
           { phone: "b", from: "note", text: h.level === 0 ? `الشيخ ${subName} — يصله فورًا` : `بديل ثانٍ: الشيخ ${subName} — يصله فورًا` },
-          { phone: "b", from: "sys", kind: "template", text: bb.sub.duty, buttons: [{ label: "عُلم", action: "ack" }, { label: "أعتذر", action: "apol" }] },
+          { phone: "b", from: "sys", kind: "template", text: bb.sub.duty, buttons: [{ label: "عُلم", action: "ack" }, { label: "أعتذر", action: "apol" }, { label: "⏱ ماذا لو لم يرد نصف ساعة؟", action: "noreply" }] },
         ]);
         holderRef.current = { name: subName, orig: h.name, level: h.level + 1 };
         setOutcome("subNone");
       } else if (action === "other") {
         push([{ phone: "s", from: "note", text: "المشرف الآخر يضغط «اختيار البديل» بعد الإسناد:" }, { phone: "s", from: "sys", kind: "text", text: b.main.alreadyAssigned }]);
+      } else if (action === "noreply") {
+        push([
+          { phone: ph, from: "note", text: h.level === 0 ? "مرّت ساعتان (الساعة 5:00 م) ولم يضغط شيئًا — تذكير واحد فقط" : "مرّت نصف ساعة ولم يضغط البديل شيئًا — تذكير واحد فقط" },
+          { phone: ph, from: "sys", kind: "template", text: b.main.reminder, buttons: [{ label: "عُلم", action: "ack" }, { label: "أعتذر", action: "apol" }] },
+        ]);
       } else if (action === "remind") {
         push([{ phone: ph, from: "note", text: "مرّت 30 دقيقة ولم يُكتب السبب — تذكير واحد فقط" }, { phone: ph, from: "sys", kind: "text", text: b.main.reasonReminder }]);
       }
@@ -275,7 +280,7 @@ export default function MuezzinSimulatorPage() {
             {(["draft", "live"] as const).map((v) => (
               <button key={v} type="button" onClick={() => setVersion(v)}
                 className={cn("px-3 py-1.5 text-sm", version === v ? "bg-sidebar-primary text-white" : "hover:bg-muted")}>
-                {v === "draft" ? "الصيغة الجديدة (مقترحة)" : "الصيغة الحالية (المرسلة الآن)"}
+                {v === "draft" ? "صياغة المشرف (الجديدة)" : "الصياغة السابقة"}
               </button>
             ))}
           </div>

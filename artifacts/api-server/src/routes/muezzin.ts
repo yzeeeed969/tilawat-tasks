@@ -20,9 +20,9 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, buildSummary, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
+import { assignSubstitute, buildSummary, checkV2Promotion, prepareV2, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
 import { addDays, ALL_SLOTS, ROLES, type Role, type Slot } from "../services/muezzin";
-import { ACTIVE_VERSION, messages, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
+import { activeVersion, messages, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
 
 const fillText = (t: string, v: string[]) => t.replace(/\{\{(\d+)\}\}/g, (_, n) => v[Number(n) - 1] ?? "");
 
@@ -148,7 +148,7 @@ router.get("/muezzin-schedule/simulator", requireMuezzinAccess, handle(async (re
   res.json({
     ...bundle,
     pickLists,
-    active: ACTIVE_VERSION,
+    active: activeVersion(),
     summaries: {
       ack: summary([one("ack")]),
       none: summary([one(null)]),
@@ -158,6 +158,11 @@ router.get("/muezzin-schedule/simulator", requireMuezzinAccess, handle(async (re
       subAck: summary([subDuty("ack")]),
     },
   });
+}));
+
+// صياغة المشرف: إرسال قوالبها (والتذكير) لميتا — التحول يتم تلقائيًا عند اعتمادها.
+router.post("/muezzin-schedule/meta/prepare-v2", requireMuezzinAccess, handle(async (_req, res) => {
+  res.json(await prepareV2());
 }));
 
 router.patch("/muezzin-schedule/settings", requireMuezzinAccess, handle(async (req, res) => {
@@ -189,6 +194,7 @@ router.post("/muezzin-schedule/meta/prepare", requireMuezzinAccess, handle(async
 }));
 
 router.get("/muezzin-schedule/meta/templates", requireMuezzinAccess, handle(async (_req, res) => {
+  await checkV2Promotion(true).catch(() => {}); // فتح الإعدادات يفحص اعتماد صياغة المشرف فورًا
   res.json({ templates: await templateStatuses() });
 }));
 

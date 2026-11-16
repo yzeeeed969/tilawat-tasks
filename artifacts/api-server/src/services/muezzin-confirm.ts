@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { sql } from "drizzle-orm";
 import { db } from "@workspace/db";
 import { ensureMuezzinSchema } from "./muezzin-schema";
+import { riyadhDayKey } from "../lib/hijri";
 import {
   alertAdmins,
   ALL_SLOT_ORDER,
@@ -33,7 +34,7 @@ import {
   SUP_APOLOGY_TEXT,
   weekdayName,
 } from "./muezzin-wording";
-import { ACTIVE_VERSION, messages, type MsgCtx } from "./muezzin-messages";
+import { activeVersion, DRAFT_TEMPLATES, messages, type MsgCtx } from "./muezzin-messages";
 
 // «التأكيد بالأزرار»: لكل مهمة رسالة مستقلة فيها «عُلم / أعتذر».
 // - «عُلم» ← يُسجَّل ويصل المشرفَ تنبيه.
@@ -170,7 +171,7 @@ export async function prepareMeta() {
 
 export async function templateStatuses() {
   const settings = await getSettings();
-  const wanted = Object.values(settings.meta.templates ?? {}).filter(Boolean) as string[];
+  const wanted = [...new Set([...Object.values(settings.meta.templates ?? {}), ...Object.values(settings.meta.v2?.templates ?? {})].filter(Boolean) as string[])];
   if (!wanted.length || !isWhatsAppConfigured()) return [];
   const r = await graph(`${WABA_ID()}/message_templates?fields=name,status,rejected_reason,category&limit=200`);
   const all: any[] = r?.data ?? [];
@@ -296,7 +297,7 @@ const dutyText = (d: { slot: Slot; role: Role; dateKey: string }) => `${dutyLabe
 /** سياق النصوص من المهمة — كل النصوص من muezzin-messages (المصدر الواحد مع المحاكي). */
 const ctxOf = (d: { name: string; slot: Slot; role: Role; dateKey: string; substituteForDutyId?: number | null }): MsgCtx =>
   ({ name: d.name, slot: d.slot, role: d.role, dateKey: d.dateKey, original: d.substituteForDutyId ? "بديل" : null });
-const M = () => messages(ACTIVE_VERSION);
+const M = () => messages(activeVersion());
 
 /** يرسل رسالة مهمة واحدة (أصلية أو بديلة) ويحدّث صفّها. */
 async function sendDutyMessage(duty: Duty, to: string, originalName?: string) {
@@ -306,14 +307,17 @@ async function sendDutyMessage(duty: Duty, to: string, originalName?: string) {
   const name = useSub ? t.substitute! : t.duty!;
   // الصيغة التي اعتُمدت فعلًا عند ميتا (لا المختارة لاحقًا ولم تُرسل).
   const w = s.meta.wording ?? s.wording;
-  const tpl = useSub ? substituteTemplate(w) : dutyTemplate(w);
+  // بعد اعتماد صياغة المشرف: نفس قالب المهمة المعتمد (يتغير سطر المهمة فقط) وقالب البديل الجديد.
+  const tpl = activeVersion() === "draft"
+    ? (() => { const x = messages("draft").duty({ name: duty.name, slot: duty.slot, role: duty.role, dateKey: duty.dateKey, original: useSub ? originalName : null }); return { text: x.text, params: () => x.params }; })()
+    : useSub ? substituteTemplate(w) : dutyTemplate(w);
   const params = tpl.params({ name: duty.name, slot: duty.slot, role: duty.role, dateKey: duty.dateKey, original: originalName });
   const buttons = [
     { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: `ack:${duty.id}` }] },
     { type: "button", sub_type: "quick_reply", index: "1", parameters: [{ type: "payload", payload: `apol:${duty.id}` }] },
   ];
   const r = await sendMessage(to, templatePayload(name, params, buttons));
-  await db.execute(sql`UPDATE muezzin_duties SET phone = ${to}, wamid = ${r.wamid}, send_ok = ${r.ok}, send_detail = ${r.detail}, delivery_status = NULL, delivery_error = NULL WHERE id = ${duty.id}`);
+  await db.execute(sql`UPDATE muezzin_duties SET phone = ${to}, wamid = ${r.wamid}, send_ok = ${r.ok}, send_detail = ${r.detail}, delivery_status = NULL, delivery_error = NULL, sent_at = now() WHERE id = ${duty.id}`);
   await logEvent({ direction: "out", phone: to, name: duty.name, kind: useSub ? "substitute_duty" : "duty", text: fill(tpl.text, params), dutyId: duty.id, waId: r.wamid });
   return r;
 }
@@ -428,8 +432,105 @@ async function onTextMaybeReason(from: string, text: string) {
 }
 
 /** تذكير واحد بعد 30 دقيقة لمن ضغط «أعتذر» ولم يكتب السبب (يُستدعى من مجدول الإرسال). */
+/* ───────────────────────── صياغة المشرف (v2) وتذكير من لم يرد ───────────────────────── */
+
+const V2_EXAMPLE_CTX = { name: "محمد المغربي", slot: "asr" as Slot, role: "mulazim" as Role, dateKey: "2026-11-16" };
+
+/** يرسل لميتا قوالب صياغة المشرف + قالب التذكير (لا يمس القوالب المعتمدة الحالية). */
+export async function prepareV2() {
+  await ensureMuezzinSchema();
+  if (!isWhatsAppConfigured()) throw new MuezzinError(400, "واتساب غير مربوط");
+  const s = await getSettings();
+  const d = messages("draft");
+  const ex = V2_EXAMPLE_CTX;
+  const body = (text: string, example: string[]) => ({ type: "BODY", text, example: { body_text: [example] } });
+  const w = s.meta.wording ?? s.wording;
+  const [b1, b2] = BUTTONS[w.buttons];
+  const quick = { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: b1 }, { type: "QUICK_REPLY", text: b2 }] };
+  const rev = (Number(String(s.meta.v2?.templates?.supAck ?? "").match(/_r(\d+)$/)?.[1] ?? 0) || 0) + 1;
+  const names = { substitute: `muezzin_sub_v2_r${rev}`, supAck: `muezzin_sup_ack_v2_r${rev}`, supApology: `muezzin_sup_apology_v2_r${rev}`, remind: `muezzin_remind_r${rev}` };
+  const defs: Array<{ key: keyof typeof names; components: unknown[] }> = [
+    { key: "substitute", components: [body(DRAFT_TEMPLATES.substitute, d.duty({ ...ex, original: "د. ماجد العباس" }).params), quick] },
+    { key: "supAck", components: [body(DRAFT_TEMPLATES.supAck, d.supAck(ex).params)] },
+    { key: "supApology", components: [body(DRAFT_TEMPLATES.supApology, d.supApology({ ...ex, name: "د. ماجد العباس" }, "إجراء عملية جراحية").params), { type: "BUTTONS", buttons: [{ type: "QUICK_REPLY", text: SUP_APOLOGY_BUTTON }] }] },
+    { key: "remind", components: [body(DRAFT_TEMPLATES.remind, d.reminder({ ...ex, name: "علي ملا", slot: "isha", role: "muezzin" }).params), quick] },
+  ];
+  const v2 = { templates: {} as Record<string, string>, preparedAt: new Date().toISOString() };
+  for (const def of defs) {
+    await graph(`${WABA_ID()}/message_templates`, { body: { name: names[def.key], language: "ar", category: "UTILITY", components: def.components } });
+    v2.templates[def.key] = names[def.key];
+    await saveMeta({ ...(await getSettings()).meta, v2 });
+  }
+  return { templates: v2.templates };
+}
+
+let lastV2Check = 0;
+/**
+ * كل 10 دقائق: إن اعتمدت ميتا قوالب صياغة المشرف الثلاثة → تتحول الرسائل كلها إليها دفعة واحدة.
+ * قالب التذكير يُفعَّل وحده متى اعتُمد. ويُنبَّه المدير مرة إن رُفض شيء.
+ */
+export async function checkV2Promotion(force = false) {
+  if (!force && Date.now() - lastV2Check < 10 * 60_000) return { checked: false };
+  lastV2Check = Date.now();
+  const s = await getSettings();
+  const v2 = s.meta.v2;
+  if (!v2?.templates || !isWhatsAppConfigured()) return { checked: false };
+  const st = await templateStatuses();
+  const status = (n?: string) => (n ? st.find((t) => t.name === n)?.status : undefined);
+  const meta = { ...s.meta, templates: { ...(s.meta.templates ?? {}) }, v2: { ...v2 } };
+  let changed = false;
+  if (v2.templates.remind && status(v2.templates.remind) === "APPROVED" && meta.templates.remind !== v2.templates.remind) {
+    meta.templates.remind = v2.templates.remind; changed = true;
+    await alertAdmins("✅ <b>جدول المؤذنين</b>\nاعتمدت ميتا قالب «تذكير من لم يرد» — بدأ العمل.");
+  }
+  const core = (["substitute", "supAck", "supApology"] as const).map((k) => v2.templates[k]);
+  if (!v2.promotedAt && core.every((n) => status(n) === "APPROVED")) {
+    meta.templates.substitute = v2.templates.substitute; meta.templates.supAck = v2.templates.supAck; meta.templates.supApology = v2.templates.supApology;
+    meta.textVersion = "draft"; meta.v2.promotedAt = new Date().toISOString(); changed = true;
+    await alertAdmins("✅ <b>جدول المؤذنين</b>\nاعتمدت ميتا قوالب صياغة المشرف — تحولت كل الرسائل إلى الصياغة الجديدة.");
+  }
+  const rejected = st.filter((t) => Object.values(v2.templates).includes(t.name) && t.status === "REJECTED");
+  if (rejected.length && !v2.rejectedNotified) {
+    meta.v2.rejectedNotified = true; changed = true;
+    await alertAdmins(`⚠️ <b>جدول المؤذنين</b>\nرفضت ميتا: ${rejected.map((t) => `${t.name}${t.reason ? ` (${t.reason})` : ""}`).join("، ")} — الرسائل الحالية مستمرة بلا تغيير.`);
+  }
+  if (changed) await saveMeta(meta);
+  return { checked: true, promoted: Boolean(meta.v2.promotedAt), remind: Boolean(meta.templates.remind) };
+}
+
+/** تذكير واحد لمن لم يضغط «عُلم» ولا «أعتذر»: بعد ساعتين للأصلي، ونصف ساعة للبديل الطارئ. */
+export async function remindNoReply() {
+  await ensureMuezzinSchema();
+  const s = await getSettings();
+  const tpl = s.meta.templates?.remind;
+  if (!s.remindEnabled || !tpl || !s.confirmMode) return { sent: 0 };
+  const today = riyadhDayKey(new Date());
+  const rows = rowsOf(await db.execute(sql`
+    UPDATE muezzin_duties SET noreply_reminded = true
+    WHERE response IS NULL AND send_ok = true AND (delivery_status IS DISTINCT FROM 'failed')
+      AND replaced_by_duty_id IS NULL AND noreply_reminded = false AND test_mode = ${s.testMode}
+      AND date_key >= ${today}
+      AND COALESCE(sent_at, created_at) < now() - make_interval(mins => CASE WHEN substitute_for_duty_id IS NULL THEN ${s.remindAfterMin}::int ELSE ${s.remindSubAfterMin}::int END)
+      AND COALESCE(sent_at, created_at) > now() - interval '20 hours'
+    RETURNING *`)).map(mapDuty);
+  let sent = 0;
+  for (const d of rows) {
+    if (!d.phone) continue;
+    const { text, params } = messages("draft").reminder(ctxOf(d));
+    const buttons = [
+      { type: "button", sub_type: "quick_reply", index: "0", parameters: [{ type: "payload", payload: `ack:${d.id}` }] },
+      { type: "button", sub_type: "quick_reply", index: "1", parameters: [{ type: "payload", payload: `apol:${d.id}` }] },
+    ];
+    const r = await sendMessage(d.phone, templatePayload(tpl, params, buttons));
+    await logEvent({ direction: "out", phone: d.phone, name: d.name, kind: "noreply_reminder", text: fill(text, params), dutyId: d.id, waId: r.wamid });
+    if (r.ok) sent++;
+  }
+  return { sent };
+}
+
 export async function remindPendingReasons() {
   await ensureMuezzinSchema();
+  await getSettings();
   const rows = rowsOf(await db.execute(sql`
     UPDATE muezzin_duties SET reason_reminded = true
     WHERE response = 'apology_pending' AND reason_reminded = false AND replaced_by_duty_id IS NULL
@@ -538,6 +639,7 @@ export async function assignSubstitute(dutyId: number, substituteId: number, rep
 /** معالجة دفعة Webhook من ميتا. */
 export async function handleWebhook(body: any) {
   await ensureMuezzinSchema();
+  await getSettings(); // يحدّث نسخة النصوص الحالية قبل أي رد.
   for (const entry of body?.entry ?? []) {
     for (const change of entry?.changes ?? []) {
       const value = change?.value ?? {};
