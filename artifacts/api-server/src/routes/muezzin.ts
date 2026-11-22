@@ -20,7 +20,7 @@ import {
   sentDateKeys,
 } from "../services/muezzin";
 import { logWeeklyActivity } from "./weekly-schedule";
-import { assignSubstitute, buildSummary, checkV2Promotion, phoneStatus, prepareV2, reregisterPhone, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
+import { apologyOnBehalf, assignSubstitute, buildSummary, checkV2Promotion, phoneStatus, prepareV2, reregisterPhone, dutiesForDate, dutyStats, eventsForDate, prepareMeta, prepareSummaryTemplate, sendPreview, startSimulation, sendSummary, SUMMARY_TEXT, templateStatuses } from "../services/muezzin-confirm";
 import { addDays, ALL_SLOTS, ROLES, type Role, type Slot } from "../services/muezzin";
 import { activeVersion, messages, simulatorBundle, type MsgVersion } from "../services/muezzin-messages";
 
@@ -181,6 +181,13 @@ router.get("/muezzin-schedule/duties", requireMuezzinAccess, handle(async (req, 
     stats: await dutyStats(addDays(today, -30), addDays(today, 7), settings.testMode),
     events: await eventsForDate(date),
   });
+}));
+
+// تسجيل اعتذار نيابةً عن مؤذن لم يرد (اعتذر هاتفيًا) — يصل المشرفين التنبيه، ولا يصل المؤذن شيء.
+router.post("/muezzin-schedule/duties/:id/apology", requireMuezzinAccess, handle(async (req: any, res) => {
+  const u = req.currentUser;
+  const by = String(u?.displayName ?? u?.username ?? "—");
+  res.json(await apologyOnBehalf(Number(req.params.id), String(req.body?.reason ?? ""), by));
 }));
 
 // إسناد بديل من الموقع (بدل واتساب) — نفس النتيجة: يتحدّث الجدول وتصل البديلَ رسالته.

@@ -978,7 +978,7 @@ function fmtTime(v: string) {
 type DutyRow = {
   id: number; dateKey: string; slot: Slot; role: AnyRole; muezzinId: number | null; name: string; phone: string | null; testMode: boolean;
   sendOk: boolean; sendDetail: string | null; deliveryStatus: string | null; deliveryError: string | null;
-  response: string | null; reason: string | null; respondedAt: string | null; substituteForDutyId: number | null; replacedByDutyId: number | null;
+  response: string | null; reason: string | null; respondedAt: string | null; substituteForDutyId: number | null; replacedByDutyId: number | null; apologyBy?: string | null;
 };
 type RepliesData = {
   duties: DutyRow[];
@@ -991,7 +991,7 @@ const SLOT_NAME: Record<Slot, string> = {
 };
 const EVENT_KIND: Record<string, string> = {
   duty: "رسالة مهمة", substitute_duty: "رسالة مهمة (بديل)", ack: "ضغط «عُلم»", apology_tap: "ضغط «أعتذر»", apology_form: "نموذج السبب", apology_prompt: "طلب كتابة السبب", apology_reminder: "تذكير بالسبب", pick_tap: "ضغط «اختيار البديل»", substitute_list: "قائمة البدلاء", list_unknown: "اختيار غير معروف",
-  apology_reason: "سبب الاعتذار", supervisor_ack: "تنبيه المشرف (علم)", supervisor_apology: "تنبيه المشرف (اعتذار)",
+  apology_reason: "سبب الاعتذار", apology_on_behalf: "اعتذار مسجّل نيابةً عنه", supervisor_ack: "تنبيه المشرف (علم)", supervisor_apology: "تنبيه المشرف (اعتذار)",
   substitute_pick: "اختيار البديل", supervisor_summary: "الملخص المسائي", message: "رسالة نصية", button_unknown: "زر غير معروف", form_unknown: "نموذج غير معروف", error: "خطأ",
 };
 
@@ -1021,9 +1021,11 @@ const REPLY_TONE: Record<ReplyKind, string> = {
 const timeOnly = (v: string | null) => (v ? fmtTime(v).split(/[،,]\s*/).pop() : "");
 
 /** خانة واحدة (صلاة × دور): الشيخ وحالته وسببه، ومن أُسندت إليه إن وُجد. */
-function ReplyCell({ d, all, data, pick, setPick, assign }: {
-  d: DutyRow; all: DutyRow[]; data: Setup; pick: Record<number, string>; setPick: (f: (p: Record<number, string>) => Record<number, string>) => void; assign: any;
+function ReplyCell({ d, all, data, pick, setPick, assign, behalf }: {
+  d: DutyRow; all: DutyRow[]; data: Setup; pick: Record<number, string>; setPick: (f: (p: Record<number, string>) => Record<number, string>) => void; assign: any; behalf: any;
 }) {
+  const [behalfOpen, setBehalfOpen] = useState(false);
+  const [behalfReason, setBehalfReason] = useState("");
   const k = replyKind(d);
   const sub = all.find((x) => x.id === d.replacedByDutyId);
   return (
@@ -1035,13 +1037,36 @@ function ReplyCell({ d, all, data, pick, setPick, assign }: {
           {d.respondedAt && (k === "ack" || k === "apology") && <span className="text-muted-foreground">{timeOnly(d.respondedAt)}</span>}
         </div>
         {d.reason && <div className="mt-0.5 text-[11px]">السبب: {d.reason}</div>}
+        {d.apologyBy && <div className="mt-0.5 text-[11px] text-muted-foreground">سجّله نيابةً عنه: {d.apologyBy}</div>}
         {!d.sendOk && d.sendDetail && <div className="text-[11px] text-red-700">{d.sendDetail}</div>}
         {d.deliveryError && <div className="text-[11px] text-red-700">{d.deliveryError}</div>}
       </div>
       {sub && (
         <div className="pr-3 text-[11px] text-muted-foreground">↳ البديل:</div>
       )}
-      {sub && <ReplyCell d={sub} all={all} data={data} pick={pick} setPick={setPick} assign={assign} />}
+      {sub && <ReplyCell d={sub} all={all} data={data} pick={pick} setPick={setPick} assign={assign} behalf={behalf} />}
+      {!sub && d.sendOk && (d.response === null || d.response === "apology_pending") && d.dateKey >= data.today && (
+        <Button size="sm" variant="outline" className="h-7 w-full px-2 text-xs text-red-700" onClick={() => { setBehalfReason(""); setBehalfOpen(true); }}>
+          تسجيل اعتذار نيابةً عنه
+        </Button>
+      )}
+      <Dialog open={behalfOpen} onOpenChange={setBehalfOpen}>
+        <DialogContent dir="rtl">
+          <DialogHeader>
+            <DialogTitle>تسجيل اعتذار نيابةً عن الشيخ {d.name}</DialogTitle>
+            <DialogDescription>
+              {SLOT_NAME[d.slot]} ({d.role === "mulazim" ? "ملازم" : d.role === "reserve" ? "احتياطي" : "مؤذن"}). يصل المشرفين تنبيه الاعتذار على الواتساب، ولا تصل الشيخ أي رسالة. بعدها اختر البديل.
+            </DialogDescription>
+          </DialogHeader>
+          <Input placeholder="السبب، مثل: اعتذر هاتفيًا للمشرف" value={behalfReason} maxLength={300} onChange={(e) => setBehalfReason(e.target.value)} />
+          <DialogFooter>
+            <Button disabled={!behalfReason.trim() || behalf.isPending}
+              onClick={() => behalf.mutate({ id: d.id, reason: behalfReason.trim() }, { onSuccess: () => setBehalfOpen(false) })}>
+              {behalf.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : "تسجيل الاعتذار"}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       {!sub && d.response === "apology" && d.role !== "reserve" && (
         <div className="flex items-center gap-1">
           <select className="w-full min-w-0 rounded border bg-background px-1 py-0.5 text-xs" value={pick[d.id] ?? ""} onChange={(e) => setPick((p) => ({ ...p, [d.id]: e.target.value }))}>
@@ -1067,6 +1092,12 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
       api<{ substitute: string; note: string }>(`${BASE}/duties/${id}/substitute`, { method: "POST", body: JSON.stringify({ substituteId }) }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["muezzin-duties"] }); toast({ title: `أُسندت المهمة إلى ${r.substitute}`, description: r.note || "وأُرسلت له رسالة المهمة" }); },
     onError: (e: Error) => toast({ title: "تعذّر الإسناد", description: e.message, variant: "destructive" }),
+  });
+  const behalf = useMutation({
+    mutationFn: ({ id, reason }: { id: number; reason: string }) =>
+      api<{ ok: boolean }>(`${BASE}/duties/${id}/apology`, { method: "POST", body: JSON.stringify({ reason }) }),
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["muezzin-duties"] }); toast({ title: "سُجّل الاعتذار", description: "ووصل المشرفين التنبيه — اختر البديل الآن" }); },
+    onError: (e: Error) => toast({ title: "تعذّر تسجيل الاعتذار", description: e.message, variant: "destructive" }),
   });
 
   // شريط الأسبوع (الأحد → السبت) مع التنقل بين الأسابيع.
@@ -1171,7 +1202,7 @@ function RepliesTab({ data, toast }: { data: Setup; toast: any }) {
                         {rolesUsed.map((r) => (
                           <td key={r} className="border p-1.5">
                             {roots(s, r).length ? (
-                              <div className="space-y-2">{roots(s, r).map((d) => <ReplyCell key={d.id} d={d} all={duties} data={data} pick={pick} setPick={setPick} assign={assign} />)}</div>
+                              <div className="space-y-2">{roots(s, r).map((d) => <ReplyCell key={d.id} d={d} all={duties} data={data} pick={pick} setPick={setPick} assign={assign} behalf={behalf} />)}</div>
                             ) : <span className="text-muted-foreground">—</span>}
                           </td>
                         ))}
