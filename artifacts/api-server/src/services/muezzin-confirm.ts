@@ -601,6 +601,30 @@ async function onApologyReason(duty: Duty, from: string, reasonRaw: string, quie
   }
 }
 
+/**
+ * تسجيل اعتذار نيابةً عن مؤذن لم يرد (اعتذر هاتفيًا مثلًا).
+ * - يُسجَّل اعتذارًا بالسبب، ويُحفظ اسم الحساب الذي سجّله.
+ * - يتوقف تذكير من لم يرد تلقائيًا (لم يعد بلا رد).
+ * - يصل المشرفين تنبيه الاعتذار ⛔️ بزر «اختيار البديل» كالمعتاد.
+ * - لا تصل المؤذنَ أي رسالة.
+ */
+export async function apologyOnBehalf(dutyId: number, reasonRaw: string, byName: string) {
+  await ensureMuezzinSchema();
+  await getSettings();
+  if (!String(reasonRaw ?? "").trim()) throw new MuezzinError(400, "اكتب سبب الاعتذار");
+  const reason = param(String(reasonRaw)).trim().slice(0, 300);
+  const duty = await getDuty(dutyId);
+  if (!duty) throw new MuezzinError(404, "المهمة غير موجودة");
+  if (duty.replacedByDutyId) throw new MuezzinError(409, "سبق إسناد هذه المهمة إلى بديل");
+  if (duty.response === "ack") throw new MuezzinError(409, "المؤذن أكّد المهمة («عُلم») — لا يمكن تسجيل اعتذار عنه");
+  if (duty.response === "apology") throw new MuezzinError(409, "الاعتذار مسجّل مسبقًا");
+  if (duty.dateKey < riyadhDayKey(new Date())) throw new MuezzinError(400, "لا يمكن تعديل يوم مضى");
+  await db.execute(sql`UPDATE muezzin_duties SET apology_by = ${byName} WHERE id = ${duty.id}`);
+  await logEvent({ direction: "in", phone: null, name: duty.name, kind: "apology_on_behalf", text: `سجّل ${byName} اعتذارًا نيابةً عنه — السبب: ${reason}`, dutyId: duty.id });
+  await onApologyReason(duty, duty.phone ?? "", reason, true);
+  return { ok: true };
+}
+
 /** المشرف ضغط «اختيار البديل» ← قوائم واتساب (10 أسماء لكل قائمة، حد ميتا) بكل المؤذنين عدا المعتذر. */
 async function onPickTap(duty: Duty, from: string) {
   // الاحتياطي: يكفي تنبيه المشرف بالاعتذار، بلا قائمة بديل (زر القالب ثابت فيظهر، فنردّ بتوضيح).
@@ -783,6 +807,7 @@ export async function dutiesForDate(dateKey: string) {
     deliveryError: r.delivery_error ? String(r.delivery_error) : null,
     respondedAt: r.responded_at,
     createdAt: r.created_at,
+    apologyBy: r.apology_by ? String(r.apology_by) : null,
   }));
   return rows.sort((a, b) => ALL_SLOT_ORDER[a.slot] - ALL_SLOT_ORDER[b.slot] || a.role.localeCompare(b.role) || a.id - b.id);
 }

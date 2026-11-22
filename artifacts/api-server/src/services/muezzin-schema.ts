@@ -129,6 +129,7 @@ async function runMuezzinSchemaEnsure() {
   // تذكير من لم يرد (مرة واحدة) + وقت آخر إرسال للمهمة.
   await db.execute(sql`ALTER TABLE muezzin_duties ADD COLUMN IF NOT EXISTS noreply_reminded boolean NOT NULL DEFAULT false`);
   await db.execute(sql`ALTER TABLE muezzin_duties ADD COLUMN IF NOT EXISTS sent_at timestamp`);
+  await db.execute(sql`ALTER TABLE muezzin_duties ADD COLUMN IF NOT EXISTS apology_by text`);
   await db.execute(sql`CREATE INDEX IF NOT EXISTS idx_muezzin_duties_wamid ON muezzin_duties(wamid)`);
 
   // كل ما يدخل ويخرج عبر واتساب (للعرض في الموقع والمرجع).
