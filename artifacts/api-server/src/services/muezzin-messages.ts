@@ -41,6 +41,11 @@ const PRAYER_LI: Record<Slot, string> = {
 const roleD = (c: MsgCtx) => `${ROLE_LABEL[c.role]}${c.original ? " / طارئ" : ""}`;
 /** «صلاة العصر ( ملازم / طارئ )» */
 const taskLine = (c: MsgCtx) => `${PRAYER[c.slot]} ( ${roleD(c)} )`;
+// ألوان الفرائض في رسالة تأكيد المشرف — كما اقترحها المشرف محمد العمري حرفيًا (الجمعة بلا لون).
+const SLOT_COLOR: Partial<Record<Slot, string>> = {
+  fajr1: "🟦", fajr2: "🟦", dhuhr: "🟧", asr: "⬜️", maghrib: "⬛️", isha: "⬛️",
+};
+const coloredTaskLine = (c: MsgCtx) => (SLOT_COLOR[c.slot] ? `${SLOT_COLOR[c.slot]} ` : "") + taskLine(c);
 /** سطور التاريخ: «يوم الاثنين\n06 / 06 / 1448 هـ\n16 / 11 / 2026 م» */
 const dayBlock = (dateKey: string) => `يوم ${weekdayName(dateKey)}\n${hijriDate(dateKey)} هـ\n${gregorianDate(dateKey)} م`;
 
@@ -85,7 +90,7 @@ export function messages(v: MsgVersion = activeVersion()) {
       return { text: draft ? DRAFT_DUTY_TEXT : DUTY_TEXT.d, params: [c.name, task, weekdayName(c.dateKey), hijriDate(c.dateKey), gregorianDate(c.dateKey)] };
     },
     supAck(c: MsgCtx): Template {
-      if (draft) return { text: DRAFT_SUP_ACK_TEXT, params: [c.original ? "🔴✅" : "✅", c.name, taskLine(c), `${weekdayName(c.dateKey)} ${hijriDate(c.dateKey)}`, gregorianDate(c.dateKey)] };
+      if (draft) return { text: DRAFT_SUP_ACK_TEXT, params: [c.original ? "🔴✅" : "✅", c.name, coloredTaskLine(c), `${weekdayName(c.dateKey)} ${hijriDate(c.dateKey)}`, gregorianDate(c.dateKey)] };
       return { text: SUP_ACK_TEXT, params: [c.name, SLOT_MESSAGE[c.slot], ROLE_LABEL[c.role], fullDayLabel(c.dateKey)] };
     },
     supApology(c: MsgCtx, reason: string): Template {
