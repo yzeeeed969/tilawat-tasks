@@ -41,9 +41,9 @@ const PRAYER_LI: Record<Slot, string> = {
 const roleD = (c: MsgCtx) => `${ROLE_LABEL[c.role]}${c.original ? " / طارئ" : ""}`;
 /** «صلاة العصر ( ملازم / طارئ )» */
 const taskLine = (c: MsgCtx) => `${PRAYER[c.slot]} ( ${roleD(c)} )`;
-// ألوان الفرائض في رسالة تأكيد المشرف — كما اقترحها المشرف محمد العمري حرفيًا (الجمعة بلا لون).
+// ألوان الفرائض في رسالة تأكيد المشرف — كما اقترحها المشرف محمد العمري حرفيًا (والجمعة 🟪 للأذانين).
 const SLOT_COLOR: Partial<Record<Slot, string>> = {
-  fajr1: "🟦", fajr2: "🟦", dhuhr: "🟧", asr: "⬜️", maghrib: "⬛️", isha: "⬛️",
+  fajr1: "🟦", fajr2: "🟦", dhuhr: "🟧", asr: "⬜️", maghrib: "⬛️", isha: "⬛️", jumuah1: "🟪", jumuah2: "🟪",
 };
 // اسم الفجر في رسالة تأكيد المشرف كما كتبه المشرف حرفيًا.
 const ACK_PRAYER: Partial<Record<Slot, string>> = { fajr1: "أذان الفجر الأول", fajr2: "أذان الفجر الثاني" };
