@@ -45,7 +45,10 @@ const taskLine = (c: MsgCtx) => `${PRAYER[c.slot]} ( ${roleD(c)} )`;
 const SLOT_COLOR: Partial<Record<Slot, string>> = {
   fajr1: "🟦", fajr2: "🟦", dhuhr: "🟧", asr: "⬜️", maghrib: "⬛️", isha: "⬛️",
 };
-const coloredTaskLine = (c: MsgCtx) => (SLOT_COLOR[c.slot] ? `${SLOT_COLOR[c.slot]} ` : "") + taskLine(c);
+// اسم الفجر في رسالة تأكيد المشرف كما كتبه المشرف حرفيًا.
+const ACK_PRAYER: Partial<Record<Slot, string>> = { fajr1: "أذان الفجر الأول", fajr2: "أذان الفجر الثاني" };
+const coloredTaskLine = (c: MsgCtx) =>
+  (SLOT_COLOR[c.slot] ? `${SLOT_COLOR[c.slot]} ` : "") + `${ACK_PRAYER[c.slot] ?? PRAYER[c.slot]} ( ${roleD(c)} )`;
 /** سطور التاريخ: «يوم الاثنين\n06 / 06 / 1448 هـ\n16 / 11 / 2026 م» */
 const dayBlock = (dateKey: string) => `يوم ${weekdayName(dateKey)}\n${hijriDate(dateKey)} هـ\n${gregorianDate(dateKey)} م`;
 
