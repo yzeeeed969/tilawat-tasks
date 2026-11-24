@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 84, date: "2026-11-24",
+    items: [
+      { text: "النشر في عدة صفحات: يمكن ربط محادثتك الخاصة مع البوت للنشر حتى لو كانت التقارير تصل في مجموعة، والمحادثة غير المربوطة يرد عليها البوت بالسبب بدل الصمت.", adminOnly: true },
+    ],
+  },
+  {
     version: 83, date: "2026-11-24",
     items: [
       { text: "نشر مقطع في عدة صفحات فيسبوك: أرسل المقطع (والعنوان في خانة الوصف) إلى بوت «رفع فيسبوك» في محادثتك المربوطة، فتظهر قائمة الصفحات لتختار منها أو «كل الصفحات»، ويُنشر بفاصل 3 دقائق بين كل صفحة، ثم يصلك تقرير ✅/❌.", adminOnly: true },

@@ -11,7 +11,7 @@ import { ensureInstagramSchema } from "./instagram-schema";
 import { getFacebookConfig } from "./facebook-client";
 import { uploadFacebookVideo } from "./facebook-video-upload";
 import { decryptToken } from "../lib/instagram-token-crypto";
-import { ensureTgCrosspostSchema, facebookTitleOf, recoveryChatId } from "./tg-crosspost";
+import { broadcastChatIds, ensureTgCrosspostSchema, facebookTitleOf } from "./tg-crosspost";
 
 const GAP_MINUTES = 3; // فاصل بين كل صفحة والتي بعدها (يقلّل اعتبار فيسبوك له تكرارًا مزعجًا)
 const MAX_ITEM_ATTEMPTS = 2;
@@ -98,8 +98,11 @@ function chooseView(id: number, caption: string, pages: Page[], selected: number
 // مقطع وصل البوت في محادثة خاصة/مجموعة.
 export async function newBroadcast(input: { chatId: string; messageId: number; fileId: string; caption: string; width: number; height: number; duration: number; fileSize: number }): Promise<BroadcastView | null> {
   await ensureSchema();
-  const allowed = await recoveryChatId();
-  if (!allowed || allowed !== input.chatId) return null; // ليس من المحادثة المربوطة: يُتجاهل بصمت
+  const allowed = await broadcastChatIds();
+  if (!allowed.includes(input.chatId)) {
+    // محادثة خاصة غير مربوطة: نوضّح السبب بدل الصمت (المجموعات غير المربوطة تُتجاهل).
+    return input.chatId.startsWith("-") ? null : { text: "هذه المحادثة غير مربوطة بالنشر في عدة صفحات بعد. اطلب رمز الربط من Claude، ثم أرسل هنا: /start والرمز، ثم أعد إرسال المقطع.", keyboard: null };
+  }
   const caption = input.caption.trim();
   if (!caption) return { text: "أرسل المقطع مرة أخرى واكتب العنوان في خانة الوصف تحت المقطع — هو الذي يُكتب في فيسبوك.", keyboard: null };
   const pages = await connectedPages();

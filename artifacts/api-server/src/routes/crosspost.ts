@@ -193,8 +193,8 @@ router.get("/crosspost/tg/overview", async (_req, res) => {
 router.post("/crosspost/tg/page-override", async (req, res) => {
   res.json(await setPageOverride(Number(req.body?.reciterId), String(req.body?.fbPageId ?? "")));
 });
-router.post("/crosspost/tg/pair", async (_req, res) => {
-  res.json(await createPairCode());
+router.post("/crosspost/tg/pair", async (req, res) => {
+  res.json(await createPairCode(req.body?.kind === "broadcast" ? "broadcast" : "recovery"));
 });
 router.post("/crosspost/tg/retry/:id", async (req, res) => {
   res.json(await requestTgRetry(Number(req.params.id)));

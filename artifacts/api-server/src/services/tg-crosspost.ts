@@ -77,6 +77,9 @@ export function ensureTgCrosspostSchema() {
       await db.execute(sql`CREATE TABLE IF NOT EXISTS tg_fb_page_overrides (reciter_id integer PRIMARY KEY, fb_page_id text NOT NULL, created_at timestamp NOT NULL DEFAULT now())`);
       await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_code text`);
       await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_expires timestamp`);
+      // الإصدار 84: محادثة «النشر في عدة صفحات» قد تختلف عن محادثة التقارير (مثلًا التقارير في مجموعة).
+      await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS broadcast_chat_id text`);
+      await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_kind text`);
     })().catch((err) => { schemaReady = null; throw err; });
   }
   return schemaReady;
@@ -131,6 +134,13 @@ export async function reciterTelegramHandles(): Promise<string[]> {
 }
 
 // محادثة المدير الخاصة مع البوت — تصلها تقارير كل فيديو (الإصدار 80).
+// المحادثات المسموح لها بـ«النشر في عدة صفحات»: محادثة التقارير + محادثة النشر (الإصدار 84).
+export async function broadcastChatIds(): Promise<string[]> {
+  await ensureTgCrosspostSchema();
+  const [r] = rowsOf(await db.execute(sql`SELECT recovery_chat_id, broadcast_chat_id FROM tg_fb_settings WHERE id = 1`));
+  return [r?.recovery_chat_id, r?.broadcast_chat_id].filter(Boolean).map(String);
+}
+
 export async function recoveryChatId(): Promise<string | null> {
   await ensureTgCrosspostSchema();
   const [r] = rowsOf(await db.execute(sql`SELECT recovery_chat_id FROM tg_fb_settings WHERE id = 1`));
@@ -276,20 +286,26 @@ export async function retryFailed(chatId: string, messageId: number, reason: str
 }
 
 // ربط محادثة المدير الخاصة مع البوت برمز مؤقت (30 دقيقة) — الرمز يولّده المدير من الموقع.
-export async function createPairCode() {
+export async function createPairCode(kind: "recovery" | "broadcast" = "recovery") {
   await ensureTgCrosspostSchema();
   const code = String(Math.floor(100000 + Math.random() * 900000));
-  await db.execute(sql`UPDATE tg_fb_settings SET pair_code = ${code}, pair_expires = now() + interval '30 minutes' WHERE id = 1`);
+  await db.execute(sql`UPDATE tg_fb_settings SET pair_code = ${code}, pair_kind = ${kind}, pair_expires = now() + interval '30 minutes' WHERE id = 1`);
   return { ok: true, code };
 }
 export async function handlePrivateMessage(chatId: string, text: string): Promise<{ reply: string }> {
   await ensureTgCrosspostSchema();
   const code = text.match(/\b(\d{6})\b/)?.[1];
   if (!code) return { reply: "هذا البوت خاص بنظام النشر الآلي لتلاوات الحرمين." };
-  const rows = rowsOf(await db.execute(sql`
-    UPDATE tg_fb_settings SET recovery_chat_id = ${chatId}, pair_code = NULL, pair_expires = NULL
-    WHERE id = 1 AND pair_code = ${code} AND pair_expires > now() RETURNING id`));
-  return { reply: rows.length ? "✅ تم ربط هذه المحادثة. ستصلك هنا نسخ المقاطع التي يُعاد رفعها لفيسبوك." : "الرمز غير صحيح أو انتهت صلاحيته." };
+  const [row] = rowsOf(await db.execute(sql`
+    UPDATE tg_fb_settings SET
+      recovery_chat_id = CASE WHEN pair_kind = 'broadcast' THEN recovery_chat_id ELSE ${chatId} END,
+      broadcast_chat_id = CASE WHEN pair_kind = 'broadcast' THEN ${chatId} ELSE broadcast_chat_id END,
+      pair_code = NULL, pair_expires = NULL
+    WHERE id = 1 AND pair_code = ${code} AND pair_expires > now() RETURNING pair_kind`));
+  if (!row) return { reply: "الرمز غير صحيح أو انتهت صلاحيته." };
+  return { reply: row.pair_kind === "broadcast"
+    ? "✅ تم ربط هذه المحادثة للنشر في عدة صفحات. أرسل هنا أي مقطع مع عنوانه في خانة الوصف، فتظهر لك قائمة الصفحات."
+    : "✅ تم ربط هذه المحادثة. ستصلك هنا تقارير الرفع لفيسبوك." };
 }
 
 // ── المدير ────────────────────────────────────────────────────────────────────────────────────
