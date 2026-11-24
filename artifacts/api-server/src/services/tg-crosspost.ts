@@ -80,6 +80,9 @@ export function ensureTgCrosspostSchema() {
       // الإصدار 84: محادثة «النشر في عدة صفحات» قد تختلف عن محادثة التقارير (مثلًا التقارير في مجموعة).
       await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS broadcast_chat_id text`);
       await db.execute(sql`ALTER TABLE tg_fb_settings ADD COLUMN IF NOT EXISTS pair_kind text`);
+      // الإصدار 85: أكثر من حساب تيليجرام مسموح له بالنشر في عدة صفحات.
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS tg_fb_broadcast_chats (chat_id text PRIMARY KEY, created_at timestamp NOT NULL DEFAULT now())`);
+      await db.execute(sql`INSERT INTO tg_fb_broadcast_chats (chat_id) SELECT broadcast_chat_id FROM tg_fb_settings WHERE id = 1 AND broadcast_chat_id IS NOT NULL ON CONFLICT DO NOTHING`);
     })().catch((err) => { schemaReady = null; throw err; });
   }
   return schemaReady;
@@ -137,8 +140,9 @@ export async function reciterTelegramHandles(): Promise<string[]> {
 // المحادثات المسموح لها بـ«النشر في عدة صفحات»: محادثة التقارير + محادثة النشر (الإصدار 84).
 export async function broadcastChatIds(): Promise<string[]> {
   await ensureTgCrosspostSchema();
-  const [r] = rowsOf(await db.execute(sql`SELECT recovery_chat_id, broadcast_chat_id FROM tg_fb_settings WHERE id = 1`));
-  return [r?.recovery_chat_id, r?.broadcast_chat_id].filter(Boolean).map(String);
+  const [r] = rowsOf(await db.execute(sql`SELECT recovery_chat_id FROM tg_fb_settings WHERE id = 1`));
+  const extra = rowsOf(await db.execute(sql`SELECT chat_id FROM tg_fb_broadcast_chats`)).map((x) => String(x.chat_id));
+  return [r?.recovery_chat_id ? String(r.recovery_chat_id) : null, ...extra].filter((x): x is string => Boolean(x));
 }
 
 export async function recoveryChatId(): Promise<string | null> {
@@ -303,6 +307,7 @@ export async function handlePrivateMessage(chatId: string, text: string): Promis
       pair_code = NULL, pair_expires = NULL
     WHERE id = 1 AND pair_code = ${code} AND pair_expires > now() RETURNING pair_kind`));
   if (!row) return { reply: "الرمز غير صحيح أو انتهت صلاحيته." };
+  if (row.pair_kind === "broadcast") await db.execute(sql`INSERT INTO tg_fb_broadcast_chats (chat_id) VALUES (${chatId}) ON CONFLICT DO NOTHING`);
   return { reply: row.pair_kind === "broadcast"
     ? "✅ تم ربط هذه المحادثة للنشر في عدة صفحات. أرسل هنا أي مقطع مع عنوانه في خانة الوصف، فتظهر لك قائمة الصفحات."
     : "✅ تم ربط هذه المحادثة. ستصلك هنا تقارير الرفع لفيسبوك." };

@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 85, date: "2026-11-24",
+    items: [
+      { text: "النشر في عدة صفحات: يمكن ربط أكثر من حساب تيليجرام، ولكل حساب رمز ربط مستقل.", adminOnly: true },
+    ],
+  },
+  {
     version: 84, date: "2026-11-24",
     items: [
       { text: "النشر في عدة صفحات: يمكن ربط محادثتك الخاصة مع البوت للنشر حتى لو كانت التقارير تصل في مجموعة، والمحادثة غير المربوطة يرد عليها البوت بالسبب بدل الصمت.", adminOnly: true },
