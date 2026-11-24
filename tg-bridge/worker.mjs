@@ -181,11 +181,50 @@ setInterval(async () => {
   } catch (e) { log("retries:", e.message); } finally { retrying = false; }
 }, 5 * 60_000);
 
+// نشر مقطع واحد في عدة صفحات (الإصدار 83): المدير يرسل المقطع للبوت، يختار الصفحات، والخادم يوزّع الأدوار بفاصل.
+// الملف يبقى على القرص حتى تنتهي كل صفحات المقطع، ثم يُحذف.
+const broadcastFiles = new Map(); // broadcastId → مسار الملف
+let broadcasting = false;
+setInterval(async () => {
+  if (broadcasting) return;
+  broadcasting = true;
+  try {
+    const r = await site("/crosspost/tg/broadcast/next", {});
+    const it = r.item;
+    if (!it) return;
+    let filePath = broadcastFiles.get(it.broadcastId);
+    let res;
+    try {
+      if (!filePath || !fs.existsSync(filePath)) {
+        const file = await withRetry(() => bot("getFile", { file_id: it.fileId }), "getFile");
+        filePath = file.file_path;
+        broadcastFiles.set(it.broadcastId, filePath);
+      }
+      const size = fs.statSync(filePath).size;
+      log(`نشر جماعي → «${it.pageName}» (${Math.round(size / 1048576)}MB)`);
+      const up = await fetch(`${API_BASE}/api/crosspost/tg/broadcast/upload?itemId=${it.itemId}`, {
+        method: "POST", duplex: "half", body: fs.createReadStream(filePath),
+        headers: { "Content-Type": "application/octet-stream", "Content-Length": String(size), Authorization: `Bearer ${KEY}` },
+      });
+      res = await up.json().catch(() => ({}));
+    } catch (e) {
+      log("نشر جماعي:", e.message);
+      res = await fetch(`${API_BASE}/api/crosspost/tg/broadcast/upload?itemId=${it.itemId}`, { method: "POST", body: "", headers: { Authorization: `Bearer ${KEY}` } }).then((x) => x.json()).catch(() => ({}));
+    }
+    log(res.ok ? `✅ «${it.pageName}»: ${res.fbVideoId}` : `❌ «${it.pageName}»: ${res.message ?? ""}`);
+    if (res.done) {
+      if (filePath) fs.promises.unlink(filePath).catch(() => {});
+      broadcastFiles.delete(it.broadcastId);
+      if (res.chatId && res.report) await report(res.chatId, [res.report]);
+    }
+  } catch (e) { log("broadcast:", e.message); } finally { broadcasting = false; }
+}, 30_000);
+
 log("بدء الاستماع لقنوات المشايخ…");
 for (;;) {
   let updates = [];
   try {
-    updates = await bot("getUpdates", { offset, timeout: 50, allowed_updates: ["channel_post", "my_chat_member", "message"] });
+    updates = await bot("getUpdates", { offset, timeout: 50, allowed_updates: ["channel_post", "my_chat_member", "message", "callback_query"] });
   } catch (e) {
     log("getUpdates:", e.message);
     await sleep(5000);
@@ -197,6 +236,17 @@ for (;;) {
         const c = u.my_chat_member.chat;
         await site("/crosspost/tg/channel", { chatId: String(c.id), title: c.title ?? null, username: c.username ?? null, botStatus: u.my_chat_member.new_chat_member?.status ?? null }).catch((e) => log("channel:", e.message));
         log(`القناة «${c.title}»: حالة البوت ${u.my_chat_member.new_chat_member?.status}`);
+      } else if (u.message && ["private", "group", "supergroup"].includes(u.message.chat?.type) && (u.message.video || /^video\//.test(u.message.document?.mime_type ?? ""))) {
+        // مقطع أرسله المدير للبوت: الخادم يقرر (المحادثة المربوطة فقط) ويعيد قائمة الصفحات.
+        const v = u.message.video ?? u.message.document;
+        const r = await site("/crosspost/tg/broadcast/new", { chatId: String(u.message.chat.id), messageId: u.message.message_id, fileId: v.file_id, caption: u.message.caption ?? "",
+          width: v.width ?? 0, height: v.height ?? 0, duration: v.duration ?? 0, fileSize: v.file_size ?? 0 }).catch((e) => { log("broadcast/new:", e.message); return null; });
+        if (r?.view) await bot("sendMessage", { chat_id: u.message.chat.id, reply_parameters: { message_id: u.message.message_id }, text: r.view.text, ...(r.view.keyboard ? { reply_markup: { inline_keyboard: r.view.keyboard } } : {}) }).catch((e) => log("sendMessage:", e.message));
+      } else if (u.callback_query?.data?.startsWith("fb:") && u.callback_query.message) {
+        const cq = u.callback_query;
+        const r = await site("/crosspost/tg/broadcast/callback", { chatId: String(cq.message.chat.id), data: cq.data }).catch(() => null);
+        await bot("answerCallbackQuery", { callback_query_id: cq.id, text: r?.answer || undefined }).catch(() => {});
+        if (r?.view) await bot("editMessageText", { chat_id: cq.message.chat.id, message_id: cq.message.message_id, text: r.view.text, reply_markup: { inline_keyboard: r.view.keyboard ?? [] } }).catch((e) => log("editMessageText:", e.message));
       } else if (u.message && ["private", "group", "supergroup"].includes(u.message.chat?.type) && typeof u.message.text === "string" && (u.message.chat.type === "private" || /^\/start(@\w+)?\s+\d{6}\b/.test(u.message.text))) {
         const r = await site("/crosspost/tg/private", { chatId: String(u.message.chat.id), text: u.message.text }).catch(() => null);
         if (r?.reply) await bot("sendMessage", { chat_id: u.message.chat.id, text: r.reply }).catch(() => {});

@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
 import { setPageOverride, recoveryChatId, createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
+import { broadcastCallback, newBroadcast, nextBroadcastItem, performBroadcastUpload } from "../services/tg-broadcast";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
 // ── جهاز التنزيل (الماك ميني): بمفتاح سري في ترويسة Authorization: Bearer <CROSSPOST_API_KEY> — لا جلسة ──
@@ -82,6 +83,35 @@ crosspostMachineRouter.post("/crosspost/tg/retry-failed", requireBridgeKey, asyn
 // رسالة خاصة للبوت (ربط محادثة الاسترجاع برمز).
 crosspostMachineRouter.post("/crosspost/tg/private", requireBridgeKey, async (req, res) => {
   res.json(await handlePrivateMessage(String(req.body?.chatId ?? ""), String(req.body?.text ?? "")));
+});
+
+// نشر مقطع واحد في عدة صفحات (الإصدار 83): مقطع أُرسل للبوت في المحادثة المربوطة ← قائمة الصفحات للاختيار.
+crosspostMachineRouter.post("/crosspost/tg/broadcast/new", requireBridgeKey, async (req, res) => {
+  const b = req.body ?? {};
+  const chatId = String(b.chatId ?? "").trim();
+  if (!/^-?\d+$/.test(chatId) || !Number.isFinite(Number(b.messageId)) || typeof b.fileId !== "string") { res.status(400).json({ view: null }); return; }
+  res.json({ view: await newBroadcast({ chatId, messageId: Number(b.messageId), fileId: b.fileId, caption: typeof b.caption === "string" ? b.caption : "",
+    width: Number(b.width) || 0, height: Number(b.height) || 0, duration: Number(b.duration) || 0, fileSize: Number(b.fileSize) || 0 }) });
+});
+crosspostMachineRouter.post("/crosspost/tg/broadcast/callback", requireBridgeKey, async (req, res) => {
+  res.json(await broadcastCallback(String(req.body?.chatId ?? ""), String(req.body?.data ?? "")));
+});
+crosspostMachineRouter.post("/crosspost/tg/broadcast/next", requireBridgeKey, async (_req, res) => {
+  res.json(await nextBroadcastItem());
+});
+crosspostMachineRouter.post("/crosspost/tg/broadcast/upload", requireBridgeKey, async (req, res) => {
+  const itemId = Number(req.query.itemId);
+  if (!Number.isFinite(itemId)) { req.resume(); res.status(400).json({ ok: false, message: "itemId مطلوب" }); return; }
+  const filePath = path.join(os.tmpdir(), `tg-fb-b${itemId}-${Date.now()}.mp4`);
+  try {
+    await pipeline(req, fs.createWriteStream(filePath));
+    const { size } = await fs.promises.stat(filePath);
+    res.json(await performBroadcastUpload(itemId, filePath, size));
+  } catch (err) {
+    res.json(await performBroadcastUpload(itemId, filePath, 0).catch(() => ({ ok: false, done: false, message: (err as Error).message })));
+  } finally {
+    fs.promises.unlink(filePath).catch(() => {});
+  }
 });
 
 // البوت أُضيف لقناة/تغيّرت صلاحيته.
