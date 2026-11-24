@@ -92,7 +92,8 @@ crosspostMachineRouter.post("/crosspost/tg/broadcast/new", requireBridgeKey, asy
   const chatId = String(b.chatId ?? "").trim();
   if (!/^-?\d+$/.test(chatId) || !Number.isFinite(Number(b.messageId)) || typeof b.fileId !== "string") { res.status(400).json({ view: null }); return; }
   res.json({ view: await newBroadcast({ chatId, messageId: Number(b.messageId), fileId: b.fileId, caption: typeof b.caption === "string" ? b.caption : "",
-    width: Number(b.width) || 0, height: Number(b.height) || 0, duration: Number(b.duration) || 0, fileSize: Number(b.fileSize) || 0 }) });
+    width: Number(b.width) || 0, height: Number(b.height) || 0, duration: Number(b.duration) || 0, fileSize: Number(b.fileSize) || 0,
+    kind: b.kind === "photo" ? "photo" : "video", album: Boolean(b.album) }) });
 });
 crosspostMachineRouter.post("/crosspost/tg/broadcast/callback", requireBridgeKey, async (req, res) => {
   res.json(await broadcastCallback(String(req.body?.chatId ?? ""), String(req.body?.data ?? "")));

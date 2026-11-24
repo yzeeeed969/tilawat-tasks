@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 87, date: "2026-11-24",
+    items: [
+      { text: "نشر صورة في عدة صفحات فيسبوك: أرسل الصورة (والنص تحتها) إلى بوت «رفع فيسبوك»، واختر الصفحات، فتُنشر بفاصل دقيقة بين كل صفحة، ثم يصلك تقرير ✅/❌.", adminOnly: true },
+    ],
+  },
+  {
     version: 86, date: "2026-11-24",
     items: [
       { text: "متابعة المشاهدات: زر «📊 تابع المشاهدات 7 أيام» تحت تقرير النشر في عدة صفحات. كل يوم الساعة 9 مساءً يصلك من بوت «رفع فيسبوك» مشاهدات كل صفحة والإجمالي وزيادة اليوم، ومعه نص جاهز لتويتر، وفي اليوم السابع تقرير ختامي.", adminOnly: true },

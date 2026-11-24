@@ -244,11 +244,15 @@ for (;;) {
         const c = u.my_chat_member.chat;
         await site("/crosspost/tg/channel", { chatId: String(c.id), title: c.title ?? null, username: c.username ?? null, botStatus: u.my_chat_member.new_chat_member?.status ?? null }).catch((e) => log("channel:", e.message));
         log(`القناة «${c.title}»: حالة البوت ${u.my_chat_member.new_chat_member?.status}`);
-      } else if (u.message && ["private", "group", "supergroup"].includes(u.message.chat?.type) && (u.message.video || /^video\//.test(u.message.document?.mime_type ?? ""))) {
-        // مقطع أرسله المدير للبوت: الخادم يقرر (المحادثة المربوطة فقط) ويعيد قائمة الصفحات.
-        const v = u.message.video ?? u.message.document;
-        const r = await site("/crosspost/tg/broadcast/new", { chatId: String(u.message.chat.id), messageId: u.message.message_id, fileId: v.file_id, caption: u.message.caption ?? "",
-          width: v.width ?? 0, height: v.height ?? 0, duration: v.duration ?? 0, fileSize: v.file_size ?? 0 }).catch((e) => { log("broadcast/new:", e.message); return null; });
+      } else if (u.message && ["private", "group", "supergroup"].includes(u.message.chat?.type) && (u.message.video || u.message.photo?.length || /^(video|image)\//.test(u.message.document?.mime_type ?? ""))) {
+        // مقطع أو صورة أرسلها المدير للبوت: الخادم يقرر (المحادثة المربوطة فقط) ويعيد قائمة الصفحات.
+        const isPhoto = Boolean(u.message.photo?.length) || /^image\//.test(u.message.document?.mime_type ?? "");
+        // الصورة: تيليجرام يرسل عدة مقاسات — نأخذ الأكبر.
+        const v = u.message.video ?? (u.message.photo?.length ? u.message.photo[u.message.photo.length - 1] : u.message.document);
+        // الألبوم: لا يُقبل إلا أول صورة فيه (التي تحمل النص) ليُرد مرة واحدة.
+        const r = u.message.media_group_id && !u.message.caption ? null : await site("/crosspost/tg/broadcast/new", { chatId: String(u.message.chat.id), messageId: u.message.message_id, fileId: v.file_id, caption: u.message.caption ?? "",
+          width: v.width ?? 0, height: v.height ?? 0, duration: v.duration ?? 0, fileSize: v.file_size ?? 0,
+          kind: isPhoto ? "photo" : "video", album: Boolean(u.message.media_group_id) }).catch((e) => { log("broadcast/new:", e.message); return null; });
         if (r?.view) await bot("sendMessage", { chat_id: u.message.chat.id, reply_parameters: { message_id: u.message.message_id }, text: r.view.text, ...(r.view.keyboard ? { reply_markup: { inline_keyboard: r.view.keyboard } } : {}) }).catch((e) => log("sendMessage:", e.message));
       } else if (u.callback_query?.data?.startsWith("fb:") && u.callback_query.message) {
         const cq = u.callback_query;

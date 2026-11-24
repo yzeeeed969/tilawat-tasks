@@ -15,6 +15,11 @@ import { startTracking } from "./tg-views";
 import { broadcastChatIds, ensureTgCrosspostSchema, facebookTitleOf } from "./tg-crosspost";
 
 const GAP_MINUTES = 3; // فاصل بين كل صفحة والتي بعدها (يقلّل اعتبار فيسبوك له تكرارًا مزعجًا)
+// الإصدار 87: الصور أيضًا (صورة واحدة في المنشور، فاصل دقيقة، بلا متابعة أرقام — قرار المدير 2026-11-24).
+type Kind = "video" | "photo";
+const gapOf = (k: Kind) => (k === "photo" ? 1 : GAP_MINUTES);
+const nounOf = (k: Kind) => (k === "photo" ? "الصورة" : "المقطع");
+const GRAPH = "https://graph.facebook.com/v25.0";
 const MAX_ITEM_ATTEMPTS = 2;
 const STALE_MINUTES = 70;
 const CHOOSE_HOURS = 24; // قائمة الاختيار تنتهي بعد يوم
@@ -49,6 +54,7 @@ function ensureSchema() {
           finished_at timestamp,
           UNIQUE (chat_id, message_id)
         )`);
+      await db.execute(sql`ALTER TABLE tg_fb_broadcasts ADD COLUMN IF NOT EXISTS kind text NOT NULL DEFAULT 'video'`);
       await db.execute(sql`
         CREATE TABLE IF NOT EXISTS tg_fb_broadcast_items (
           id serial PRIMARY KEY,
@@ -74,7 +80,7 @@ async function connectedPages(): Promise<Page[]> {
   return rows.map((r) => ({ id: String(r.fb_page_id), name: String(r.name ?? r.fb_page_id) }));
 }
 
-function chooseView(id: number, caption: string, pages: Page[], selected: number[]): BroadcastView {
+function chooseView(id: number, caption: string, pages: Page[], selected: number[], kind: Kind = "video"): BroadcastView {
   const sel = new Set(selected);
   const all = pages.length > 0 && sel.size === pages.length;
   const keyboard: Button[][] = pages.map((p, i) => [{ text: `${sel.has(i) ? "☑️" : "⬜"} ${p.name}`.slice(0, 60), callback_data: `fb:${id}:t${i}` }]);
@@ -83,37 +89,40 @@ function chooseView(id: number, caption: string, pages: Page[], selected: number
     { text: `🚀 انشر في المختارة (${sel.size})`, callback_data: `fb:${id}:go` },
     { text: "✖ إلغاء", callback_data: `fb:${id}:x` },
   ]);
-  const minutes = Math.max(0, sel.size - 1) * GAP_MINUTES;
+  const gap = gapOf(kind);
+  const minutes = Math.max(0, sel.size - 1) * gap;
   return {
     text: [
-      "📤 نشر هذا المقطع في صفحات فيسبوك",
-      `العنوان: ${facebookTitleOf(caption)}`,
+      kind === "photo" ? "🖼 نشر هذه الصورة في صفحات فيسبوك" : "📤 نشر هذا المقطع في صفحات فيسبوك",
+      kind === "photo" ? `النص: ${caption ? facebookTitleOf(caption) : "(بلا نص)"}` : `العنوان: ${facebookTitleOf(caption)}`,
       "",
       "اختر الصفحات ثم اضغط «انشر».",
-      ...(sel.size > 1 ? [`سيُنشر في صفحة بعد صفحة بفاصل ${GAP_MINUTES} دقائق (قرابة ${minutes} دقيقة للكل، غير وقت الرفع).`] : []),
+      ...(sel.size > 1 ? [`سيُنشر في صفحة بعد صفحة بفاصل ${gap === 1 ? "دقيقة" : `${gap} دقائق`} (قرابة ${minutes} دقيقة للكل).`] : []),
     ].join("\n"),
     keyboard,
   };
 }
 
 // مقطع وصل البوت في محادثة خاصة/مجموعة.
-export async function newBroadcast(input: { chatId: string; messageId: number; fileId: string; caption: string; width: number; height: number; duration: number; fileSize: number }): Promise<BroadcastView | null> {
+export async function newBroadcast(input: { chatId: string; messageId: number; fileId: string; caption: string; width: number; height: number; duration: number; fileSize: number; kind?: Kind; album?: boolean }): Promise<BroadcastView | null> {
+  const kind: Kind = input.kind === "photo" ? "photo" : "video";
   await ensureSchema();
   const allowed = await broadcastChatIds();
   if (!allowed.includes(input.chatId)) {
     // محادثة خاصة غير مربوطة: نوضّح السبب بدل الصمت (المجموعات غير المربوطة تُتجاهل).
-    return input.chatId.startsWith("-") ? null : { text: "هذه المحادثة غير مربوطة بالنشر في عدة صفحات بعد. اطلب رمز الربط من Claude، ثم أرسل هنا: /start والرمز، ثم أعد إرسال المقطع.", keyboard: null };
+    return input.chatId.startsWith("-") ? null : { text: "هذه المحادثة غير مربوطة بالنشر في عدة صفحات بعد. اطلب رمز الربط من Claude، ثم أرسل هنا: /start والرمز، ثم أعد الإرسال.", keyboard: null };
   }
   const caption = input.caption.trim();
-  if (!caption) return { text: "أرسل المقطع مرة أخرى واكتب العنوان في خانة الوصف تحت المقطع — هو الذي يُكتب في فيسبوك.", keyboard: null };
+  if (input.album) return { text: "أرسل صورة واحدة فقط في كل مرة (لا ألبوم)، واكتب النص تحتها — لم يُنشر شيء.", keyboard: null };
+  if (!caption && kind === "video") return { text: "أرسل المقطع مرة أخرى واكتب العنوان في خانة الوصف تحت المقطع — هو الذي يُكتب في فيسبوك.", keyboard: null };
   const pages = await connectedPages();
   if (pages.length === 0) return { text: "لا توجد صفحات فيسبوك مربوطة بالموقع الآن — أعد «ربط فيسبوك برمز».", keyboard: null };
   const [row] = rowsOf(await db.execute(sql`
-    INSERT INTO tg_fb_broadcasts (chat_id, message_id, file_id, caption, width, height, duration, file_size, pages)
-    VALUES (${input.chatId}, ${input.messageId}, ${input.fileId}, ${caption.slice(0, 5000)}, ${input.width}, ${input.height}, ${input.duration}, ${input.fileSize}, ${JSON.stringify(pages)}::jsonb)
+    INSERT INTO tg_fb_broadcasts (chat_id, message_id, file_id, caption, width, height, duration, file_size, pages, kind)
+    VALUES (${input.chatId}, ${input.messageId}, ${input.fileId}, ${caption.slice(0, 5000)}, ${input.width}, ${input.height}, ${input.duration}, ${input.fileSize}, ${JSON.stringify(pages)}::jsonb, ${kind})
     ON CONFLICT (chat_id, message_id) DO NOTHING RETURNING id`));
   if (!row) return null;
-  return chooseView(Number(row.id), caption, pages, []);
+  return chooseView(Number(row.id), caption, pages, [], kind);
 }
 
 // ضغطة زر في قائمة الاختيار: fb:<id>:<t3|all|none|go|x>
@@ -128,7 +137,7 @@ export async function broadcastCallback(chatId: string, data: string): Promise<{
     const r = await startTracking(id, chatId);
     return { view: null, answer: r.ok ? "✅ بدأت المتابعة — أول تقرير الساعة 9 مساءً" : String(r.message) };
   }
-  const [b] = rowsOf(await db.execute(sql`SELECT id, chat_id, caption, pages, selected, status, created_at FROM tg_fb_broadcasts WHERE id = ${id}`));
+  const [b] = rowsOf(await db.execute(sql`SELECT id, chat_id, caption, pages, selected, status, created_at, kind FROM tg_fb_broadcasts WHERE id = ${id}`));
   if (!b || String(b.chat_id) !== chatId) return { view: null, answer: "غير مسموح" };
   if (b.status !== "choosing") return { view: null, answer: "تم التعامل مع هذا المقطع سابقًا" };
   if (Date.now() - new Date(b.created_at).getTime() > CHOOSE_HOURS * 3600_000) {
@@ -136,10 +145,11 @@ export async function broadcastCallback(chatId: string, data: string): Promise<{
     return { view: { text: "⌛ انتهت مهلة هذه القائمة — أرسل المقطع مرة أخرى.", keyboard: null }, answer: "انتهت المهلة" };
   }
   const pages = b.pages as Page[];
+  const kind: Kind = b.kind === "photo" ? "photo" : "video";
   let selected = new Set<number>((b.selected as number[]) ?? []);
   if (action === "x") {
     await db.execute(sql`UPDATE tg_fb_broadcasts SET status = 'cancelled', finished_at = now() WHERE id = ${id} AND status = 'choosing'`);
-    return { view: { text: "✖ أُلغي نشر هذا المقطع.", keyboard: null }, answer: "أُلغي" };
+    return { view: { text: `✖ أُلغي نشر ${kind === "photo" ? "هذه الصورة" : "هذا المقطع"}.`, keyboard: null }, answer: "أُلغي" };
   }
   if (action === "go") {
     if (selected.size === 0) return { view: null, answer: "اختر صفحة واحدة على الأقل" };
@@ -149,14 +159,15 @@ export async function broadcastCallback(chatId: string, data: string): Promise<{
     for (const [pos, p] of chosen.entries()) {
       await db.execute(sql`INSERT INTO tg_fb_broadcast_items (broadcast_id, fb_page_id, fb_page_name, position) VALUES (${id}, ${p.id}, ${p.name}, ${pos})`);
     }
-    const minutes = Math.max(0, chosen.length - 1) * GAP_MINUTES;
+    const gap = gapOf(kind);
+    const minutes = Math.max(0, chosen.length - 1) * gap;
     return {
       view: {
         text: [
           `🚀 بدأ النشر — عدد الصفحات: ${chosen.length}`,
           ...chosen.map((p) => `• ${p.name}`),
           "",
-          chosen.length > 1 ? `بفاصل ${GAP_MINUTES} دقائق بين كل صفحة (قرابة ${minutes} دقيقة + وقت الرفع).` : "",
+          chosen.length > 1 ? `بفاصل ${gap === 1 ? "دقيقة" : `${gap} دقائق`} بين كل صفحة (قرابة ${minutes} دقيقة${kind === "video" ? " + وقت الرفع" : ""}).` : "",
           "يصلك التقرير هنا عند الانتهاء.",
         ].filter(Boolean).join("\n"),
         keyboard: null,
@@ -171,7 +182,7 @@ export async function broadcastCallback(chatId: string, data: string): Promise<{
     if (i >= 0 && i < pages.length) selected.has(i) ? selected.delete(i) : selected.add(i);
   }
   await db.execute(sql`UPDATE tg_fb_broadcasts SET selected = ${JSON.stringify([...selected])}::jsonb WHERE id = ${id}`);
-  return { view: chooseView(id, String(b.caption), pages, [...selected]), answer: "" };
+  return { view: chooseView(id, String(b.caption), pages, [...selected], kind), answer: "" };
 }
 
 // العامل يسأل: هل هناك صفحة حان دورها؟ (بند واحد في كل مرة، وبالفاصل المحدد)
@@ -195,18 +206,19 @@ export async function nextBroadcastItem() {
 async function finishIfDone(broadcastId: number): Promise<{ done: boolean; chatId?: string; report?: string; keyboard?: Button[][] }> {
   const items = rowsOf(await db.execute(sql`SELECT fb_page_name, status, reason, fb_video_id FROM tg_fb_broadcast_items WHERE broadcast_id = ${broadcastId} ORDER BY position`));
   if (items.some((i) => i.status === "pending" || i.status === "uploading")) return { done: false };
-  const [b] = rowsOf(await db.execute(sql`UPDATE tg_fb_broadcasts SET status = 'done', finished_at = now(), reported = true WHERE id = ${broadcastId} AND NOT reported RETURNING chat_id, caption`));
+  const [b] = rowsOf(await db.execute(sql`UPDATE tg_fb_broadcasts SET status = 'done', finished_at = now(), reported = true WHERE id = ${broadcastId} AND NOT reported RETURNING chat_id, caption, kind`));
   if (!b) return { done: true };
+  const kind: Kind = b.kind === "photo" ? "photo" : "video";
   const ok = items.filter((i) => i.status === "uploaded").length;
   const lines = [
-    `📋 تقرير نشر المقطع: ${facebookTitleOf(String(b.caption))}`,
+    `📋 تقرير نشر ${nounOf(kind)}: ${facebookTitleOf(String(b.caption)) || "(بلا نص)"}`,
     `نجح: ${ok} من ${items.length}`,
     "",
     ...items.map((i) => i.status === "uploaded"
       ? `✅ ${i.fb_page_name}${i.fb_video_id ? `\nhttps://www.facebook.com/${i.fb_video_id}` : ""}`
       : `❌ ${i.fb_page_name} — ${String(i.reason ?? "").slice(0, 200)}`),
   ];
-  const keyboard = ok > 0 ? [[{ text: "📊 تابع المشاهدات 7 أيام", callback_data: `fb:${broadcastId}:track` }]] : undefined;
+  const keyboard = ok > 0 && kind === "video" ? [[{ text: "📊 تابع المشاهدات 7 أيام", callback_data: `fb:${broadcastId}:track` }]] : undefined;
   return { done: true, chatId: String(b.chat_id), report: lines.join("\n"), keyboard };
 }
 
@@ -214,10 +226,11 @@ async function finishIfDone(broadcastId: number): Promise<{ done: boolean; chatI
 export async function performBroadcastUpload(itemId: number, filePath: string, fileSize: number) {
   await ensureSchema();
   const [it] = rowsOf(await db.execute(sql`
-    SELECT i.id, i.broadcast_id, i.fb_page_id, i.fb_page_name, i.status, i.attempts, b.caption
+    SELECT i.id, i.broadcast_id, i.fb_page_id, i.fb_page_name, i.status, i.attempts, b.caption, b.kind
     FROM tg_fb_broadcast_items i JOIN tg_fb_broadcasts b ON b.id = i.broadcast_id WHERE i.id = ${itemId}`));
   if (!it || it.status !== "uploading") return { ok: false, message: "بند غير صالح أو منتهٍ", done: false };
   const broadcastId = Number(it.broadcast_id);
+  const kind: Kind = it.kind === "photo" ? "photo" : "video";
   const settle = async (ok: boolean, message?: string, videoId?: string) => {
     if (ok) {
       await db.execute(sql`UPDATE tg_fb_broadcast_items SET status = 'uploaded', fb_video_id = ${videoId ?? null}, uploaded_at = now(), reason = NULL WHERE id = ${itemId}`);
@@ -226,19 +239,41 @@ export async function performBroadcastUpload(itemId: number, filePath: string, f
       await db.execute(sql`UPDATE tg_fb_broadcast_items SET status = ${final ? "failed" : "pending"}, reason = ${String(message ?? "").slice(0, 500)} WHERE id = ${itemId}`);
     }
     // الفاصل يبدأ من نهاية هذا الرفع.
-    await db.execute(sql`UPDATE tg_fb_broadcasts SET next_at = now() + make_interval(mins => ${GAP_MINUTES}) WHERE id = ${broadcastId}`);
+    await db.execute(sql`UPDATE tg_fb_broadcasts SET next_at = now() + make_interval(mins => ${gapOf(kind)}) WHERE id = ${broadcastId}`);
     const fin = await finishIfDone(broadcastId);
     return { ok, message, fbVideoId: videoId, ...fin };
   };
-  if (fileSize < 1024) return settle(false, "لم يصل ملف الفيديو");
+  if (fileSize < 1024) return settle(false, `لم يصل ملف ${nounOf(kind)}`);
   const config = getFacebookConfig();
   if (!config) return settle(false, "متغيرات فيسبوك غير مضبوطة على الخادم");
   const [page] = rowsOf(await db.execute(sql`SELECT access_token_encrypted, status FROM facebook_pages WHERE fb_page_id = ${it.fb_page_id}`));
   const token = decryptToken(page?.access_token_encrypted, config.appSecret);
   if (!token || page?.status !== "connected") return settle(false, "رمز الصفحة غير متاح — أعد «ربط فيسبوك»");
   const caption = String(it.caption ?? "").trim();
+  if (kind === "photo") {
+    const r = await uploadFacebookPhoto(String(it.fb_page_id), token, filePath, caption);
+    return r.ok ? settle(true, undefined, r.postId) : settle(false, r.message);
+  }
   const title = facebookTitleOf(caption) || String(it.fb_page_name ?? "");
   const result = await uploadFacebookVideo({ pageId: String(it.fb_page_id), token, filePath, fileSize, title, description: caption || title, published: true });
   if (!result.ok) return settle(false, `[${result.stage}] ${result.message}`);
   return settle(true, undefined, result.videoId);
+}
+
+// صورة واحدة في منشور: POST /{page}/photos (source + message). يُعاد رقم المنشور (post_id) للرابط.
+async function uploadFacebookPhoto(pageId: string, token: string, filePath: string, caption: string): Promise<{ ok: true; postId: string } | { ok: false; message: string }> {
+  try {
+    const fs = await import("node:fs");
+    const form = new FormData();
+    form.set("source", await fs.openAsBlob(filePath, { type: "image/jpeg" }), "photo.jpg");
+    if (caption) form.set("message", caption.slice(0, 60000));
+    form.set("published", "true");
+    form.set("access_token", token);
+    const res = await fetch(`${GRAPH}/${encodeURIComponent(pageId)}/photos`, { method: "POST", body: form });
+    const body: any = await res.json().catch(() => ({}));
+    if (!res.ok || body?.error) return { ok: false, message: String(body?.error?.message ?? `HTTP ${res.status}`).slice(0, 300) };
+    return { ok: true, postId: String(body.post_id ?? body.id) };
+  } catch (e) {
+    return { ok: false, message: (e as Error).message };
+  }
 }
