@@ -99,10 +99,18 @@ async function withRetry(fn, label, tries = 3) {
 }
 
 // تقرير كل فيديو في محادثة المدير الخاصة مع البوت «رفع فيسبوك» (الإصدار 80).
-async function report(chatId, lines) {
+async function report(chatId, lines, keyboard = null) {
   if (!chatId) return;
-  await bot("sendMessage", { chat_id: chatId, text: lines.filter(Boolean).join("\n"), link_preview_options: { is_disabled: true } }).catch((e) => log("report:", e.message));
+  await bot("sendMessage", { chat_id: chatId, text: lines.filter(Boolean).join("\n"), link_preview_options: { is_disabled: true }, ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}) }).catch((e) => log("report:", e.message));
 }
+
+// صندوق الرسائل الصادرة من الخادم (تقارير المشاهدات اليومية…) — كل دقيقة (الإصدار 86).
+setInterval(async () => {
+  try {
+    const r = await site("/crosspost/tg/outbox", {});
+    for (const m of r.messages ?? []) await report(m.chatId, [m.text], m.keyboard);
+  } catch (e) { log("outbox:", e.message); }
+}, 60_000);
 
 async function handleVideo(post) {
   const v = post.video;
@@ -215,7 +223,7 @@ setInterval(async () => {
     if (res.done) {
       if (filePath) fs.promises.unlink(filePath).catch(() => {});
       broadcastFiles.delete(it.broadcastId);
-      if (res.chatId && res.report) await report(res.chatId, [res.report]);
+      if (res.chatId && res.report) await report(res.chatId, [res.report], res.keyboard ?? null);
     }
   } catch (e) { log("broadcast:", e.message); } finally { broadcasting = false; }
 }, 30_000);

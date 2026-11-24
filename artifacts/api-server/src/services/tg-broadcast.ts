@@ -11,6 +11,7 @@ import { ensureInstagramSchema } from "./instagram-schema";
 import { getFacebookConfig } from "./facebook-client";
 import { uploadFacebookVideo } from "./facebook-video-upload";
 import { decryptToken } from "../lib/instagram-token-crypto";
+import { startTracking } from "./tg-views";
 import { broadcastChatIds, ensureTgCrosspostSchema, facebookTitleOf } from "./tg-crosspost";
 
 const GAP_MINUTES = 3; // فاصل بين كل صفحة والتي بعدها (يقلّل اعتبار فيسبوك له تكرارًا مزعجًا)
@@ -118,10 +119,15 @@ export async function newBroadcast(input: { chatId: string; messageId: number; f
 // ضغطة زر في قائمة الاختيار: fb:<id>:<t3|all|none|go|x>
 export async function broadcastCallback(chatId: string, data: string): Promise<{ view: BroadcastView | null; answer: string }> {
   await ensureSchema();
-  const m = data.match(/^fb:(\d+):(t\d+|all|none|go|x)$/);
+  const m = data.match(/^fb:(\d+):(t\d+|all|none|go|x|track)$/);
   if (!m) return { view: null, answer: "" };
   const id = Number(m[1]);
   const action = m[2];
+  if (action === "track") {
+    // الإصدار 86: زر «تابع المشاهدات 7 أيام» تحت تقرير النشر.
+    const r = await startTracking(id, chatId);
+    return { view: null, answer: r.ok ? "✅ بدأت المتابعة — أول تقرير الساعة 9 مساءً" : String(r.message) };
+  }
   const [b] = rowsOf(await db.execute(sql`SELECT id, chat_id, caption, pages, selected, status, created_at FROM tg_fb_broadcasts WHERE id = ${id}`));
   if (!b || String(b.chat_id) !== chatId) return { view: null, answer: "غير مسموح" };
   if (b.status !== "choosing") return { view: null, answer: "تم التعامل مع هذا المقطع سابقًا" };
@@ -186,7 +192,7 @@ export async function nextBroadcastItem() {
   return { item: { itemId: Number(item.id), broadcastId: Number(item.broadcast_id), pageName: String(item.fb_page_name ?? ""), fileId: String(b.file_id), fileSize: Number(b.file_size ?? 0) } };
 }
 
-async function finishIfDone(broadcastId: number): Promise<{ done: boolean; chatId?: string; report?: string }> {
+async function finishIfDone(broadcastId: number): Promise<{ done: boolean; chatId?: string; report?: string; keyboard?: Button[][] }> {
   const items = rowsOf(await db.execute(sql`SELECT fb_page_name, status, reason, fb_video_id FROM tg_fb_broadcast_items WHERE broadcast_id = ${broadcastId} ORDER BY position`));
   if (items.some((i) => i.status === "pending" || i.status === "uploading")) return { done: false };
   const [b] = rowsOf(await db.execute(sql`UPDATE tg_fb_broadcasts SET status = 'done', finished_at = now(), reported = true WHERE id = ${broadcastId} AND NOT reported RETURNING chat_id, caption`));
@@ -200,7 +206,8 @@ async function finishIfDone(broadcastId: number): Promise<{ done: boolean; chatI
       ? `✅ ${i.fb_page_name}${i.fb_video_id ? `\nhttps://www.facebook.com/${i.fb_video_id}` : ""}`
       : `❌ ${i.fb_page_name} — ${String(i.reason ?? "").slice(0, 200)}`),
   ];
-  return { done: true, chatId: String(b.chat_id), report: lines.join("\n") };
+  const keyboard = ok > 0 ? [[{ text: "📊 تابع المشاهدات 7 أيام", callback_data: `fb:${broadcastId}:track` }]] : undefined;
+  return { done: true, chatId: String(b.chat_id), report: lines.join("\n"), keyboard };
 }
 
 // الملف وصل من العامل: يُنشر في صفحة هذا البند.

@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
 import { setPageOverride, recoveryChatId, createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
+import { broadcastsOverview, buildDailyReport, uploadVideoRef, pageToken, rawVideoMetrics, renameTrack, startTracking, takeOutbox, testBroadcastViews } from "../services/tg-views";
 import { broadcastCallback, newBroadcast, nextBroadcastItem, performBroadcastUpload } from "../services/tg-broadcast";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
@@ -114,6 +115,11 @@ crosspostMachineRouter.post("/crosspost/tg/broadcast/upload", requireBridgeKey, 
   }
 });
 
+// رسائل صادرة (تقارير المشاهدات اليومية…) يرسلها البوت «رفع فيسبوك» — الإصدار 86.
+crosspostMachineRouter.post("/crosspost/tg/outbox", requireBridgeKey, async (_req, res) => {
+  res.json(await takeOutbox());
+});
+
 // البوت أُضيف لقناة/تغيّرت صلاحيته.
 crosspostMachineRouter.post("/crosspost/tg/channel", requireBridgeKey, async (req, res) => {
   const chatId = String(req.body?.chatId ?? "").trim();
@@ -198,6 +204,28 @@ router.post("/crosspost/tg/pair", async (req, res) => {
 });
 router.post("/crosspost/tg/retry/:id", async (req, res) => {
   res.json(await requestTgRetry(Number(req.params.id)));
+});
+// متابعة المشاهدات (الإصدار 86).
+router.get("/crosspost/tg/broadcasts", async (_req, res) => {
+  res.json(await broadcastsOverview());
+});
+router.get("/crosspost/tg/broadcasts/:id/views-test", async (req, res) => {
+  res.json(await testBroadcastViews(Number(req.params.id)));
+});
+router.get("/crosspost/tg/uploads/:id/views-test", async (req, res) => {
+  const row = await uploadVideoRef(Number(req.params.id));
+  if (!row) { res.status(404).json({ message: "لا يوجد فيديو منشور بهذا الرقم" }); return; }
+  const token = await pageToken(String(row.fb_page_id));
+  res.json({ videoId: row.fb_video_id, metrics: token ? await rawVideoMetrics(String(row.fb_video_id), token) : "لا رمز" });
+});
+router.post("/crosspost/tg/track", async (req, res) => {
+  res.json(await startTracking(Number(req.body?.broadcastId), null, typeof req.body?.name === "string" ? req.body.name : null));
+});
+router.post("/crosspost/tg/track/:id/rename", async (req, res) => {
+  res.json(await renameTrack(Number(req.params.id), String(req.body?.name ?? "")));
+});
+router.get("/crosspost/tg/track/:id/preview", async (req, res) => {
+  res.json(await buildDailyReport(Number(req.params.id), false));
 });
 router.patch("/crosspost/tg/settings", async (req, res) => {
   if (typeof req.body?.enabled !== "boolean") { res.status(400).json({ ok: false, message: "enabled مطلوب (true/false)" }); return; }

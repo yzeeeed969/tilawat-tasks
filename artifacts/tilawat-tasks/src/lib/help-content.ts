@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 86, date: "2026-11-24",
+    items: [
+      { text: "متابعة المشاهدات: زر «📊 تابع المشاهدات 7 أيام» تحت تقرير النشر في عدة صفحات. كل يوم الساعة 9 مساءً يصلك من بوت «رفع فيسبوك» مشاهدات كل صفحة والإجمالي وزيادة اليوم، ومعه نص جاهز لتويتر، وفي اليوم السابع تقرير ختامي.", adminOnly: true },
+    ],
+  },
+  {
     version: 85, date: "2026-11-24",
     items: [
       { text: "النشر في عدة صفحات: يمكن ربط أكثر من حساب تيليجرام، ولكل حساب رمز ربط مستقل.", adminOnly: true },

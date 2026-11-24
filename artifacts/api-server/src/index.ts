@@ -4,6 +4,7 @@ import { startTelegramScheduler } from "./services/telegram-scheduler";
 import { startYoutubeScheduler } from "./services/youtube-scheduler";
 import { startInstagramScheduler } from "./services/instagram-scheduler";
 import { startMuezzinScheduler } from "./services/muezzin";
+import { startViewsScheduler } from "./services/tg-views";
 import { startTelegramMonitorScheduler } from "./services/telegram-channel-monitor";
 import { startAppTelegramAutopostScheduler } from "./services/app-telegram-autopost";
 import { startYoutubePerformanceScheduler } from "./services/youtube-performance";
@@ -182,6 +183,7 @@ const server = app.listen(port, (err) => {
   startYoutubePerformanceScheduler(logger);
   startInstagramScheduler(logger);
   startMuezzinScheduler(logger);
+  startViewsScheduler(logger);
 });
 
 // رفع الفيديوهات الطويلة من جهاز التنزيل (الإصدار 64): حد Node الافتراضي لاستلام الطلب 5 دقائق كان يقطع
