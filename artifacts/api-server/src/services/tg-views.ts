@@ -340,3 +340,28 @@ export async function broadcastChatsList() {
   await ensureViewsSchema();
   return rowsOf(await db.execute(sql`SELECT chat_id, created_at FROM tg_fb_broadcast_chats ORDER BY created_at`));
 }
+
+// تجربة (المرحلة 1 لمراقبة فيسبوك): هل تعطي ميتا «المسؤول الذي أنشأ المنشور» (admin_creator)؟ قراءة فقط.
+export async function fbFeedTest(limit = 5) {
+  await ensureViewsSchema();
+  const pages = rowsOf(await db.execute(sql`SELECT fb_page_id, name FROM facebook_pages WHERE status = 'connected' ORDER BY name`));
+  const out: any[] = [];
+  for (const p of pages) {
+    const token = await pageToken(String(p.fb_page_id));
+    if (!token) { out.push({ page: p.name, error: "لا رمز" }); continue; }
+    const res: any = {};
+    for (const [label, fields] of [
+      ["posts_admin", "id,created_time,admin_creator,from,status_type,permalink_url"],
+      ["posts_basic", "id,created_time,from,status_type,permalink_url"],
+    ] as const) {
+      const r = await fetch(`${GRAPH}/${p.fb_page_id}/posts?fields=${fields}&limit=${limit}&access_token=${encodeURIComponent(token)}`);
+      const body: any = await r.json().catch(() => ({}));
+      res[label] = body?.error ? { error: String(body.error.message ?? body.error.code).slice(0, 200) } : (body?.data ?? []);
+    }
+    const vr = await fetch(`${GRAPH}/${p.fb_page_id}/videos?fields=id,created_time,from,title,permalink_url&limit=${limit}&access_token=${encodeURIComponent(token)}`);
+    const vb: any = await vr.json().catch(() => ({}));
+    res.videos = vb?.error ? { error: String(vb.error.message).slice(0, 200) } : (vb?.data ?? []);
+    out.push({ page: p.name, ...res });
+  }
+  return out;
+}

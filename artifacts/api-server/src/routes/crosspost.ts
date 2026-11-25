@@ -6,7 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
 import { setPageOverride, recoveryChatId, createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
-import { broadcastChatsList, ackOutbox, redoFirstDay, setTrackChats, outboxLog, broadcastsOverview, buildDailyReport, uploadVideoRef, pageToken, rawVideoMetrics, renameTrack, startTracking, takeOutbox, testBroadcastViews } from "../services/tg-views";
+import { fbFeedTest, broadcastChatsList, ackOutbox, redoFirstDay, setTrackChats, outboxLog, broadcastsOverview, buildDailyReport, uploadVideoRef, pageToken, rawVideoMetrics, renameTrack, startTracking, takeOutbox, testBroadcastViews } from "../services/tg-views";
 import { broadcastCallback, newBroadcast, nextBroadcastItem, performBroadcastUpload } from "../services/tg-broadcast";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
@@ -210,6 +210,9 @@ router.post("/crosspost/tg/retry/:id", async (req, res) => {
   res.json(await requestTgRetry(Number(req.params.id)));
 });
 // متابعة المشاهدات (الإصدار 86).
+router.get("/crosspost/fb-feed-test", async (req, res) => {
+  res.json(await fbFeedTest(Math.min(25, Number(req.query.limit) || 5)));
+});
 router.get("/crosspost/tg/broadcast-chats", async (_req, res) => {
   res.json(await broadcastChatsList());
 });
