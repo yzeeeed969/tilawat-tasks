@@ -292,10 +292,14 @@ export default function OfficePage() {
   // على الشاشات الضيقة: يبدأ العرض من المنتصف ليظهر مكتب المدير كاملًا.
   const hasData = !!data;
   useEffect(() => {
-    const el = floorRef.current;
-    if (!el || el.scrollWidth <= el.clientWidth) return;
-    const mid = (el.scrollWidth - el.clientWidth) / 2;
-    el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -mid : mid;
+    if (!hasData) return;
+    const t = setTimeout(() => {
+      const el = floorRef.current;
+      if (!el || el.scrollWidth <= el.clientWidth) return;
+      const mid = (el.scrollWidth - el.clientWidth) / 2;
+      el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -mid : mid;
+    }, 150);
+    return () => clearTimeout(t);
   }, [hasData]);
   const current = picked ? members.find((m) => m.id === picked.id) ?? picked : null;
 
