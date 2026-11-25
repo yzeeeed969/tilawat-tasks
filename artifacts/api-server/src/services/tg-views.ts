@@ -334,3 +334,9 @@ export async function outboxLog() {
   await ensureViewsSchema();
   return rowsOf(await db.execute(sql`SELECT id, chat_id, left(text, 80) AS text, created_at, sent_at, delivered_at, error, attempts FROM tg_fb_outbox ORDER BY id DESC LIMIT 30`));
 }
+
+// للمدير: الحسابات المربوطة بالنشر في عدة صفحات (لإضافتها لمستلمي التقارير).
+export async function broadcastChatsList() {
+  await ensureViewsSchema();
+  return rowsOf(await db.execute(sql`SELECT chat_id, created_at FROM tg_fb_broadcast_chats ORDER BY created_at`));
+}
