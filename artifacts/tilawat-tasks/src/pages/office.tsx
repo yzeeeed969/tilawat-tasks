@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
 import { useIsAdmin } from "@/lib/roles";
 
@@ -276,6 +276,7 @@ export default function OfficePage() {
   const [picked, setPicked] = useState<Member | null>(null);
   const [tab, setTab] = useState<"open" | "done">("open");
   const [mgrOpen, setMgrOpen] = useState(false);
+  const floorRef = useRef<HTMLDivElement>(null);
   const { data, isLoading, error } = useQuery({ queryKey: ["office", period], queryFn: () => api<Office>(`/api/office?period=${period}`), enabled: isAdmin, refetchInterval: 5 * 60_000 });
 
   const members = data?.members ?? [];
@@ -288,6 +289,14 @@ export default function OfficePage() {
     overdue: members.reduce((s, m) => s + m.overdueCount, 0),
     activeToday: members.filter((m) => m.doneToday > 0).length,
   }), [members]);
+  // على الشاشات الضيقة: يبدأ العرض من المنتصف ليظهر مكتب المدير كاملًا.
+  const hasData = !!data;
+  useEffect(() => {
+    const el = floorRef.current;
+    if (!el || el.scrollWidth <= el.clientWidth) return;
+    const mid = (el.scrollWidth - el.clientWidth) / 2;
+    el.scrollLeft = getComputedStyle(el).direction === "rtl" ? -mid : mid;
+  }, [hasData]);
   const current = picked ? members.find((m) => m.id === picked.id) ?? picked : null;
 
   if (!isAdmin) return <div className="p-6 text-muted-foreground">هذه الصفحة للمدير فقط.</div>;
@@ -329,7 +338,7 @@ export default function OfficePage() {
       {isLoading && <div className="text-muted-foreground">جارٍ تجهيز المكتب…</div>}
       {error && <div className="text-red-600">{(error as Error).message}</div>}
       {data && (
-        <div className="overflow-x-auto rounded-2xl border bg-card p-2">
+        <div ref={floorRef} className="overflow-x-auto rounded-2xl border bg-card p-2">
           <OfficeFloor members={members} manager={data.manager} stats={{ done: totals.done, active: totals.activeToday, total: members.length, overdue: totals.overdue }}
             starId={star} selectedId={current?.id ?? null} onPick={(m) => { setPicked(m); setTab("open"); }} onPickManager={() => setMgrOpen(true)} />
         </div>
