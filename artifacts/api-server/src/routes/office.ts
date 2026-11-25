@@ -34,10 +34,43 @@ router.get("/office", requireAdmin, async (req, res) => {
   res.json(await officeData(String(req.query.period ?? "week")));
 });
 
+// تصنيف الأعضاء في المكتب (قرار المدير 2026-11-25): القسم (رجال/نساء) وإخفاء من ليس تحت إدارته (فريق جدول المؤذنين).
+let seatingReady: Promise<void> | null = null;
+function ensureSeating() {
+  if (!seatingReady) {
+    seatingReady = (async () => {
+      await db.execute(sql`CREATE TABLE IF NOT EXISTS office_seating (member_id integer PRIMARY KEY, gender text, hidden boolean NOT NULL DEFAULT false, updated_at timestamp NOT NULL DEFAULT now())`);
+    })().catch((e) => { seatingReady = null; throw e; });
+  }
+  return seatingReady;
+}
+
+router.get("/office/seating", requireAdmin, async (_req, res) => {
+  await ensureSeating();
+  res.json(rowsOf(await db.execute(sql`SELECT s.member_id, m.name, s.gender, s.hidden FROM office_seating s JOIN members m ON m.id = s.member_id ORDER BY s.member_id`)));
+});
+// جسم الطلب: { items: [{ memberId, gender: "m"|"f"|null, hidden: boolean }] }
+router.post("/office/seating", requireAdmin, async (req, res) => {
+  await ensureSeating();
+  const items = Array.isArray(req.body?.items) ? req.body.items : [];
+  for (const it of items) {
+    const id = Number(it?.memberId);
+    if (!Number.isFinite(id)) continue;
+    const gender = it.gender === "m" || it.gender === "f" ? it.gender : null;
+    await db.execute(sql`
+      INSERT INTO office_seating (member_id, gender, hidden) VALUES (${id}, ${gender}, ${Boolean(it.hidden)})
+      ON CONFLICT (member_id) DO UPDATE SET gender = EXCLUDED.gender, hidden = EXCLUDED.hidden, updated_at = now()`);
+  }
+  res.json({ ok: true, count: items.length });
+});
+
 export async function officeData(period: string) {
   const p = periodOf(period);
+  await ensureSeating();
   const members = rowsOf(await db.execute(sql`
-    SELECT id, name, role, avatar_url, last_login_at FROM members WHERE is_active = true ORDER BY id`));
+    SELECT m.id, m.name, m.role, m.avatar_url, m.last_login_at, s.gender
+    FROM members m LEFT JOIN office_seating s ON s.member_id = m.id
+    WHERE m.is_active = true AND COALESCE(s.hidden, false) = false ORDER BY m.id`));
   // المهام المعنية: المنجزة في الفترة + غير المنجزة المستحقة حتى نهاية الفترة (المتأخرة: آخر 60 يومًا فقط).
   const tasks = rowsOf(await db.execute(sql`
     SELECT t.id, t.title, t.status, to_char(t.due_date, 'YYYY-MM-DD') AS due,
@@ -65,7 +98,7 @@ export async function officeData(period: string) {
       platform: t.platform ?? null, reciter: t.reciter ?? null, proof: t.proof ?? null, shared: (t.member_ids as number[]).length > 1,
     });
     return {
-      id: Number(m.id), name: String(m.name), role: String(m.role ?? ""), avatarUrl: m.avatar_url ?? null, lastLoginAt: m.last_login_at ?? null,
+      id: Number(m.id), name: String(m.name), role: String(m.role ?? ""), gender: m.gender ?? null, avatarUrl: m.avatar_url ?? null, lastLoginAt: m.last_login_at ?? null,
       doneCount: done.length, doneToday, openCount: open.length, overdueCount: overdue.length,
       light: doneToday > 0 ? "green" : overdue.length > 0 ? "yellow" : "grey",
       open: open.slice(0, 25).map(item), done: done.slice(0, 25).map(item),
