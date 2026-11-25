@@ -100,15 +100,22 @@ async function withRetry(fn, label, tries = 3) {
 
 // تقرير كل فيديو في محادثة المدير الخاصة مع البوت «رفع فيسبوك» (الإصدار 80).
 async function report(chatId, lines, keyboard = null) {
-  if (!chatId) return;
-  await bot("sendMessage", { chat_id: chatId, text: lines.filter(Boolean).join("\n"), link_preview_options: { is_disabled: true }, ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}) }).catch((e) => log("report:", e.message));
+  if (!chatId) return { ok: false, error: "no chat" };
+  try {
+    await bot("sendMessage", { chat_id: chatId, text: lines.filter(Boolean).join("\n"), link_preview_options: { is_disabled: true }, ...(keyboard ? { reply_markup: { inline_keyboard: keyboard } } : {}) });
+    return { ok: true };
+  } catch (e) { log("report:", chatId, e.message); return { ok: false, error: e.message }; }
 }
 
 // صندوق الرسائل الصادرة من الخادم (تقارير المشاهدات اليومية…) — كل دقيقة (الإصدار 86).
 setInterval(async () => {
   try {
     const r = await site("/crosspost/tg/outbox", {});
-    for (const m of r.messages ?? []) await report(m.chatId, [m.text], m.keyboard);
+    for (const m of r.messages ?? []) {
+      const res = await report(m.chatId, [m.text], m.keyboard);
+      log(res.ok ? `outbox #${m.id} → ${m.chatId}: وصل` : `outbox #${m.id} → ${m.chatId}: فشل ${res.error}`);
+      if (m.id) await site("/crosspost/tg/outbox/ack", { id: m.id, ok: res.ok, error: res.error ?? null }).catch((e) => log("ack:", e.message));
+    }
   } catch (e) { log("outbox:", e.message); }
 }, 60_000);
 

@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 88, date: "2026-11-25",
+    items: [
+      { text: "تقارير المشاهدات: البوت يؤكد وصول كل رسالة، وإن لم تصل يعيد إرسالها تلقائيًا، ويمكن إرسال التقرير لأكثر من حساب تيليجرام.", adminOnly: true },
+    ],
+  },
+  {
     version: 87, date: "2026-11-24",
     items: [
       { text: "نشر صورة في عدة صفحات فيسبوك: أرسل الصورة (والنص تحتها) إلى بوت «رفع فيسبوك»، واختر الصفحات، فتُنشر بفاصل دقيقة بين كل صفحة، ثم يصلك تقرير ✅/❌.", adminOnly: true },

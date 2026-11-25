@@ -6,7 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { requireAdmin } from "../middlewares/auth";
 import { ensureCrosspostSchema } from "../services/crosspost-schema";
 import { setPageOverride, recoveryChatId, createPairCode, handlePrivateMessage, retryFailed, pendingTgRetries, requestTgRetry, bridgeHeartbeat, reciterTelegramHandles, checkTgVideo, ensureTgCrosspostSchema, performTgUpload, registerChannel, setTgCrosspostEnabled, tgCrosspostOverview } from "../services/tg-crosspost";
-import { outboxLog, broadcastsOverview, buildDailyReport, uploadVideoRef, pageToken, rawVideoMetrics, renameTrack, startTracking, takeOutbox, testBroadcastViews } from "../services/tg-views";
+import { ackOutbox, redoFirstDay, setTrackChats, outboxLog, broadcastsOverview, buildDailyReport, uploadVideoRef, pageToken, rawVideoMetrics, renameTrack, startTracking, takeOutbox, testBroadcastViews } from "../services/tg-views";
 import { broadcastCallback, newBroadcast, nextBroadcastItem, performBroadcastUpload } from "../services/tg-broadcast";
 import { addManualLink, listManualLinks, removeManualLink, attachFacebookProofsToYoutubeTasks, checkMachineKey, claimUpload, crosspostOverview, listPendingVideos, machineKeyConfigured, performUpload, setCrosspostEnabled } from "../services/crosspost";
 
@@ -120,6 +120,9 @@ crosspostMachineRouter.post("/crosspost/tg/broadcast/upload", requireBridgeKey, 
 crosspostMachineRouter.post("/crosspost/tg/outbox", requireBridgeKey, async (_req, res) => {
   res.json(await takeOutbox());
 });
+crosspostMachineRouter.post("/crosspost/tg/outbox/ack", requireBridgeKey, async (req, res) => {
+  res.json(await ackOutbox(Number(req.body?.id), Boolean(req.body?.ok), typeof req.body?.error === "string" ? req.body.error : null));
+});
 
 // البوت أُضيف لقناة/تغيّرت صلاحيته.
 crosspostMachineRouter.post("/crosspost/tg/channel", requireBridgeKey, async (req, res) => {
@@ -227,6 +230,12 @@ router.post("/crosspost/tg/track", async (req, res) => {
 });
 router.post("/crosspost/tg/track/:id/rename", async (req, res) => {
   res.json(await renameTrack(Number(req.params.id), String(req.body?.name ?? "")));
+});
+router.post("/crosspost/tg/track/:id/chats", async (req, res) => {
+  res.json(await setTrackChats(Number(req.params.id), Array.isArray(req.body?.chatIds) ? req.body.chatIds : []));
+});
+router.post("/crosspost/tg/track/:id/redo-day1", async (req, res) => {
+  res.json(await redoFirstDay(Number(req.params.id)));
 });
 router.get("/crosspost/tg/track/:id/preview", async (req, res) => {
   res.json(await buildDailyReport(Number(req.params.id), false));

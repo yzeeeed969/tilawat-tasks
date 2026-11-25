@@ -63,6 +63,13 @@ export function ensureViewsSchema() {
           created_at timestamp NOT NULL DEFAULT now(),
           sent_at timestamp
         )`);
+      // الإصدار 88: تأكيد التسليم من العامل + إعادة الإرسال إن لم يُؤكَّد، ومستلمون إضافيون للمتابعة.
+      await db.execute(sql`ALTER TABLE tg_fb_outbox ADD COLUMN IF NOT EXISTS delivered_at timestamp`);
+      await db.execute(sql`ALTER TABLE tg_fb_outbox ADD COLUMN IF NOT EXISTS error text`);
+      await db.execute(sql`ALTER TABLE tg_fb_outbox ADD COLUMN IF NOT EXISTS attempts integer NOT NULL DEFAULT 0`);
+      // الرسائل القديمة (قبل التأكيد) لا تُعاد.
+      await db.execute(sql`UPDATE tg_fb_outbox SET attempts = 3 WHERE sent_at IS NOT NULL AND delivered_at IS NULL AND attempts = 0`);
+      await db.execute(sql`ALTER TABLE tg_fb_tracks ADD COLUMN IF NOT EXISTS extra_chats jsonb NOT NULL DEFAULT '[]'::jsonb`);
     })().catch((err) => { ready = null; throw err; });
   }
   return ready;
@@ -75,10 +82,47 @@ export async function queueMessage(chatId: string, text: string, keyboard: Butto
 }
 export async function takeOutbox() {
   await ensureViewsSchema();
+  // رسالة أُخذت ولم يصل تأكيد تسليمها خلال 10 دقائق (العامل أُعيد تشغيله مثلًا) تعود للإرسال — حتى 3 مرات.
+  await db.execute(sql`UPDATE tg_fb_outbox SET sent_at = NULL WHERE sent_at < now() - interval '10 minutes' AND delivered_at IS NULL AND attempts < 3`);
   const rows = rowsOf(await db.execute(sql`
-    UPDATE tg_fb_outbox SET sent_at = now() WHERE id IN (SELECT id FROM tg_fb_outbox WHERE sent_at IS NULL ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED)
+    UPDATE tg_fb_outbox SET sent_at = now(), attempts = attempts + 1, error = NULL
+    WHERE id IN (SELECT id FROM tg_fb_outbox WHERE sent_at IS NULL AND delivered_at IS NULL ORDER BY id LIMIT 10 FOR UPDATE SKIP LOCKED)
     RETURNING id, chat_id, text, keyboard`));
-  return { messages: rows.sort((a, b) => a.id - b.id).map((r) => ({ chatId: String(r.chat_id), text: String(r.text), keyboard: r.keyboard ?? null })) };
+  return { messages: rows.sort((a, b) => a.id - b.id).map((r) => ({ id: Number(r.id), chatId: String(r.chat_id), text: String(r.text), keyboard: r.keyboard ?? null })) };
+}
+export async function ackOutbox(id: number, ok: boolean, error: string | null) {
+  await ensureViewsSchema();
+  if (ok) await db.execute(sql`UPDATE tg_fb_outbox SET delivered_at = now(), error = NULL WHERE id = ${id}`);
+  else await db.execute(sql`UPDATE tg_fb_outbox SET error = ${String(error ?? "").slice(0, 500)} WHERE id = ${id}`);
+  return { ok: true };
+}
+async function queueForTrack(t: any, text: string) {
+  const chats = [String(t.chat_id), ...((t.extra_chats as string[]) ?? []).map(String)];
+  for (const c of [...new Set(chats)]) await queueMessage(c, text);
+}
+export async function setTrackChats(trackId: number, chatIds: string[]) {
+  await ensureViewsSchema();
+  const clean = chatIds.map(String).filter((c) => /^-?\d+$/.test(c));
+  await db.execute(sql`UPDATE tg_fb_tracks SET extra_chats = ${JSON.stringify(clean)}::jsonb WHERE id = ${trackId}`);
+  return { ok: true, extra: clean };
+}
+// إعادة تقرير اليوم الأول بالأرقام الحالية (دون أن يُنقص يوم من السبعة، ودون أن يُلغي تقرير الليلة).
+export async function redoFirstDay(trackId: number) {
+  await ensureViewsSchema();
+  const [t] = rowsOf(await db.execute(sql`SELECT reports_sent, last_report_date, last_total, last_views FROM tg_fb_tracks WHERE id = ${trackId}`));
+  if (!t || Number(t.reports_sent) !== 1) return { ok: false, message: "إعادة اليوم الأول متاحة فقط بعد تقرير واحد" };
+  // تحقق أولًا أن القراءة تعمل الآن، حتى لا يضيع اليوم الأول.
+  const preview = await buildDailyReport(trackId, false);
+  if (!preview.ok || preview.read === 0) return { ok: false, message: "تعذّرت قراءة المشاهدات الآن — لم يُغيَّر شيء" };
+  await db.execute(sql`DELETE FROM tg_fb_track_snapshots WHERE track_id = ${trackId} AND day_no = 1`);
+  await db.execute(sql`UPDATE tg_fb_tracks SET reports_sent = 0, last_total = 0, last_views = '{}'::jsonb, status = 'active' WHERE id = ${trackId}`);
+  const r = await buildDailyReport(trackId, true);
+  if (!r.ok) {
+    await db.execute(sql`UPDATE tg_fb_tracks SET reports_sent = 1, last_total = ${t.last_total}, last_views = ${JSON.stringify(t.last_views ?? {})}::jsonb WHERE id = ${trackId}`);
+  }
+  // يبقى تاريخ آخر تقرير = يوم التقرير الأصلي، فيُرسل تقرير اليوم الثاني الليلة كالمعتاد.
+  await db.execute(sql`UPDATE tg_fb_tracks SET last_report_date = ${String(t.last_report_date)} WHERE id = ${trackId}`);
+  return r;
 }
 
 // ── اسم الإصدار: أول سطر، ويُضم إليه السطر الثاني إن بدأ بـ«من» (مثل «… من اختيارات السمّيعة») ─────
@@ -193,7 +237,7 @@ export async function buildDailyReport(trackId: number, save: boolean) {
   }
   if (save && items.length > 0 && lines.length === 0) {
     // كل الصفحات تعذّرت قراءتها: لا يُحسب يومًا من السبعة، ويُعاد غدًا.
-    await queueMessage(String(t.chat_id), [`⚠️ تعذّرت قراءة مشاهدات «${t.name}» اليوم من كل الصفحات، فلم يُحسب يومًا من السبعة وسأعيد المحاولة غدًا.`, ...errors].join("\n"));
+    await queueForTrack(t, [`⚠️ تعذّرت قراءة مشاهدات «${t.name}» اليوم من كل الصفحات، فلم يُحسب يومًا من السبعة وسأعيد المحاولة غدًا.`, ...errors].join("\n"));
     return { ok: false as const, message: "تعذّرت القراءة من كل الصفحات" };
   }
   const increase = total - Number(t.last_total ?? 0);
@@ -224,10 +268,10 @@ export async function buildDailyReport(trackId: number, save: boolean) {
     await db.execute(sql`
       UPDATE tg_fb_tracks SET reports_sent = ${dayNo}, last_report_date = ${riyadhDate()}, last_total = ${total}, last_views = ${JSON.stringify(nowViews)}::jsonb,
         status = ${final ? "done" : "active"} WHERE id = ${trackId}`);
-    await queueMessage(String(t.chat_id), text);
-    await queueMessage(String(t.chat_id), tweet); // رسالة مستقلة لسهولة النسخ
+    await queueForTrack(t, text);
+    await queueForTrack(t, tweet); // رسالة مستقلة لسهولة النسخ
   }
-  return { ok: true as const, dayNo, total, increase, text, tweet };
+  return { ok: true as const, dayNo, total, increase, text, tweet, read: lines.length, pages: items.length };
 }
 
 function riyadhParts(d = new Date()) {
@@ -288,5 +332,5 @@ export async function uploadVideoRef(uploadId: number): Promise<{ fb_page_id: st
 // للمدير: سجل صندوق الصادر (للتشخيص).
 export async function outboxLog() {
   await ensureViewsSchema();
-  return rowsOf(await db.execute(sql`SELECT id, chat_id, left(text, 80) AS text, created_at, sent_at FROM tg_fb_outbox ORDER BY id DESC LIMIT 30`));
+  return rowsOf(await db.execute(sql`SELECT id, chat_id, left(text, 80) AS text, created_at, sent_at, delivered_at, error, attempts FROM tg_fb_outbox ORDER BY id DESC LIMIT 30`));
 }
