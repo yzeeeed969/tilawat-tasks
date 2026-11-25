@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 90, date: "2026-11-25",
+    items: [
+      { text: "مراقبة فيسبوك: كل 15 دقيقة يُسجَّل كل ما نُشر في صفحات فيسبوك المربوطة في «سجل النشر — فيسبوك» (يدوي / البوت / من إنستقرام)، ويُوثَّق تلقائيًا إن طابق مهمة فيسبوك لنفس القارئ ونفس اليوم.", adminOnly: true },
+    ],
+  },
+  {
     version: 89, date: "2026-11-25",
     items: [
       { text: "صفحة «المكتب»: الأعضاء كموظفين على طاولات في مكتب مفتوح، عند كل واحد مهامه الحالية وما أنجزه هذا الأسبوع (أو الشهر)، وضوء يبين حالته اليوم. اضغط على أي طاولة لترى التفاصيل وروابط الأعمال.", adminOnly: true },

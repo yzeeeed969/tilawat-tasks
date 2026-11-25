@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth-context";
 import { APP_VERSION, APP_VERSION_DATE } from "@/lib/app-version";
-import { Building2,
+import { ScrollText, Building2,
   LayoutDashboard,
   CheckSquare,
   Users,
@@ -331,6 +331,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         { href: "/telegram-monitor", label: "مراقبة تلقرام", icon: Send, show: isAdmin },
         { href: "/instagram-monitor", label: "مراقبة إنستقرام", icon: Camera, show: isAdmin },
         { href: "/crosspost-monitor", label: "رفع يوتيوب ← فيسبوك", icon: Upload, show: isAdmin },
+        { href: "/publish-log", label: "سجل النشر — فيسبوك", icon: ScrollText, show: isAdmin },
       ].filter((item) => item.show),
     },
   ].filter((group) => group.items.length > 0);
