@@ -2,7 +2,7 @@ import { ReactNode, useEffect, useState } from "react";
 import { Link, useLocation } from "wouter";
 import { useAuth } from "@/lib/auth-context";
 import { APP_VERSION, APP_VERSION_DATE } from "@/lib/app-version";
-import {
+import { Building2,
   LayoutDashboard,
   CheckSquare,
   Users,
@@ -302,6 +302,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
     { href: "/tasks", label: "المهام", icon: CheckSquare, show: true },
     { href: "/members", label: "الأعضاء", icon: Users, show: canViewMembers },
     { href: "/reports", label: "التقارير", icon: BarChart3, show: canViewReports },
+    { href: "/office", label: "المكتب", icon: Building2, show: isAdmin },
     { href: "/reminders", label: "التذكيرات", icon: AlarmClock, show: true },
   ].filter((item) => item.show);
 

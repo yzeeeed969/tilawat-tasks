@@ -19,6 +19,7 @@ import RecitersPage from "@/pages/reciters";
 import PlatformsPage from "@/pages/platforms";
 import YoutubeMonitorPage from "@/pages/youtube-monitor";
 import YoutubePerformancePage from "@/pages/youtube-performance";
+import OfficePage from "@/pages/office";
 import PublishingTemplatePage from "@/pages/publishing-template";
 import WeeklySchedulePage from "@/pages/weekly-schedule";
 import MuezzinSchedulePage from "@/pages/muezzin-schedule";
@@ -214,6 +215,11 @@ function AppRouter() {
       <Route path="/instagram-monitor">
         <ProtectedRoute>
           <AppLayout><InstagramMonitorPage /></AppLayout>
+        </ProtectedRoute>
+      </Route>
+      <Route path="/office">
+        <ProtectedRoute>
+          <AppLayout><OfficePage /></AppLayout>
         </ProtectedRoute>
       </Route>
       <Route path="/youtube-performance">

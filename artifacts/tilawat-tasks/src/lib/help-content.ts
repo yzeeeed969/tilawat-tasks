@@ -537,6 +537,12 @@ export function helpSectionForRoute(path: string, isAdmin: boolean): HelpSection
 // «ما الجديد؟» — أحدث أولًا. adminOnly: لا يظهر للأعضاء.
 export const WHATS_NEW: Array<{ version: number; date: string; items: Array<{ text: string; adminOnly?: boolean }> }> = [
   {
+    version: 89, date: "2026-11-25",
+    items: [
+      { text: "صفحة «المكتب»: الأعضاء كموظفين على طاولات في مكتب مفتوح، عند كل واحد مهامه الحالية وما أنجزه هذا الأسبوع (أو الشهر)، وضوء يبين حالته اليوم. اضغط على أي طاولة لترى التفاصيل وروابط الأعمال.", adminOnly: true },
+    ],
+  },
+  {
     version: 88, date: "2026-11-25",
     items: [
       { text: "تقارير المشاهدات: البوت يؤكد وصول كل رسالة، وإن لم تصل يعيد إرسالها تلقائيًا، ويمكن إرسال التقرير لأكثر من حساب تيليجرام.", adminOnly: true },
