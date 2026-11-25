@@ -284,3 +284,9 @@ export async function uploadVideoRef(uploadId: number): Promise<{ fb_page_id: st
   const [row] = rowsOf(await db.execute(sql`SELECT fb_page_id, fb_video_id FROM tg_fb_uploads WHERE id = ${uploadId} AND fb_video_id IS NOT NULL`));
   return row ? { fb_page_id: String(row.fb_page_id), fb_video_id: String(row.fb_video_id) } : null;
 }
+
+// للمدير: سجل صندوق الصادر (للتشخيص).
+export async function outboxLog() {
+  await ensureViewsSchema();
+  return rowsOf(await db.execute(sql`SELECT id, chat_id, left(text, 80) AS text, created_at, sent_at FROM tg_fb_outbox ORDER BY id DESC LIMIT 30`));
+}
