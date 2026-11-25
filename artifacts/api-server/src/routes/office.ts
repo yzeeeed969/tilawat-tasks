@@ -104,7 +104,44 @@ export async function officeData(period: string) {
       open: open.slice(0, 25).map(item), done: done.slice(0, 25).map(item),
     };
   });
-  return { period: p, members: out };
+  // ── مكتب المدير ──
+  const [mgr] = rowsOf(await db.execute(sql`
+    SELECT m.id, m.name, m.avatar_url FROM app_users u JOIN members m ON m.id = u.member_id WHERE u.role = 'admin' ORDER BY u.id LIMIT 1`));
+  // آخر إنجاز لكل عضو (آخر 60 يومًا) — لتنبيه «لم يعمل منذ أيام».
+  const lastDone = rowsOf(await db.execute(sql`
+    SELECT x.mid, to_char(max((t.completed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Riyadh'), 'YYYY-MM-DD') AS last_day
+    FROM tasks t, unnest(array_append(ARRAY(SELECT tm.member_id FROM task_members tm WHERE tm.task_id = t.id), t.member_id)) AS x(mid)
+    WHERE t.deleted_at IS NULL AND t.status = 'completed' AND t.completed_at > now() - interval '60 days'
+    GROUP BY x.mid`));
+  const lastMap = new Map(lastDone.map((r) => [Number(r.mid), String(r.last_day)]));
+  // نفس الفترة السابقة (الأسبوع أو الشهر الماضي) للمقارنة.
+  const prevStart = p.kind === "month" ? (() => { const d = new Date(`${p.start}T00:00:00Z`); d.setUTCMonth(d.getUTCMonth() - 1); return d.toISOString().slice(0, 10); })() : addDays(p.start, -7);
+  // حتى نفس اليوم من الفترة السابقة، لتكون المقارنة عادلة.
+  const elapsed = Math.round((Date.parse(`${p.today}T00:00:00Z`) - Date.parse(`${p.start}T00:00:00Z`)) / 86400000) + 1;
+  const prevCut = addDays(prevStart, elapsed);
+  const visibleIds = `{${out.map((m) => m.id).join(",")}}`; // مصفوفة Postgres نصية
+  const [prev] = rowsOf(await db.execute(sql`
+    SELECT count(*)::int AS n FROM tasks t
+    WHERE t.deleted_at IS NULL AND t.status = 'completed'
+      AND to_char((t.completed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD') >= ${prevStart}
+      AND to_char((t.completed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD') < ${prevCut}
+      AND (t.member_id = ANY(${visibleIds}::int[]) OR EXISTS (SELECT 1 FROM task_members tm WHERE tm.task_id = t.id AND tm.member_id = ANY(${visibleIds}::int[])))`));
+  const [cur] = rowsOf(await db.execute(sql`
+    SELECT count(*)::int AS n FROM tasks t
+    WHERE t.deleted_at IS NULL AND t.status = 'completed'
+      AND to_char((t.completed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD') >= ${p.start}
+      AND to_char((t.completed_at AT TIME ZONE 'UTC') AT TIME ZONE 'Asia/Riyadh', 'YYYY-MM-DD') < ${p.end}
+      AND (t.member_id = ANY(${visibleIds}::int[]) OR EXISTS (SELECT 1 FROM task_members tm WHERE tm.task_id = t.id AND tm.member_id = ANY(${visibleIds}::int[])))`));
+  const daysSince = (day: string | undefined) => day ? Math.round((Date.parse(`${p.today}T00:00:00Z`) - Date.parse(`${day}T00:00:00Z`)) / 86400000) : null;
+  const manager = mgr ? {
+    id: Number(mgr.id), name: String(mgr.name), avatarUrl: mgr.avatar_url ?? null,
+    overdue: out.filter((m) => m.overdueCount > 0).sort((a, b) => b.overdueCount - a.overdueCount).map((m) => ({ id: m.id, name: m.name, count: m.overdueCount })),
+    idle: out.map((m) => ({ id: m.id, name: m.name, days: daysSince(lastMap.get(m.id)) }))
+      .filter((x) => x.days === null || x.days >= 3).sort((a, b) => (b.days ?? 999) - (a.days ?? 999)),
+    stars: [...out].filter((m) => m.doneCount > 0).sort((a, b) => b.doneCount - a.doneCount).slice(0, 3).map((m) => ({ id: m.id, name: m.name, count: m.doneCount })),
+    compare: { current: Number(cur?.n ?? 0), previous: Number(prev?.n ?? 0), days: elapsed },
+  } : null;
+  return { period: p, members: out, manager };
 }
 
 export default router;
