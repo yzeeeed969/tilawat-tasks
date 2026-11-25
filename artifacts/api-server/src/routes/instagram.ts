@@ -186,6 +186,20 @@ router.post("/instagram/accounts/:id/disconnect", async (req, res) => {
 });
 
 // «افحص الآن»: كل الحسابات، أو حساب واحد.
+// تشخيص (قراءة فقط): آخر منشورات حساب إنستقرام كما يعيدها إنستقرام الآن.
+router.get("/instagram/accounts/:id/recent-raw", async (req, res) => {
+  const { sql } = await import("drizzle-orm");
+  const { decryptToken } = await import("../lib/instagram-token-crypto");
+  const { fetchRecentMedia } = await import("../services/instagram-client");
+  const config = getInstagramConfig();
+  const r: any = await db.execute(sql`SELECT access_token_encrypted FROM instagram_accounts WHERE id = ${Number(req.params.id)}`);
+  const row = (r?.rows ?? r)[0];
+  const token = config && row ? decryptToken(row.access_token_encrypted, config.appSecret) : null;
+  if (!token) { res.status(404).json({ message: "لا رمز" }); return; }
+  try { res.json(await fetchRecentMedia(token, Math.min(50, Number(req.query.limit) || 30))); }
+  catch (e) { res.status(502).json({ message: (e as Error).message }); }
+});
+
 router.post("/instagram/check-now", async (req, res) => {
   const accountId = Number(req.body?.accountId);
   if (Number.isInteger(accountId) && accountId > 0) {
